@@ -404,4 +404,17 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 
 ## Lisans
 
-Henüz bir lisans seçilmedi. Bir lisans eklenene kadar bütün haklar yazara aittir.
+RedoX VE'nin kaynak kodu [PolyForm Noncommercial License 1.0.0](LICENSE.md) ile açıktır. Bağlayıcı olan
+lisansın İngilizce metnidir; aşağısı özettir.
+
+- **Serbest:** ticari olmayan her amaçla kullanmak, incelemek, değiştirmek ve paylaşmak. Kişisel kullanım, ev
+  laboratuvarı, hobi projeleri, araştırma ile okulların, hayır kurumlarının ve kamu kurumlarının kullanımı
+  buna girer.
+- **Yasak:** ticari kullanım. Bir işletmenin parçası olarak çalıştırmak, ücretli hizmet olarak sunmak, kendisini
+  ya da üzerine kurulmuş ürünleri satmak buna girer.
+- Kopyalar ve değiştirilmiş sürümler lisansı ve `LICENSE.md` içindeki `Required Notice` satırını taşımalıdır.
+
+Ticari kullanım dışarıda bırakıldığı için bu, OSI tanımıyla bir açık kaynak lisansı değildir. Ticari lisans
+için depoda bir konu (issue) açın.
+
+Gömülü yazı tipleri kendi lisanslarını korur (SIL Open Font License; `crates/redox-server/assets/fonts/`).

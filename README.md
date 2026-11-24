@@ -403,4 +403,16 @@ USB/PCI passthrough. [KURULUM.md](KURULUM.md) marks each of these where it is de
 
 ## License
 
-No license has been chosen yet. Until one is added, all rights are reserved by the author.
+RedoX VE is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+
+- **Allowed:** using, studying, changing and sharing it for any noncommercial purpose. That covers personal
+  use, home labs, hobby projects, research, and use by schools, charities and government institutions.
+- **Not allowed:** commercial use. That includes running it as part of a business, offering it as a paid
+  service, and selling it or products built on it.
+- Copies and modified versions must carry the license and the `Required Notice` line in `LICENSE.md`.
+
+Because commercial use is excluded, this is not an open-source license in the OSI sense. For a commercial
+license, open an issue on the repository.
+
+The embedded fonts keep their own licenses (SIL Open Font License; see
+`crates/redox-server/assets/fonts/`).
