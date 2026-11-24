@@ -10,7 +10,8 @@
 
 # RedoX VE
 
-RedoX VE, Rust ile yazılmış, kendi sunucunuza kurduğunuz bir sanallaştırma platformudur. Tek bir program
+RedoX VE, Rust ile yazılmış, kendi sunucunuza kurduğunuz, [Proxmox VE](#redox-ve-ve-proxmox-ve) benzeri
+bir sanallaştırma platformudur. Tek bir program
 (`redox`) bir Linux sunucuda KVM sanal makinelerini ve yetkisiz LXC konteynerlerini çalıştırır; bunları
 yönetmek için bir web paneli, bir REST API ve bir komut satırı istemcisi sunar.
 
@@ -22,6 +23,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 ## İçindekiler
 
 - [Özellikler](#özellikler)
+- [RedoX VE ve Proxmox VE](#redox-ve-ve-proxmox-ve)
 - [Ekran görüntüleri](#ekran-görüntüleri)
 - [Kurulum](#kurulum)
 - [Komut satırı ve API](#komut-satırı-ve-api)
@@ -71,6 +73,33 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
   OpenID Connect.
 - Denetim günlüğü, görev günlüğü, webhook ya da e-posta ile kaynak uyarıları, Prometheus ölçümleri.
 - Birkaç RedoX VE sunucusunun birleşik görünümü ve bir sanal makineyi bellek durumunu koruyarak aralarında taşıma.
+
+## RedoX VE ve Proxmox VE
+
+RedoX VE, [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview) örnek alınarak
+tasarlandı. Proxmox kullandıysanız fikirleri tanırsınız: 100'den başlayan sayısal konuk kimlikleri, yan yana
+sanal makineler ve konteynerler, `vmbr0` biçimli köprüler, görev günlüğü, konuk başına anlık görüntü ve
+yedek, 8006 numaralı kapıdaki panel.
+
+Rust ile sıfırdan yazılmış bağımsız bir projedir. Proxmox VE ile ortak kodu yoktur, Proxmox'un ayar ve
+yedek biçimlerini okumaz ve onun yerine doğrudan konabilecek bir ürün değildir.
+
+| | Proxmox VE | RedoX VE |
+|---|---|---|
+| Biçim | Makineye kurduğunuz, Debian tabanlı bir dağıtım | Var olan Debian ya da Ubuntu sunucuya eklediğiniz tek bir program |
+| Konuklar | KVM sanal makineleri, LXC konteynerleri | KVM sanal makineleri, LXC konteynerleri |
+| Küme | Ortak durumlu çok düğümlü küme, canlı taşıma ve yüksek erişilebilirlik | Birleşik görünümlü bağımsız sunucular; çalışan sanal makine kısa bir duraklamayla taşınır |
+| Depolama | LVM, ZFS, Ceph, NFS ve fazlası | Dizinler (yerel disk ya da bağlı bir paylaşım), qcow2 |
+| Yedek | vzdump ve Proxmox Backup Server | Gömülü tam ve artımlı yedek, dizine ya da S3'e dış kopya |
+| Web paneli | JavaScript uygulaması | Sunucuda üretilen HTML; canlı konsol dışında JavaScript yok |
+| Olgunluk | Yıllardır üretimde | Yeni; bazı parçaları gerçek sunucuda henüz denenmedi ([Testler](#testler)) |
+
+Kümeye, ortak depolamaya ya da kendini kanıtlamış bir platforma ihtiyacınız varsa Proxmox VE'yi seçin.
+RedoX VE, küçük, denetlenebilir ve sıkı varsayılanlı bir hizmetin geniş özellik listesinden daha değerli
+olduğu tek sunucuyu hedefler.
+
+*Proxmox, Proxmox Server Solutions GmbH'nin tescilli markasıdır. RedoX VE'nin Proxmox Server Solutions GmbH
+ile bir bağı yoktur ve onun tarafından desteklenmez.*
 
 ## Ekran görüntüleri
 

@@ -10,7 +10,8 @@
 
 # RedoX VE
 
-RedoX VE is a self-hosted virtualization platform written in Rust. One binary, `redox`, runs KVM virtual
+RedoX VE is a self-hosted virtualization platform written in Rust, in the spirit of
+[Proxmox VE](#redox-ve-and-proxmox-ve). One binary, `redox`, runs KVM virtual
 machines and unprivileged LXC containers on a Linux server and gives you a web panel, a REST API and a
 command-line client for them.
 
@@ -26,6 +27,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 ## Contents
 
 - [Features](#features)
+- [RedoX VE and Proxmox VE](#redox-ve-and-proxmox-ve)
 - [Screenshots](#screenshots)
 - [Installation](#installation)
 - [Command line and API](#command-line-and-api)
@@ -73,6 +75,31 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Roles (admin, operator, viewer), tag-based operator scopes, TOTP two-factor login, OpenID Connect.
 - Audit log, task log, resource alerts by webhook or e-mail, Prometheus metrics.
 - A combined view of several RedoX VE servers, and moving a VM between them while keeping its memory state.
+
+## RedoX VE and Proxmox VE
+
+RedoX VE is modeled on [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview). If you
+have used Proxmox, you will recognize the ideas: numeric guest IDs starting at 100, VMs and containers side
+by side, `vmbr0`-style bridges, a task log, snapshots and backups per guest, and the panel on port 8006.
+
+It is an independent project written from scratch in Rust. It shares no code with Proxmox VE, does not read
+Proxmox configuration or backup formats, and is not a drop-in replacement.
+
+| | Proxmox VE | RedoX VE |
+|---|---|---|
+| Form | A Debian-based distribution you install on the machine | One binary you add to an existing Debian or Ubuntu server |
+| Guests | KVM virtual machines, LXC containers | KVM virtual machines, LXC containers |
+| Clustering | Multi-node cluster with shared state, live migration and high availability | Independent servers with a combined view; a running VM can be moved, with a pause |
+| Storage | LVM, ZFS, Ceph, NFS and more | Directories (local disk or a mounted share), qcow2 |
+| Backup | vzdump and Proxmox Backup Server | Built-in full and incremental backups, off-site copy to a directory or S3 |
+| Web panel | JavaScript application | Server-rendered HTML, no JavaScript outside the live console |
+| Maturity | Many years in production | New; several parts not yet tried on a real server (see [Testing](#testing)) |
+
+Choose Proxmox VE if you need a cluster, shared storage or a proven platform. RedoX VE aims at a single
+server where a small, auditable service with strict defaults is worth more than breadth.
+
+*Proxmox is a registered trademark of Proxmox Server Solutions GmbH. RedoX VE is not affiliated with or
+endorsed by Proxmox Server Solutions GmbH.*
 
 ## Screenshots
 

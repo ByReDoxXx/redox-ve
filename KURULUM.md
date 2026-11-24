@@ -1,6 +1,7 @@
 # RedoX VE — sunucuya kurulum
 
-Genel tanıtım, ekran görüntüleri ve teknik doküman: [README.tr.md](README.tr.md) (İngilizce: [README.md](README.md)).
+RedoX VE, Proxmox VE örnek alınarak Rust ile sıfırdan yazılmış bağımsız bir sanallaştırma platformudur.
+Genel tanıtım, Proxmox ile karşılaştırma, ekran görüntüleri ve teknik doküman: [README.tr.md](README.tr.md) (İngilizce: [README.md](README.md)).
 
 Bu kılavuz Debian 12 / Ubuntu 22.04+ (systemd, x86_64) içindir. Komutlardaki
 `redox.example.com` ve `kullanici@sunucu` kısımlarını kendinizinkiyle değiştirin.
