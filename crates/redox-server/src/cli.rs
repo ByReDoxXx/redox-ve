@@ -1,0 +1,511 @@
+//! `redox` komut satırı istemcisi: çalışan sunucunun REST API'sine bağlanır.
+
+use redox_core::fmt::{gb, mb_as_gb};
+use serde_json::{json, Map, Value};
+
+pub const DEFAULT_ADDR: &str = "127.0.0.1:8006";
+
+pub const USAGE: &str = "\
+redox — RedoX VE
+
+Sunucu:
+  redox serve [--addr 127.0.0.1:8006] [--users DOSYA] [--state DOSYA]
+              [--driver sim|qemu] [--data-dir DİZİN] [--qemu-bin YOL] [--ovmf-dir DİZİN] [--swtpm-bin YOL]
+              [--shutdown-timeout-secs 60] [--no-lxc] [--no-autostart] [--storage AD=DİZİN]...
+              [--behind-tls-proxy] [--allow-plain-http] [--task-delay-ms 1500]
+              [--alert-webhook URL] [--alert-email DOSYA] [--peers DOSYA] [--offsite DOSYA] [--oidc DOSYA] [--firewall] [--incremental-backups [--changed-block-tracking]]
+
+Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da REDOX_USERS):
+  redox user add <ad> [--role admin|operator|viewer]
+  redox user role <ad> admin|operator|viewer
+  redox user scope <ad> [etiket,etiket]   (operatörün yetkili olduğu konuk etiketleri; boşsa hepsi)
+  redox user sso <ad> <kimlik>            (tek oturum açmada eşleşen e-posta ya da kimlik; boş değer kaldırır)
+  redox user passwd <ad>
+  redox user remove <ad>
+  redox user totp-reset <ad>      (iki adımlı doğrulamayı kapatır)
+  redox user list
+  redox token create <kullanıcı> <etiket>
+  redox token revoke <kullanıcı> <etiket>
+
+İstemci (çalışan sunucuya bağlanır; REDOX_URL adresi, REDOX_TOKEN API token'ı):
+  redox cluster status
+  redox node list | node status <düğüm>
+  redox vm|ct list | show <kimlik>
+  redox vm|ct start|stop|reboot|pause|resume <kimlik>
+  redox vm|ct set <kimlik> anahtar=değer ...
+        anahtarlar: name cores memory os iso bridge onboot restart boot-order boot-delay tags forwards backup-time backup-keep
+                    schedules=start@08:00@1-5,stop@20:00   (eylem@SS:DD@günler; günler 1 Pazartesi … 7 Pazar, yazılmazsa her gün)
+                    disk-mbps disk-iops net-mbps   (hız sınırları; 0 sınırsız. Ağ sınırı yalnızca köprüdeki kartlarda)
+                    vlan=20   (birinci kartın VLAN etiketi; ek kartlarda nics=vmbr1:20)
+                    shares=ortak,veri:ro   (paylaşılan klasörler; :ro salt okunur)
+                    nics=vmbr1,nat usb=046d:c52b pci=0000:01:00.0 firmware=bios|uefi|uefi-secure tpm firewall fw-rules   (örn. firewall=true fw-rules='tcp/22,tcp/443 from 10.0.0.0/8')
+        örnek: redox vm set 103 cores=4 memory=8192 tags=prod,web backup-time=03:30
+  redox vm|ct clone <kimlik> <yeni-ad>
+  redox vm disk add <kimlik> <GB> | vm nic add <kimlik> <nat|köprü>   (çalışan sanal makineye de takılır)
+  redox vm resize <kimlik> <GB>
+  redox vm disk add <kimlik> <GB> | disk remove <kimlik> <numara>
+  redox vm suspend <kimlik> | discard-suspend <kimlik>   (askıya alır; start kaldığı yerden sürdürür)
+  redox vm template <kimlik> on|off      (şablona çevirir / çıkarır)
+  redox vm clone <kimlik> <ad> --linked  (şablondan bağlı klon: disk kopyalanmaz)
+  redox ct exec <kimlik> <komut ...>
+  redox vm|ct destroy <kimlik>
+  redox snapshot list <kimlik> | create|rollback|delete <kimlik> <ad>
+  redox backup list | create <kimlik> | restore <yedek> | delete <yedek>
+  redox backup push <yedek>       (dış hedefe yeniden gönderir)
+  redox backup verify <yedek>     (bozulma denetimi; sonuç: redox task list)
+  redox storage list
+  redox media list | delete <dosya>            (kurulum kalıpları ve disk imajları)
+  redox media fetch <https-adresi> [sha256]    (sunucu dosyayı kendisi indirir)
+        OVA dışa aktarma: curl -H 'Authorization: Bearer TOKEN' -o vm.ova REDOX_URL/api/v1/guests/KIMLIK/export
+        yüklemek için: curl -T debian.iso -H 'Authorization: Bearer TOKEN' REDOX_URL/api/v1/media/debian.iso
+  redox peer list                 (birleşik görünümdeki eş sunucular)
+  redox peer import <eş> <kimlik> (eşteki kapalı sanal makineyi bu sunucuya kopyalar)
+  redox task list
+";
+
+/// Ayrıştırılmış istemci komutu: API çağrısı ve yanıtın nasıl gösterileceği.
+#[derive(Debug, PartialEq)]
+pub struct Request {
+    pub method: &'static str,
+    pub path: String,
+    pub body: Option<Value>,
+    pub view: View,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum View {
+    Cluster,
+    Nodes,
+    Node,
+    Guests(&'static str),
+    Guest,
+    Storage,
+    Peers,
+    Tasks,
+    Snapshots,
+    Backups,
+    Media,
+    /// Görev döndüren işlemler.
+    Task,
+    /// `{ "id": ... }` döndüren yedek alma.
+    BackupStarted,
+    /// `{ "vmid": ... }` döndüren klonlama.
+    Cloned,
+    /// `{ "output": ... }` döndüren komut çalıştırma.
+    Output,
+    /// Gövdesiz başarı yanıtı.
+    Done(&'static str),
+}
+
+fn vmid(raw: &str) -> Result<u32, String> {
+    raw.parse().map_err(|_| format!("kimlik bir sayı olmalı: {raw}"))
+}
+
+/// `anahtar=değer` çiftlerini API'nin beklediği düzenleme gövdesine çevirir.
+pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
+    if pairs.is_empty() {
+        return Err("en az bir anahtar=değer verin, örn. cores=4".to_string());
+    }
+    let mut body = Map::new();
+    for pair in pairs {
+        let (key, value) = pair.split_once('=').ok_or_else(|| format!("\"{pair}\" anahtar=değer biçiminde değil"))?;
+        let number = || value.parse::<u64>().map(Value::from).map_err(|_| format!("{key} bir sayı olmalı: {value}"));
+        let (field, parsed) = match key {
+            "name" | "os" | "iso" | "bridge" => (key, Value::from(value)),
+            "cores" => ("cores", number()?),
+            "memory" => ("memory_mb", number()?),
+            "backup-keep" => ("backup_keep", number()?),
+            "boot-order" => ("boot_order", number()?),
+            "disk-mbps" => ("disk_mbps", number()?),
+            "disk-iops" => ("disk_iops", number()?),
+            "net-mbps" => ("net_mbps", number()?),
+            "vlan" => ("vlan", number()?),
+            "shares" => {
+                let list = redox_core::hw::parse_shares(value)?;
+                ("shares", Value::from(list.iter().map(|s| json!({ "name": s.name, "readonly": s.readonly })).collect::<Vec<_>>()))
+            }
+            "boot-delay" => ("boot_delay", number()?),
+            "schedules" => {
+                let list = redox_core::hw::parse_schedules(value)?;
+                let items: Vec<Value> = list.iter().map(|s| json!({ "action": s.action.as_str(), "time": s.time, "days": s.days })).collect();
+                ("schedules", Value::from(items))
+            }
+            "backup-time" => ("backup_time", Value::from(value)),
+            "onboot" | "firewall" | "tpm" | "restart" => (
+                key,
+                Value::from(match value {
+                    "true" | "1" | "evet" => true,
+                    "false" | "0" | "hayır" | "hayir" => false,
+                    _ => return Err(format!("{key} true ya da false olmalı: {value}")),
+                }),
+            ),
+            "firmware" => {
+                let (firmware, secure) = redox_core::hw::parse_firmware_choice(value).ok_or_else(|| format!("firmware bios, uefi ya da uefi-secure olmalı: {value}"))?;
+                body.insert("secure_boot".to_string(), Value::from(secure));
+                ("firmware", serde_json::to_value(firmware).map_err(|e| e.to_string())?)
+            }
+            "fw-rules" => ("fw_rules", serde_json::to_value(redox_core::hw::parse_fw_rules(value)?).map_err(|e| e.to_string())?),
+            "tags" => ("tags", Value::from(redox_core::parse_tags(value))),
+            "nics" | "usb" | "pci" => (key, Value::from(value.split(',').map(str::trim).filter(|n| !n.is_empty()).collect::<Vec<_>>())),
+            "forwards" => {
+                let list = redox_core::parse_forwards(value)?;
+                let items: Vec<Value> = list.iter().map(|f| json!({ "host_port": f.host_port, "guest_port": f.guest_port })).collect();
+                ("forwards", Value::from(items))
+            }
+            _ => {
+                return Err(format!(
+                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci"
+                ))
+            }
+        };
+        body.insert(field.to_string(), parsed);
+    }
+    Ok(Value::Object(body))
+}
+
+pub fn parse(args: &[String]) -> Result<Request, String> {
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    let req = |method: &'static str, path: String, body: Option<Value>, view: View| Ok(Request { method, path, body, view });
+    let get = |path: &str, view: View| req("GET", path.to_string(), None, view);
+    match a.as_slice() {
+        ["cluster", "status"] => get("/cluster", View::Cluster),
+        ["node", "list"] => get("/nodes", View::Nodes),
+        ["node", "status", id] => get(&format!("/nodes/{id}"), View::Node),
+        ["vm", "list"] => get("/guests", View::Guests("vm")),
+        ["ct", "list"] => get("/guests", View::Guests("ct")),
+        ["vm" | "ct", "show", id] => get(&format!("/guests/{}", vmid(id)?), View::Guest),
+        ["vm" | "ct", "destroy", id] => req("DELETE", format!("/guests/{}", vmid(id)?), None, View::Done("silindi")),
+        ["vm" | "ct", action @ ("start" | "stop" | "reboot" | "pause" | "resume"), id] => {
+            req("POST", format!("/guests/{}/{action}", vmid(id)?), None, View::Task)
+        }
+        ["vm" | "ct", "set", id, pairs @ ..] => req("PATCH", format!("/guests/{}", vmid(id)?), Some(patch_body(pairs)?), View::Guest),
+        ["vm" | "ct", "clone", id, name] => req("POST", format!("/guests/{}/clone", vmid(id)?), Some(json!({ "name": name })), View::Cloned),
+        ["vm", "clone", id, name, "--linked"] => req("POST", format!("/guests/{}/clone", vmid(id)?), Some(json!({ "name": name, "linked": true })), View::Cloned),
+        ["vm", "suspend", id] => req("POST", format!("/guests/{}/suspend", vmid(id)?), None, View::Task),
+        ["vm", "discard-suspend", id] => req("POST", format!("/guests/{}/discard-suspend", vmid(id)?), None, View::Done("askı durumu atıldı")),
+        ["vm", "template", id, state @ ("on" | "off")] => req("POST", format!("/guests/{}/template", vmid(id)?), Some(json!({ "on": *state == "on" })), View::Done("tamam")),
+        ["vm", "resize", id, size] => {
+            let disk_gb: u64 = size.trim_end_matches(['G', 'g']).parse().map_err(|_| format!("boyut GB cinsinden bir sayı olmalı: {size}"))?;
+            req("POST", format!("/guests/{}/resize", vmid(id)?), Some(json!({ "disk_gb": disk_gb })), View::Task)
+        }
+        ["ct", "exec", id, command @ ..] if !command.is_empty() => {
+            req("POST", format!("/guests/{}/exec", vmid(id)?), Some(json!({ "command": command.join(" ") })), View::Output)
+        }
+        ["snapshot", "list", id] => get(&format!("/guests/{}", vmid(id)?), View::Snapshots),
+        ["snapshot", "create", id, name] => req("POST", format!("/guests/{}/snapshots", vmid(id)?), Some(json!({ "name": name })), View::Task),
+        ["snapshot", "rollback", id, name] => req("POST", format!("/guests/{}/snapshots/{name}/rollback", vmid(id)?), None, View::Task),
+        ["snapshot", "delete", id, name] => req("DELETE", format!("/guests/{}/snapshots/{name}", vmid(id)?), None, View::Task),
+        ["vm", "disk", "add", id, size] => {
+            let size_gb: u64 = size.trim_end_matches(['G', 'g']).parse().map_err(|_| format!("boyut GB olarak bir sayı olmalı: {size}"))?;
+            req("POST", format!("/guests/{}/disks", vmid(id)?), Some(json!({ "size_gb": size_gb })), View::Done("disk eklendi"))
+        }
+        ["vm", "nic", "add", id, network] => req("POST", format!("/guests/{}/nics", vmid(id)?), Some(json!({ "network": network })), View::Done("ağ kartı eklendi")),
+        ["vm", "disk", "remove", id, n] => {
+            let n: u8 = n.parse().map_err(|_| format!("disk numarası bir sayı olmalı: {n}"))?;
+            req("DELETE", format!("/guests/{}/disks/{n}", vmid(id)?), None, View::Done("disk silindi"))
+        }
+        ["media", "list"] => get("/media", View::Media),
+        ["media", "delete", name] => req("DELETE", format!("/media/{name}"), None, View::Done("silindi")),
+        ["media", "fetch", url] => req("POST", "/media/fetch".to_string(), Some(json!({ "url": url })), View::Done("indiriliyor; sonuç: redox task list")),
+        ["media", "fetch", url, sha] => req("POST", "/media/fetch".to_string(), Some(json!({ "url": url, "sha256": sha })), View::Done("indiriliyor; sonuç: redox task list")),
+        ["backup", "list"] => get("/backups", View::Backups),
+        ["backup", "create", id] => req("POST", format!("/guests/{}/backups", vmid(id)?), None, View::BackupStarted),
+        ["backup", "restore", id] => req("POST", format!("/backups/{id}/restore"), None, View::Task),
+        ["backup", "push", id] => req("POST", format!("/backups/{id}/push"), None, View::Done("dış hedefe gönderiliyor; sonuç: redox task list")),
+        ["backup", "verify", id] => req("POST", format!("/backups/{id}/verify"), None, View::Done("doğrulanıyor; sonuç: redox task list")),
+        ["backup", "delete", id] => req("DELETE", format!("/backups/{id}"), None, View::Done("yedek silindi")),
+        ["storage", "list"] => get("/storage", View::Storage),
+        ["peer", "list"] => get("/peers", View::Peers),
+        ["peer", "import", peer, id] => req("POST", format!("/peers/{peer}/import/{}", vmid(id)?), None, View::Done("kopyalama başladı; sonuç: redox task list")),
+        ["task", "list"] => get("/tasks", View::Tasks),
+        _ => Err(format!("anlaşılmayan komut: {}\n\n{USAGE}", a.join(" "))),
+    }
+}
+
+fn s<'a>(v: &'a Value, key: &str) -> &'a str {
+    v[key].as_str().unwrap_or("-")
+}
+
+fn n(v: &Value, key: &str) -> u64 {
+    v[key].as_u64().unwrap_or(0)
+}
+
+/// API yanıtını terminal için düz metne çevirir.
+pub fn render(view: View, v: &Value) -> String {
+    let rows = |f: &dyn Fn(&Value) -> String| -> String {
+        v.as_array().map(|a| a.iter().map(f).collect::<Vec<_>>().join("\n")).unwrap_or_default()
+    };
+    let guest = |g: &Value| {
+        format!(
+            "{:<6} {:<16} {:<3} {:<12} {:<8} cpu {:>3}%  bellek {}/{} GB",
+            n(g, "vmid"), s(g, "name"), s(g, "kind"), s(g, "node"), s(g, "status"),
+            n(g, "cpu_pct"), mb_as_gb(n(g, "mem_used_mb")), mb_as_gb(n(g, "mem_total_mb")),
+        )
+    };
+    let node = |x: &Value| {
+        format!(
+            "{:<12} {:<8} cpu {:>3}%  bellek {}/{} GB  {} çekirdek  {}",
+            s(x, "id"), s(x, "status"), n(x, "cpu_pct"),
+            mb_as_gb(n(x, "mem_used_mb")), mb_as_gb(n(x, "mem_total_mb")), n(x, "cores"), s(x, "ip"),
+        )
+    };
+    let or_none = |text: String, empty: &str| if text.is_empty() { empty.to_string() } else { text };
+    match view {
+        View::Cluster => format!(
+            "küme      {}\ndüğümler  {}/{} çevrimiçi{}\ncpu       {}% ({} çekirdek)\nbellek    {}% ({}/{} GB)\ndepolama  {}% ({} / {})\nkonuklar  {}/{} çalışıyor",
+            s(v, "name"), n(v, "nodes_online"), n(v, "nodes_total"),
+            if v["quorate"].as_bool() == Some(true) { ", çoğunluk var" } else { ", ÇOĞUNLUK YOK" },
+            n(v, "cpu_pct"), n(v, "cores"),
+            n(v, "mem_pct"), mb_as_gb(n(v, "mem_used_mb")), mb_as_gb(n(v, "mem_total_mb")),
+            n(v, "storage_pct"), gb(n(v, "storage_used_gb")), gb(n(v, "storage_total_gb")),
+            n(v, "guests_running"), n(v, "guests_total"),
+        ),
+        View::Nodes => rows(&node),
+        View::Node => node(v),
+        View::Guests(kind) => v
+            .as_array()
+            .map(|a| a.iter().filter(|g| s(g, "kind") == kind).map(guest).collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default(),
+        View::Guest => {
+            let list = |key: &str| v[key].as_array().map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+            let forwards = v["forwards"]
+                .as_array()
+                .map(|a| a.iter().map(|f| format!("{}:{}", n(f, "host_port"), n(f, "guest_port"))).collect::<Vec<_>>().join(", "))
+                .unwrap_or_default();
+            let schedule = match v["backup_time"].as_str() {
+                Some(t) => format!("her gün {t}, son {} yedek", n(v, "backup_keep")),
+                None => "kapalı".to_string(),
+            };
+            format!(
+                "{}\nişletim sistemi  {}\nçekirdek         {}\ndisk             {} GB ({})\nağ               {}  ip {}\netiketler        {}\nport yönlendirme {}\notomatik yedek   {}",
+                guest(v), s(v, "os"), n(v, "cores"), n(v, "disk_gb"), s(v, "storage"), s(v, "bridge"), s(v, "ip"),
+                or_none(list("tags"), "-"), or_none(forwards, "-"), schedule,
+            )
+        }
+        View::Storage => rows(&|x| {
+            format!(
+                "{:<10} {:<12} {:<9} {} / {}",
+                s(x, "id"), x["node"].as_str().unwrap_or("paylaşımlı"), s(x, "kind"),
+                gb(n(x, "used_gb")), gb(n(x, "total_gb")),
+            )
+        }),
+        View::Peers => or_none(
+            rows(&|x| {
+                let state = match (x["error"].as_str(), x["checked"].is_null()) {
+                    (Some(e), _) => format!("HATA: {e}"),
+                    (None, true) => "bekleniyor".to_string(),
+                    (None, false) => format!("{} düğüm, {} konuk", x["nodes"].as_array().map_or(0, Vec::len), x["guests"].as_array().map_or(0, Vec::len)),
+                };
+                format!("{:<14} {:<36} {state}", s(x, "name"), s(x, "url"))
+            }),
+            "eş sunucu tanımlı değil (redox serve --peers DOSYA)",
+        ),
+        View::Tasks => rows(&|t| {
+            format!(
+                "#{:<4} {:<7} {:<12} {:<10} redox {}{}",
+                n(t, "id"), s(t, "status"), s(t, "node"), s(t, "user"), s(t, "command"),
+                t["message"].as_str().map(|m| format!("  ({m})")).unwrap_or_default()
+            )
+        }),
+        View::Snapshots => or_none(
+            v["snapshots"]
+                .as_array()
+                .map(|a| a.iter().map(|x| format!("{:<32} {}", s(x, "name"), n(x, "created"))).collect::<Vec<_>>().join("\n"))
+                .unwrap_or_default(),
+            "anlık görüntü yok",
+        ),
+        View::Backups => or_none(
+            rows(&|b| {
+                let kind = if b["auto"].as_bool() == Some(true) { "otomatik" } else { "elle" };
+                let offsite = if b["offsite"].as_bool() == Some(true) { "  dış kopya var" } else { "" };
+                let added = b["new_mb"].as_u64().map(|mb| format!("  artımlı (+{mb} MB yeni)")).unwrap_or_default();
+                let frozen = if b["quiesced"].as_bool() == Some(true) { "  donduruldu" } else { "" };
+                let frozen = format!("{frozen}{}", if b["cbt"].as_bool() == Some(true) { "  hızlı" } else { "" });
+                let disks = b["disks"].as_array().filter(|d| !d.is_empty()).map(|d| format!("  +{} ek disk", d.len())).unwrap_or_default();
+                format!("{:<28} konuk {:<6} {:>7} MB  {kind}{added}{disks}{frozen}{offsite}", s(b, "id"), n(b, "vmid"), n(b, "size_mb"))
+            }),
+            "yedek yok",
+        ),
+        View::Media => or_none(
+            rows(&|m| format!("{:<44} {:<8} {:>8} MB", s(m, "name"), if m["iso"].as_bool() == Some(true) { "kalıp" } else { "imaj" }, m["bytes"].as_u64().unwrap_or(0).div_ceil(1024 * 1024))),
+            "dosya yok",
+        ),
+        View::Task => format!("görev #{} başlatıldı: redox {}", n(v, "id"), s(v, "command")),
+        View::BackupStarted => format!("yedek alınıyor: {}", s(v, "id")),
+        View::Cloned => format!("klonlanıyor: yeni konuk {}", n(v, "vmid")),
+        View::Output => v["output"].as_str().unwrap_or_default().trim_end().to_string(),
+        View::Done(text) => text.to_string(),
+    }
+}
+
+fn base_url() -> String {
+    std::env::var("REDOX_URL").unwrap_or_else(|_| format!("http://{DEFAULT_ADDR}"))
+}
+
+fn api_error(e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Status(401, _) => "hata (401): kimlik doğrulanamadı. REDOX_TOKEN değişkenine geçerli bir API token'ı verin (üretmek için: redox token create <kullanıcı> <etiket>)".to_string(),
+        ureq::Error::Status(code, res) => {
+            let body: Value = res.into_json().unwrap_or(Value::Null);
+            format!("hata ({code}): {}", body["error"].as_str().unwrap_or("sunucu isteği reddetti"))
+        }
+        ureq::Error::Transport(t) => format!(
+            "sunucuya bağlanılamadı ({}): {t}\nSunucu çalışıyor mu? Başlatmak için: redox serve",
+            base_url()
+        ),
+    }
+}
+
+/// İstemci komutunu çalıştırır ve yazdırılacak metni döndürür.
+pub fn run(args: &[String]) -> Result<String, String> {
+    let request = parse(args)?;
+    let url = format!("{}/api/v1{}", base_url().trim_end_matches('/'), request.path);
+    let token = std::env::var("REDOX_TOKEN").unwrap_or_default();
+    let call = ureq::request(request.method, &url).set("Authorization", &format!("Bearer {token}"));
+    let response = match &request.body {
+        Some(body) => call.send_json(body),
+        None => call.call(),
+    }
+    .map_err(api_error)?;
+    if let View::Done(_) = request.view {
+        return Ok(render(request.view, &Value::Null));
+    }
+    let value: Value = response.into_json().map_err(|e| format!("sunucu yanıtı okunamadı: {e}"))?;
+    Ok(render(request.view, &value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(s: &str) -> Vec<String> {
+        s.split_whitespace().map(String::from).collect()
+    }
+
+    fn parsed(s: &str) -> (&'static str, String, Option<Value>, View) {
+        let r = parse(&args(s)).unwrap_or_else(|e| panic!("{s}: {e}"));
+        (r.method, r.path, r.body, r.view)
+    }
+
+    #[test]
+    fn parses_commands_to_api_calls() {
+        assert_eq!(parsed("cluster status"), ("GET", "/cluster".into(), None, View::Cluster));
+        assert_eq!(parsed("ct list"), ("GET", "/guests".into(), None, View::Guests("ct")));
+        assert_eq!(parsed("vm show 102"), ("GET", "/guests/102".into(), None, View::Guest));
+        assert_eq!(parsed("ct reboot 201"), ("POST", "/guests/201/reboot".into(), None, View::Task));
+        assert_eq!(parsed("vm destroy 103"), ("DELETE", "/guests/103".into(), None, View::Done("silindi")));
+        assert_eq!(parsed("node status pve-ist-01"), ("GET", "/nodes/pve-ist-01".into(), None, View::Node));
+    }
+
+    #[test]
+    fn parses_operations_with_bodies() {
+        assert_eq!(parsed("vm clone 103 kopya"), ("POST", "/guests/103/clone".into(), Some(json!({"name": "kopya"})), View::Cloned));
+        assert_eq!(parsed("vm resize 103 300G"), ("POST", "/guests/103/resize".into(), Some(json!({"disk_gb": 300})), View::Task));
+        assert_eq!(parsed("ct exec 200 ls -la /etc"), ("POST", "/guests/200/exec".into(), Some(json!({"command": "ls -la /etc"})), View::Output));
+        assert_eq!(parsed("snapshot create 103 temiz"), ("POST", "/guests/103/snapshots".into(), Some(json!({"name": "temiz"})), View::Task));
+        assert_eq!(parsed("snapshot rollback 103 temiz"), ("POST", "/guests/103/snapshots/temiz/rollback".into(), None, View::Task));
+        assert_eq!(parsed("snapshot delete 103 temiz"), ("DELETE", "/guests/103/snapshots/temiz".into(), None, View::Task));
+        assert_eq!(parsed("snapshot list 103"), ("GET", "/guests/103".into(), None, View::Snapshots));
+        assert_eq!(parsed("backup create 103"), ("POST", "/guests/103/backups".into(), None, View::BackupStarted));
+        assert_eq!(parsed("backup restore vm-103-1"), ("POST", "/backups/vm-103-1/restore".into(), None, View::Task));
+        assert_eq!(parsed("backup delete vm-103-1"), ("DELETE", "/backups/vm-103-1".into(), None, View::Done("yedek silindi")));
+        assert_eq!(parsed("backup list"), ("GET", "/backups".into(), None, View::Backups));
+        assert_eq!(parsed("vm nic add 103 vmbr1"), ("POST", "/guests/103/nics".into(), Some(json!({ "network": "vmbr1" })), View::Done("ağ kartı eklendi")));
+        assert_eq!(parsed("backup verify vm-103-1").1, "/backups/vm-103-1/verify");
+    }
+
+    #[test]
+    fn set_builds_a_typed_patch() {
+        let (method, path, body, _) = parsed("vm set 103 cores=4 memory=8192 name=derleme tags=Prod,web onboot=false forwards=8080:80,2222:22 backup-time=03:30 backup-keep=5 bridge=nat iso=");
+        assert_eq!((method, path.as_str()), ("PATCH", "/guests/103"));
+        assert_eq!(
+            body.unwrap(),
+            json!({
+                "cores": 4, "memory_mb": 8192, "name": "derleme", "tags": ["prod", "web"], "onboot": false,
+                "forwards": [{"host_port": 8080, "guest_port": 80}, {"host_port": 2222, "guest_port": 22}],
+                "backup_time": "03:30", "backup_keep": 5, "bridge": "nat", "iso": ""
+            })
+        );
+        let (_, _, body, _) = parsed("vm set 103 boot-order=2 boot-delay=30 schedules=start@08:00@1-5,stop@20:00");
+        assert_eq!(
+            body.unwrap(),
+            json!({ "boot_order": 2, "boot_delay": 30, "schedules": [{"action": "start", "time": "08:00", "days": 31}, {"action": "stop", "time": "20:00", "days": 127}] })
+        );
+        assert_eq!(parsed("vm set 103 schedules=").2.unwrap(), json!({ "schedules": [] }), "boş liste zamanlamayı kaldırır");
+        assert_eq!(parsed("vm set 103 restart=true").2.unwrap(), json!({ "restart": true }));
+        assert_eq!(parsed("vm set 103 disk-mbps=50 disk-iops=2000 net-mbps=100").2.unwrap(), json!({ "disk_mbps": 50, "disk_iops": 2000, "net_mbps": 100 }));
+        assert_eq!(parsed("vm set 103 vlan=20 nics=vmbr1:30,nat").2.unwrap(), json!({ "vlan": 20, "nics": ["vmbr1:30", "nat"] }));
+        assert_eq!(parsed("vm set 103 shares=ortak,veri:ro").2.unwrap(), json!({ "shares": [{"name": "ortak", "readonly": false}, {"name": "veri", "readonly": true}] }));
+        for (bad, needle) in [
+            ("vm set 103 schedules=pause@08:00", "geçersiz zamanlama"),
+            ("vm set 103 shares=../x", "geçersiz paylaşım"),
+            ("vm set 103 schedules=start@8", "geçersiz zamanlama"),
+            ("vm set 103 boot-order=ilk", "bir sayı olmalı"),
+            ("vm set 103", "en az bir"),
+            ("vm set 103 cores", "anahtar=değer biçiminde değil"),
+            ("vm set 103 cores=dört", "cores bir sayı olmalı"),
+            ("vm set 103 renk=mavi", "bilinmeyen anahtar"),
+            ("vm set 103 onboot=belki", "true ya da false"),
+            ("vm set 103 forwards=8080", "geçersiz yönlendirme"),
+        ] {
+            let err = parse(&args(bad)).unwrap_err();
+            assert!(err.contains(needle), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn rejects_bad_input_with_usage() {
+        assert!(parse(&args("vm start abc")).unwrap_err().contains("kimlik bir sayı olmalı"));
+        assert!(parse(&args("vm explode 100")).unwrap_err().contains("redox serve"));
+        assert!(parse(&[]).unwrap_err().contains("anlaşılmayan komut"));
+        assert!(parse(&args("ct exec 200")).unwrap_err().contains("anlaşılmayan komut"), "komutsuz exec");
+        assert!(parse(&args("vm resize 103 büyük")).unwrap_err().contains("boyut GB"));
+        assert!(parse(&args("ct resize 200 10")).is_err(), "konteynerde disk büyütme yok");
+    }
+
+    #[test]
+    fn renders_guest_list_filtered_by_kind() {
+        let v = json!([
+            {"vmid": 100, "name": "web", "kind": "vm", "node": "n1", "status": "running", "cpu_pct": 23, "mem_used_mb": 5325, "mem_total_mb": 8192},
+            {"vmid": 200, "name": "dns", "kind": "ct", "node": "n1", "status": "stopped", "cpu_pct": 0, "mem_used_mb": 0, "mem_total_mb": 512},
+        ]);
+        let out = render(View::Guests("ct"), &v);
+        assert!(out.contains("200") && out.contains("dns") && out.contains("0/0.5 GB"), "{out}");
+        assert!(!out.contains("web"));
+    }
+
+    #[test]
+    fn renders_cluster_summary() {
+        let v = json!({"name": "ist", "nodes_online": 2, "nodes_total": 3, "quorate": true, "cpu_pct": 40, "cores": 80,
+            "mem_pct": 63, "mem_used_mb": 205824, "mem_total_mb": 327680, "storage_pct": 77,
+            "storage_used_gb": 9612, "storage_total_gb": 12500, "guests_running": 5, "guests_total": 8});
+        let out = render(View::Cluster, &v);
+        assert!(out.contains("2/3 çevrimiçi, çoğunluk var"), "{out}");
+        assert!(out.contains("77% (9.6 TB / 12.5 TB)"), "{out}");
+    }
+
+    #[test]
+    fn renders_operation_results() {
+        assert_eq!(render(View::Task, &json!({"id": 7, "command": "vm snapshot 103 temiz"})), "görev #7 başlatıldı: redox vm snapshot 103 temiz");
+        assert_eq!(render(View::Cloned, &json!({"vmid": 105})), "klonlanıyor: yeni konuk 105");
+        assert_eq!(render(View::BackupStarted, &json!({"id": "vm-103-1"})), "yedek alınıyor: vm-103-1");
+        assert_eq!(render(View::Output, &json!({"output": "merhaba\n\n"})), "merhaba");
+        assert_eq!(render(View::Snapshots, &json!({"snapshots": []})), "anlık görüntü yok");
+        assert!(render(View::Snapshots, &json!({"snapshots": [{"name": "temiz", "created": 5}]})).starts_with("temiz"));
+        assert_eq!(render(View::Backups, &json!([])), "yedek yok");
+        let b = render(View::Backups, &json!([{"id": "vm-103-1", "vmid": 103, "size_mb": 42, "auto": true}]));
+        assert!(b.contains("vm-103-1") && b.contains("42 MB") && b.contains("otomatik") && !b.contains("artımlı"), "{b}");
+        let b = render(View::Backups, &json!([{"id": "vm-103-2", "vmid": 103, "size_mb": 900, "auto": false, "new_mb": 12}]));
+        assert!(b.contains("900 MB") && b.contains("artımlı (+12 MB yeni)") && !b.contains("ek disk"), "{b}");
+        let b = render(View::Backups, &json!([{"id": "vm-103-3", "vmid": 103, "size_mb": 5, "auto": false, "disks": [{"id": 1, "size_gb": 10}, {"id": 2, "size_gb": 20}]}]));
+        assert!(b.contains("+2 ek disk"), "{b}");
+        let peers = render(View::Peers, &json!([{"name": "ankara", "url": "https://a.example.com", "checked": 5, "error": null, "nodes": [{}], "guests": [{}, {}]},
+            {"name": "izmir", "url": "https://i.example.com", "checked": 5, "error": "token reddedildi (401)"}, {"name": "yeni", "url": "https://y.example.com", "checked": null}]));
+        assert!(peers.contains("1 düğüm, 2 konuk") && peers.contains("HATA: token reddedildi") && peers.contains("bekleniyor"), "{peers}");
+        assert!(render(View::Peers, &json!([])).contains("tanımlı değil"));
+        assert_eq!(parse(&["peer".to_string(), "list".to_string()]).unwrap().path, "/peers");
+        let g = render(View::Guest, &json!({"vmid": 103, "name": "x", "kind": "vm", "node": "n", "status": "stopped", "os": "debian", "cores": 2,
+            "disk_gb": 10, "storage": "local", "bridge": "nat", "tags": ["a", "b"], "forwards": [{"host_port": 8080, "guest_port": 80}], "backup_time": "03:30", "backup_keep": 5}));
+        assert!(g.contains("etiketler        a, b") && g.contains("8080:80") && g.contains("her gün 03:30, son 5 yedek"), "{g}");
+    }
+}

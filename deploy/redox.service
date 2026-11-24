@@ -1,0 +1,51 @@
+[Unit]
+Description=RedoX VE yönetim sunucusu
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=redox
+Group=redox
+# /var/lib/redox dizinini hizmet kullanıcısına ait ve 0700 olarak oluşturur.
+StateDirectory=redox
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/redox
+UMask=0077
+
+# Yalnızca yerel arayüzde dinler; dış dünyaya TLS'li ters vekil (Caddy) açar.
+ExecStart=/usr/local/bin/redox serve \
+    --addr 127.0.0.1:8006 \
+    --users /var/lib/redox/users.json \
+    --state /var/lib/redox/state.json \
+    --behind-tls-proxy
+Restart=on-failure
+RestartSec=2
+
+# --- Sandbox: süreç ele geçirilse bile sistemin geri kalanına erişemesin ---
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

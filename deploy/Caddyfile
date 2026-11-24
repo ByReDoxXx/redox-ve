@@ -1,0 +1,15 @@
+# /etc/caddy/Caddyfile
+# "redox.example.com" yerine kendi alan adınızı yazın. Alan adının A/AAAA kaydı
+# bu sunucuyu göstermeli; Caddy sertifikayı (Let's Encrypt) kendisi alır ve yeniler.
+
+redox.example.com {
+	encode zstd gzip
+
+	# Caddy istemci adresini X-Forwarded-For'a kendisi yazar ve istemcinin
+	# gönderdiği değeri atar; RedoX giriş sınırlayıcısı bu adrese güvenir.
+	reverse_proxy 127.0.0.1:8006
+
+	log {
+		output file /var/log/caddy/redox.log
+	}
+}

@@ -1,0 +1,67 @@
+[Unit]
+Description=RedoX VE yönetim sunucusu (QEMU/KVM + köprü ağı + LXC)
+After=network-online.target lxc-net.service
+Wants=network-online.target
+
+# DİKKAT: Bu birim gerçek bir sunucuda denenmedi. Köprü ağı ve yetkisiz LXC, setuid
+# yardımcılara (qemu-bridge-helper, newuidmap, lxc-user-nic) ve ad alanlarına ihtiyaç duyar;
+# bu yüzden redox-qemu.service içindeki bazı sandbox kısıtları burada bilerek yoktur.
+# Yalnızca NAT'lı sanal makineler yetiyorsa daha sıkı olan redox-qemu.service'i kullanın.
+
+[Service]
+User=redox
+Group=redox
+SupplementaryGroups=kvm
+StateDirectory=redox
+StateDirectoryMode=0711
+WorkingDirectory=/var/lib/redox
+UMask=0077
+
+ExecStart=/usr/local/bin/redox serve \
+    --addr 127.0.0.1:8006 \
+    --users /var/lib/redox/users.json \
+    --driver qemu \
+    --data-dir /var/lib/redox \
+    --behind-tls-proxy
+Restart=on-failure
+RestartSec=2
+# Hizmet yeniden başlarken sanal makineler ve konteynerler çalışmaya devam etsin.
+KillMode=process
+
+# Yetkisiz LXC kendi cgroup alt ağacını yönetebilmelidir.
+Delegate=yes
+
+# --- Sandbox (gevşek) ---
+# Şunlar YOK, çünkü gerekli:
+#   NoNewPrivileges      -> setuid yardımcılar yetki yükseltemezdi
+#   RestrictNamespaces   -> konteynerler kullanıcı/ağ/bağlama ad alanı kurar
+#   ProtectControlGroups -> LXC cgroup dosyalarına yazar
+#   SystemCallFilter     -> mount, unshare, setns gibi çağrılar gerekir
+# Yardımcıların alabileceği yetkiler şunlarla sınırlıdır:
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_MKNOD CAP_NET_RAW CAP_SYS_CHROOT CAP_KILL CAP_SETPCAP CAP_AUDIT_WRITE
+AmbientCapabilities=
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+DevicePolicy=closed
+DeviceAllow=/dev/kvm rw
+DeviceAllow=/dev/net/tun rw
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/zero rw
+DeviceAllow=/dev/full rw
+DeviceAllow=/dev/tty rw
+DeviceAllow=/dev/ptmx rw
+DeviceAllow=char-pts rw
+DeviceAllow=/dev/urandom r
+DeviceAllow=/dev/random r
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

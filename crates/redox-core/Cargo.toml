@@ -1,0 +1,12 @@
+[package]
+name = "redox-core"
+version.workspace = true
+edition.workspace = true
+description = "RedoX VE alan modeli: küme, düğüm, konuk, depolama ve görev durum makinesi"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

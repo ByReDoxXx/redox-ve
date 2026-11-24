@@ -1,0 +1,10 @@
+/target
+redox-state.json
+redox-users.json
+
+# Yerel geliştirme dosyaları (oturumlar, deneme kullanıcıları)
+/.claude/
+
+# Tasarım çalışma dosyaları; yalnızca yazı logonun kaynağı depoda durur
+/design/*
+!/design/wordmark/

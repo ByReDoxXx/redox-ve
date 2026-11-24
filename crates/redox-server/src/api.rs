@@ -1,0 +1,437 @@
+//! JSON REST API (`/api/v1`). Arayüz ve `redox` komut satırı aynı kuralları kullanır.
+
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete as delete_route, get, post};
+use axum::{Extension, Json, Router};
+use redox_core::{
+    Action, Backup, ClusterSummary, Error, ErrorKind, Guest, GuestPatch, GuestSpec, Node, Storage, Task, TaskId, VmId,
+};
+use serde_json::json;
+
+use crate::auth::Identity;
+use crate::state::AppState;
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/cluster", get(cluster))
+        .route("/nodes", get(nodes))
+        .route("/nodes/{id}", get(node))
+        .route("/guests", get(guests).post(create))
+        .route("/guests/{vmid}", get(guest).delete(delete).patch(update))
+        .route("/guests/{vmid}/snapshots", post(snapshot_create))
+        .route("/guests/{vmid}/snapshots/{name}", delete_route(snapshot_delete))
+        .route("/guests/{vmid}/snapshots/{name}/rollback", post(snapshot_rollback))
+        .route("/guests/{vmid}/backups", post(backup_create))
+        .route("/guests/{vmid}/clone", post(clone))
+        .route("/guests/{vmid}/template", post(template))
+        .route("/guests/{vmid}/suspend", post(suspend))
+        .route("/guests/{vmid}/discard-suspend", post(discard_suspend))
+        .route("/guests/{vmid}/state", get(suspend_state))
+        .route("/guests/{vmid}/export", get(crate::ui_ops::guest_export))
+        .route("/guests/{vmid}/resize", post(resize))
+        .route("/guests/{vmid}/disks", post(disk_add))
+        .route("/guests/{vmid}/nics", post(nic_add))
+        .route("/guests/{vmid}/disks/{id}", delete_route(disk_remove))
+        .route("/guests/{vmid}/exec", post(exec))
+        .route("/backups", get(backups))
+        .route("/backups/{id}", delete_route(backup_delete))
+        .route("/backups/{id}/restore", post(backup_restore))
+        .route("/backups/{id}/push", post(backup_push))
+        .route("/backups/{id}/verify", post(backup_verify))
+        .route("/backups/{id}/download", get(crate::ui_ops::backup_download))
+        .route("/guests/{vmid}/{action}", post(act))
+        .route("/storage", get(storage))
+        .route("/media", get(media_list))
+        .route("/media/fetch", post(media_fetch))
+        .route("/media/{name}", axum::routing::put(media_put).delete(media_delete))
+        .route("/peers", get(peers))
+        .route("/peers/{name}/import/{vmid}", post(peer_import))
+        .route("/tasks", get(tasks))
+        .route("/tasks/{id}", get(task))
+}
+
+pub enum ApiError {
+    Core(Error),
+    UnknownAction(String),
+}
+
+impl From<Error> for ApiError {
+    fn from(e: Error) -> Self {
+        ApiError::Core(e)
+    }
+}
+
+pub fn status_for(kind: ErrorKind) -> StatusCode {
+    match kind {
+        ErrorKind::NotFound => StatusCode::NOT_FOUND,
+        ErrorKind::Conflict => StatusCode::CONFLICT,
+        ErrorKind::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
+        ErrorKind::Driver => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let (status, code, message) = match self {
+            ApiError::Core(e) => (status_for(e.kind()), e.code(), e.to_string()),
+            ApiError::UnknownAction(a) => (
+                StatusCode::NOT_FOUND,
+                "unknown_action",
+                format!("bilinmeyen eylem \"{a}\"; geçerli eylemler: start, stop, reboot, pause, resume"),
+            ),
+        };
+        (status, Json(json!({ "error": message, "code": code }))).into_response()
+    }
+}
+
+type ApiResult<T> = Result<Json<T>, ApiError>;
+
+async fn cluster(State(st): State<AppState>) -> Json<ClusterSummary> {
+    Json(st.snapshot().summary())
+}
+
+/// Eş sunucudaki kapalı sanal makineyi bu sunucuya kopyalar; sonuç görev günlüğünde görünür.
+async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
+    st.import_from_peer(&name, vmid, &me.user)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Askıdaki konuğun bellek durumunu indirir (başka sunucuya taşımak için). Konuğun belleğinin tamamıdır:
+/// parolalar ve anahtarlar içerebilir; yalnızca yönetici indirebilir.
+async fn suspend_state(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>) -> Response {
+    use std::io::Read;
+    if !me.can_write() {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "bellek durumunu yalnızca yönetici indirebilir", "code": "forbidden" }))).into_response();
+    }
+    let guest = match st.snapshot().guest(vmid).cloned() {
+        Ok(g) => g,
+        Err(e) => return ApiError::Core(e).into_response(),
+    };
+    let found = st.driver().suspend_state(&guest).filter(|_| guest.hw.suspended && guest.lock.is_none());
+    let Some((path, running, layout)) = found else {
+        return (StatusCode::CONFLICT, Json(json!({ "error": format!("{vmid} askıda değil ya da üzerinde işlem sürüyor"), "code": "not_suspended" }))).into_response();
+    };
+    let opened = std::fs::File::open(&path).and_then(|file| Ok((file.metadata()?.len(), file)));
+    let Ok((len, file)) = opened else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "bellek durumu dosyası okunamadı", "code": "driver" }))).into_response();
+    };
+    let stream = futures_util::stream::unfold(file, |mut file| async move {
+        let read = tokio::task::spawn_blocking(move || {
+            let mut buf = vec![0u8; 256 * 1024];
+            let n = file.read(&mut buf);
+            (
+                n.map(|n| {
+                    buf.truncate(n);
+                    buf
+                }),
+                file,
+            )
+        })
+        .await;
+        match read {
+            Ok((Ok(buf), _)) if buf.is_empty() => None,
+            Ok((result, file)) => Some((result, file)),
+            Err(_) => None,
+        }
+    });
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (axum::http::header::CONTENT_LENGTH, len.to_string()),
+            (axum::http::HeaderName::from_static("x-redox-state-running"), if running { "1" } else { "0" }.to_string()),
+            (axum::http::HeaderName::from_static("x-redox-state-layout"), layout.to_string()),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response()
+}
+
+/// Birleşik görünümdeki eş sunucuların son okunan durumu (token içermez).
+async fn peers(State(st): State<AppState>) -> Json<Vec<crate::peers::PeerView>> {
+    Json(st.peers().views())
+}
+
+async fn nodes(State(st): State<AppState>) -> Json<Vec<Node>> {
+    Json(st.snapshot().nodes)
+}
+
+async fn node(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<Node> {
+    Ok(Json(st.snapshot().node(&id)?.clone()))
+}
+
+async fn guests(State(st): State<AppState>) -> Json<Vec<Guest>> {
+    Json(st.snapshot().guests)
+}
+
+async fn guest(State(st): State<AppState>, Path(vmid): Path<VmId>) -> ApiResult<Guest> {
+    Ok(Json(st.snapshot().guest(vmid)?.clone()))
+}
+
+async fn create(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Json(spec): Json<GuestSpec>,
+) -> Result<(StatusCode, Json<Guest>), ApiError> {
+    let vmid = st.create_guest(&spec, &me.user)?;
+    let guest = st.snapshot().guest(vmid)?.clone();
+    Ok((StatusCode::CREATED, Json(guest)))
+}
+
+async fn delete(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path(vmid): Path<VmId>,
+) -> Result<StatusCode, ApiError> {
+    st.delete_guest(vmid, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn act(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path((vmid, action)): Path<(VmId, String)>,
+) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let action: Action = action.parse().map_err(|()| ApiError::UnknownAction(action))?;
+    let id = st.run_action(vmid, action, &me.user)?;
+    let task = st.snapshot().task(id)?.clone();
+    Ok((StatusCode::ACCEPTED, Json(task)))
+}
+
+async fn update(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path(vmid): Path<VmId>,
+    Json(patch): Json<GuestPatch>,
+) -> ApiResult<Guest> {
+    st.update_guest(vmid, &patch, &me.user)?;
+    Ok(Json(st.snapshot().guest(vmid)?.clone()))
+}
+
+#[derive(serde::Deserialize)]
+struct SnapshotBody {
+    name: String,
+}
+
+fn accepted(st: &AppState, id: TaskId) -> Result<(StatusCode, Json<Task>), ApiError> {
+    Ok((StatusCode::ACCEPTED, Json(st.snapshot().task(id)?.clone())))
+}
+
+async fn snapshot_create(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path(vmid): Path<VmId>,
+    Json(body): Json<SnapshotBody>,
+) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let id = st.snapshot_create(vmid, &body.name, &me.user)?;
+    accepted(&st, id)
+}
+
+async fn snapshot_delete(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path((vmid, name)): Path<(VmId, String)>,
+) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let id = st.snapshot_delete(vmid, &name, &me.user)?;
+    accepted(&st, id)
+}
+
+async fn snapshot_rollback(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path((vmid, name)): Path<(VmId, String)>,
+) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let id = st.snapshot_rollback(vmid, &name, &me.user)?;
+    accepted(&st, id)
+}
+
+#[derive(serde::Deserialize)]
+struct ResizeBody {
+    disk_gb: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct ExecBody {
+    command: String,
+}
+
+async fn clone(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path(vmid): Path<VmId>,
+    Json(body): Json<CloneBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let new_id = st.clone_guest_as(vmid, &body.name, body.linked, &me.user)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "vmid": new_id }))))
+}
+
+#[derive(serde::Deserialize)]
+struct CloneBody {
+    name: String,
+    /// Şablondan bağlı klon (disk kopyalanmaz).
+    #[serde(default)]
+    linked: bool,
+}
+
+async fn suspend(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let task = st.suspend(vmid, &me.user)?;
+    accepted(&st, task)
+}
+
+async fn discard_suspend(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>) -> Result<StatusCode, ApiError> {
+    st.discard_suspend(vmid, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize)]
+struct TemplateBody {
+    on: bool,
+}
+
+async fn template(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<TemplateBody>) -> Result<Json<Guest>, ApiError> {
+    st.set_template(vmid, body.on, &me.user)?;
+    Ok(Json(st.snapshot().guest(vmid)?.clone()))
+}
+
+async fn resize(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path(vmid): Path<VmId>,
+    Json(body): Json<ResizeBody>,
+) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let id = st.resize_disk(vmid, body.disk_gb, &me.user)?;
+    accepted(&st, id)
+}
+
+/// Konteynerde komut çalıştırır; çıktıyı döndürür. Komut 20 saniyeye kadar sürebilir.
+async fn exec(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path(vmid): Path<VmId>,
+    Json(body): Json<ExecBody>,
+) -> ApiResult<serde_json::Value> {
+    let output = tokio::task::spawn_blocking(move || st.exec(vmid, &body.command, &me.user))
+        .await
+        .map_err(|_| ApiError::Core(Error::Driver("komut çalıştırılamadı".to_string())))??;
+    Ok(Json(json!({ "output": output })))
+}
+
+async fn backups(State(st): State<AppState>) -> Json<Vec<Backup>> {
+    Json(st.snapshot().backups)
+}
+
+async fn backup_create(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path(vmid): Path<VmId>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let id = st.backup_create(vmid, &me.user)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "id": id }))))
+}
+
+async fn backup_restore(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let task = st.backup_restore(&id, &me.user)?;
+    accepted(&st, task)
+}
+
+#[derive(serde::Deserialize)]
+struct DiskBody {
+    size_gb: u64,
+}
+
+async fn disk_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<DiskBody>) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let id = st.disk_add(vmid, body.size_gb, &me.user)?;
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": id, "size_gb": body.size_gb }))))
+}
+
+#[derive(serde::Deserialize)]
+struct NicBody {
+    network: String,
+}
+
+async fn nic_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<NicBody>) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let network = redox_core::hw::normalize_network(&body.network);
+    let index = st.nic_add(vmid, &network, &me.user)?;
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "index": index, "network": network }))))
+}
+
+async fn disk_remove(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((vmid, id)): Path<(VmId, u8)>) -> Result<StatusCode, ApiError> {
+    st.disk_remove(vmid, id, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Yedeği dış hedefe gönderir; sonuç görev günlüğünde görünür.
+async fn backup_push(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    st.backup_push(&id, &me.user)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn media_list(State(st): State<AppState>) -> Json<Vec<crate::media::Media>> {
+    Json(crate::media::list(&st))
+}
+
+/// Ham gövdeyle yükleme: `curl -T dosya.iso -H "Authorization: Bearer …" URL/api/v1/media/dosya.iso`.
+/// İsteğe bağlı `X-Sha256` başlığı verilirse dosya özetiyle doğrulanır.
+async fn media_put(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>, headers: axum::http::HeaderMap, body: axum::body::Body) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    use futures_util::StreamExt;
+    let (dest, _) = crate::media::target(&st, &name)?;
+    let sha256 = headers.get("x-sha256").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let stored: Result<u64, String> = async {
+        let mut upload = crate::media::Upload::begin(dest)?;
+        let mut stream = body.into_data_stream();
+        while let Some(chunk) = stream.next().await {
+            upload.write(chunk.map_err(|e| format!("yükleme yarıda kesildi: {e}"))?).await?;
+        }
+        upload.finish(sha256.as_deref()).await
+    }
+    .await;
+    st.media_uploaded(&name, &stored.as_ref().map(|_| ()).map_err(Clone::clone), &me.user);
+    let bytes = stored.map_err(redox_core::Error::InvalidSpec)?;
+    Ok((StatusCode::CREATED, Json(json!({ "name": name, "bytes": bytes }))))
+}
+
+#[derive(serde::Deserialize)]
+struct FetchBody {
+    url: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    sha256: String,
+}
+
+async fn media_fetch(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<FetchBody>) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let name = st.media_fetch(&body.url, &body.name, &body.sha256, &me.user)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "name": name }))))
+}
+
+async fn media_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
+    st.media_delete(&name, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn backup_verify(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    st.backup_verify(&id, &me.user)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn backup_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    st.backup_delete(&id, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn storage(State(st): State<AppState>) -> Json<Vec<Storage>> {
+    Json(st.snapshot().storages)
+}
+
+async fn tasks(State(st): State<AppState>) -> Json<Vec<Task>> {
+    Json(st.snapshot().tasks)
+}
+
+async fn task(State(st): State<AppState>, Path(id): Path<TaskId>) -> ApiResult<Task> {
+    Ok(Json(st.snapshot().task(id)?.clone()))
+}

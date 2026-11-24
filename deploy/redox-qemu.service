@@ -1,0 +1,62 @@
+[Unit]
+Description=RedoX VE yönetim sunucusu (QEMU/KVM sürücüsü)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=redox
+Group=redox
+# /dev/kvm erişimi için. Kullanıcıyı kalıcı olarak eklemek isterseniz: usermod -aG kvm redox
+SupplementaryGroups=kvm
+StateDirectory=redox
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/redox
+UMask=0077
+
+ExecStart=/usr/local/bin/redox serve \
+    --addr 127.0.0.1:8006 \
+    --users /var/lib/redox/users.json \
+    --driver qemu \
+    --data-dir /var/lib/redox \
+    --behind-tls-proxy
+Restart=on-failure
+RestartSec=2
+
+# Hizmet yeniden başlarken ya da güncellenirken çalışan sanal makineler kapanmasın:
+# yalnızca redox süreci durdurulur, QEMU süreçleri yaşamaya devam eder ve yeniden sahiplenilir.
+KillMode=process
+
+# --- Sandbox ---
+# QEMU bu hizmetin alt süreci olarak çalıştığı için kısıtlar ona da uygulanır;
+# bu yüzden simülasyon birimindeki (redox.service) bazı kısıtlar burada gevşektir:
+#   - PrivateDevices yok, yerine yalnızca /dev/kvm'e izin verilir
+#   - MemoryDenyWriteExecute yok (QEMU çalışma anında kod üretir)
+#   - Sistem çağrısı süzgeci yok (QEMU'nun gereksinimleri sürüme göre değişir)
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+DevicePolicy=closed
+DeviceAllow=/dev/kvm rw
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/zero rw
+DeviceAllow=/dev/urandom r
+DeviceAllow=/dev/random r
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
