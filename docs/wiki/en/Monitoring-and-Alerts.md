@@ -32,3 +32,7 @@ redox vm usage 103
 redox vm usage 103 reset   # when a billing period closes
 redox vm df 103            # disk usage inside the guest
 ```
+
+**CSV export:** resource usage at `/usage.csv` (API: `GET /api/v1/usage.csv`), the audit log at `/audit.csv`
+(administrators only; `?q=` filters like the page). Cells that could run as formulas are neutralized for spreadsheet
+programs.

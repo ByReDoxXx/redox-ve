@@ -32,3 +32,7 @@ redox vm usage 103
 redox vm usage 103 reset   # fatura dönemi kapanınca
 redox vm df 103            # konuk içindeki disklerin doluluğu
 ```
+
+**CSV dışa aktarımı:** kaynak ölçümü `/usage.csv` (API: `GET /api/v1/usage.csv`), denetim günlüğü `/audit.csv`
+(yalnızca yönetici; sayfadaki süzgeçle `?q=`). Formül olarak çalışabilecek hücreler tablolama programları için
+etkisizleştirilir.

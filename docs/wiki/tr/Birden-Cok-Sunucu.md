@@ -16,6 +16,11 @@ tanıtırsınız (`--peers DOSYA`, her satır `AD ADRES TOKEN`); *Küme* sayfas�
 - **Çalışırken Al:** çalışan konuğu orada askıya alır, diskini ve belleğini kopyalar, burada kaldığı yerden sürdürür.
   Konuk yeniden başlamaz ama kopyalama boyunca yanıt vermez.
 
+- **Konteynerler:** *Buraya Al* konteyneri yedeği üzerinden kopyalar. Bu sunucuda aynı dağıtımın şablonundan boş bir
+  konteyner oluşturulur, sonra kök dosya sistemi yedekle değiştirilir. Kaynak çalışmaya devam eder (yedek sırasında
+  kısa süre dondurulur); kopya kapalı gelir. Bu sunucuda LXC kurulu olmalıdır. **Sahte LXC araçlarıyla sınandı; gerçek
+  LXC ile denenmedi.**
+
 Kesintisiz canlı taşıma ve kendiliğinden devralma yoktur.
 
 ## Çoğaltma (yedek kopya)
@@ -27,7 +32,7 @@ redox replica run <eş> <kimlik>        # şimdi
 redox replica remove <eş> <kimlik>
 ```
 
-Eşteki sanal makinenin kopyası bu sunucuda düzenli tazelenir; kaynak çalışmaya devam eder. Kopya `<ad>-kopya` adıyla
+Eşteki sanal makinenin ya da konteynerin kopyası bu sunucuda düzenli tazelenir; kaynak çalışmaya devam eder. Kopya `<ad>-kopya` adıyla
 kapalı durur. Kaynak sunucu ölürse kopyayı buradan **siz** başlatırsınız; kayıp, son turdan beri yazılanlardır.
 Çalışan bir kopyanın üzerine yazılmaz. Her tur diskin tamamını kopyalar (artımlı değildir).
 

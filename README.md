@@ -60,6 +60,8 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Maintenance mode: drain the guests before a host update and start them again afterwards.
 - Disk usage inside guests (through the agent) with alerts; alerts by webhook, e-mail, ntfy and Telegram.
 - Read-only API tokens and an optional API rate limit.
+- Containers can be copied and replicated between servers; a forecast of when the backup storage fills up; CSV export
+  of resource usage and the audit log; the virtio-win driver media in the image catalog.
 - Turkish and English throughout: a switch in the top bar, `--lang en` as the server default, API error messages by
   `Accept-Language`, and the command line with `REDOX_LANG=en`.
 
@@ -418,7 +420,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-496 tests pass on Linux and 428 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+502 tests pass on Linux and 433 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 

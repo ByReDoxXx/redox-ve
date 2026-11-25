@@ -40,6 +40,9 @@ server; administrators only, every access is written to the audit log).
 - **Unusual-change warning:** when an incremental backup changes many times the usual amount, the backup is flagged (a
   possible sign of ransomware). After checking, dismiss it with `redox backup ack <backup>`.
 - **Daily report:** `--backup-report 07:30` (needs e-mail settings) or `redox backup report`.
+- **Storage forecast:** the *Backups* page shows in how many days the storage fills up, from the backup data added in
+  the last two weeks; a warning is raised 14 days before and a critical alert 3 days before. Space returned by deleted
+  backups is not counted, so the estimate is cautious.
 
 ## Copying off the server
 

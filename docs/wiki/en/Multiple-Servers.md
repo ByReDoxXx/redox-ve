@@ -16,6 +16,11 @@ Buttons next to a peer's guest on the *Cluster* page:
 - **Move Running:** suspends the running guest there, copies its disk and memory and resumes it here. The guest does not
   reboot but does not respond during the copy.
 
+- **Containers:** *Copy Here* copies a container through its backup. An empty container is created here from the
+  same distribution template and its root file system is replaced by the backup. The source keeps running (frozen
+  briefly during the backup); the copy arrives stopped. LXC must be installed on this server. **Tested with fake LXC
+  tools; not tried with real LXC.**
+
 There is no zero-downtime live migration and no automatic failover.
 
 ## Replication (standby copy)
@@ -27,7 +32,7 @@ redox replica run <peer> <id>        # now
 redox replica remove <peer> <id>
 ```
 
-A copy of the peer's virtual machine is refreshed on this server regularly; the source keeps running. The copy is a
+A copy of the peer's virtual machine or container is refreshed on this server regularly; the source keeps running. The copy is a
 stopped guest named `<name>-kopya`. If the source server dies **you** start the copy here; you lose what was written
 since the last run. A running copy is never overwritten. Every run copies the whole disk (not incremental).
 

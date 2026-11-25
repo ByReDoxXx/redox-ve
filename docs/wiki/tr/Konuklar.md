@@ -15,6 +15,10 @@ Konuk, bir sanal makine (KVM) ya da konteynerdir (LXC).
   `redox media get debian-12`. Konuğu oluştururken imajı seçip kullanıcı adı ve SSH anahtarı verin (cloud-init).
 - **Şablondan klon:** aşağıya bakın.
 
+Windows kurarken disk ve ağ kartı görünmüyorsa katalogdan **Windows sürücüleri (virtio-win)** kalıbını indirin
+(`redox media get virtio-win`) ve kurulum sırasında sürücüleri oradan yükleyin; kurulumdan sonra aynı kalıptan balon
+sürücüsünü ve konuk ajanını kurun.
+
 ## Güç işlemleri
 
 Başlat, Kapat, Yeniden Başlat, Duraklat, Sürdür. Kapat önce konuğa ACPI ile kapanmasını söyler; süre dolarsa zorla

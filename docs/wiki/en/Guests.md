@@ -15,6 +15,10 @@ The *New Guest* button, or the API. A virtual machine is installed in one of thr
   `redox media get debian-12`. Choose the image when creating the guest and give a user name and SSH key (cloud-init).
 - **Clone of a template:** see below.
 
+If the disk and network card are not visible while installing Windows, download the **Windows drivers (virtio-win)**
+media from the catalog (`redox media get virtio-win`) and load the drivers from it during setup; afterwards install the
+balloon driver and the guest agent from the same media.
+
 ## Power
 
 Start, Stop, Restart, Pause, Resume. Stop first asks the guest to shut down through ACPI and forces it after a timeout.

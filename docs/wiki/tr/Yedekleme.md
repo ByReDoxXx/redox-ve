@@ -40,6 +40,9 @@ redox vm detach <kimlik>                # anında kurtarılan konuğu yedekten a
 - **Olağan dışı değişim uyarısı:** artımlı yedekte değişen veri olağanın katlarına çıkarsa yedek işaretlenir (fidye
   yazılımı belirtisi olabilir). Baktıysanız `redox backup ack <yedek>` ile kapatın.
 - **Günlük rapor:** `--backup-report 07:30` (e-posta ayarı gerekir) ya da `redox backup report`.
+- **Doluluk tahmini:** *Yedekler* sayfası, son iki haftada eklenen yedek verisinden alanın kaç gün sonra dolacağını
+  gösterir; 14 gün kala uyarı, 3 gün kala kritik uyarı verilir. Silinen yedeklerin geri verdiği yer sayılmaz, yani
+  tahmin temkinlidir.
 
 ## Sunucu dışına kopyalama
 
