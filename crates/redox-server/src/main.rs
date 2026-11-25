@@ -237,6 +237,7 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
             check_binary(&cfg.qemu_bin)?;
             check_binary(&cfg.qemu_img_bin)?;
             let images = cfg.images_dir();
+            let backup_passphrase = cfg.backup_passphrase.clone();
             let qemu = QemuDriver::new(cfg)?;
             // Konteyner desteği isteğe bağlıdır: LXC yoksa yalnızca sanal makineler çalışır.
             let containers = if opts.no_lxc {
@@ -246,6 +247,7 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
                     let mut c = LxcConfig::new(opts.data_dir.join("lxc"));
                     c.idmap = idmap;
                     c.backups_dir = opts.data_dir.join("backups");
+                    c.backup_passphrase = backup_passphrase.clone();
                     c.stop_timeout = opts.shutdown_timeout;
                     LxcDriver::new(c)
                 });

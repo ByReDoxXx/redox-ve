@@ -16,6 +16,11 @@ mod crypto;
 mod sign;
 
 pub use crypto::*;
+
+/// Dosya başı, parolayla şifrelenmiş bir RedoX dosyasına mı ait?
+pub fn is_encrypted(head: &[u8]) -> bool {
+    head.starts_with(MAGIC_BOUND) || head.starts_with(MAGIC)
+}
 pub use sign::*;
 
 /// Eski biçim: içerik doğrulanır ama dosyanın adına bağlı değildir.

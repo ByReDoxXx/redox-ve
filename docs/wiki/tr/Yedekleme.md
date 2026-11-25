@@ -66,13 +66,13 @@ redox serve … --incremental-backups --backup-passphrase-file /etc/redox/yedek-
 ```
 
 Dosyada tek satır, en az 12 karakterlik bir parola bulunur (`chmod 600`). Bundan sonra alınan sanal makine
-yedeklerinin parçaları diske ChaCha20-Poly1305 ile şifreli yazılır; anahtar paroladan Argon2id ile türetilir. *Yedekler*
+yedeklerinin parçaları ve konteyner arşivleri diske ChaCha20-Poly1305 ile şifreli yazılır; anahtar paroladan Argon2id ile türetilir. *Yedekler*
 sayfasında **şifreli depo** etiketi görünür.
 
 - **Parolayı kaybederseniz bu yedekler açılamaz.** Parolayı sunucunun dışında da saklayın.
 - Şifrelenmiş depo parolasız ya da yanlış parolayla açılmaz; sunucu başlamayı reddeder.
 - Şifrelemeyi açmadan önce alınmış yedekler olduğu gibi (şifresiz) kalır ve okunmaya devam eder.
-- Şifrelenmeyenler: konteyner yedekleri, tam (artımlı olmayan) yedekler ve yedek dizinleri (parça özetleri ile disk
+- Şifrelenmeyenler: sanal makinelerin tam (artımlı olmayan) yedekleri ve yedek dizinleri (parça özetleri ile disk
   boyutları). Geri yükleme ve dışa aktarma sırasında geçici açık dosyalar oluşur ve iş bitince silinir.
 - Dış hedefe giden parçalar da şifreli gider (dış hedefin kendi parolası varsa iki kat).
 - Şifreli depoda artımlı çoğaltma için açık önbellek tutulmaz; bu sunucudan yapılan çoğaltma her turda tam kopyalar.

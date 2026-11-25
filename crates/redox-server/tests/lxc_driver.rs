@@ -708,3 +708,45 @@ async fn containers_are_copied_and_replicated_between_servers() {
     let _ = std::fs::remove_dir_all(dir);
     let _ = std::fs::remove_dir_all(peer_dir);
 }
+
+#[test]
+fn container_backups_are_encrypted_on_disk_when_a_passphrase_is_set() {
+    let (mut cfg, dir) = setup();
+    cfg.backup_passphrase = Some("dogru-at-pil-zimba".into());
+    let d = LxcDriver::new(cfg.clone()).unwrap();
+    assert!(d.backups_sealed());
+    let g = guest(&dir, "kutu", "alpine-3.20");
+    d.create(&g).unwrap();
+    let rootfs = cfg.lxc_path.join("redox-100/rootfs");
+    std::fs::create_dir_all(rootfs.join("etc")).unwrap();
+    std::fs::write(rootfs.join("etc/hostname"), "gizli-kutu\n").unwrap();
+    d.backup(&g, "ct-100-1").unwrap();
+    let archive = cfg.backups_dir.join("ct-100-1.tar.gz");
+    let sealed = std::fs::read(&archive).unwrap();
+    assert!(sealed.starts_with(b"RDXENC2\n"), "arşiv diske şifreli yazılır");
+    assert!(d.verify_backup("ct-100-1", &[]).is_ok());
+    std::fs::write(rootfs.join("etc/hostname"), "bozuk\n").unwrap();
+    d.restore(&g, "ct-100-1", &[]).unwrap();
+    assert_eq!(std::fs::read_to_string(rootfs.join("etc/hostname")).unwrap(), "gizli-kutu\n");
+
+    // İndirme için açık kopya geçici bir dizine çözülür; gerçek bir gzip arşividir.
+    let (plain, temporary) = d.export_backup("ct-100-1", 0).unwrap().unwrap();
+    assert!(temporary && plain != archive && std::fs::read(&plain).unwrap().starts_with(&[0x1f, 0x8b]));
+    std::fs::remove_dir_all(plain.parent().unwrap()).unwrap();
+
+    // Başka bir yedeğin adına konan ya da değiştirilen arşiv açılmaz; parolasız sürücü nedenini söyler.
+    std::fs::copy(&archive, cfg.backups_dir.join("ct-100-2.tar.gz")).unwrap();
+    assert!(d.restore(&g, "ct-100-2", &[]).unwrap_err().contains("çözülemedi"));
+    let mut tampered = sealed.clone();
+    *tampered.last_mut().unwrap() ^= 1;
+    std::fs::write(&archive, &tampered).unwrap();
+    assert!(d.verify_backup("ct-100-1", &[]).is_err());
+    std::fs::write(&archive, &sealed).unwrap();
+    cfg.backup_passphrase = None;
+    let open = LxcDriver::new(cfg.clone()).unwrap();
+    assert!(open.restore(&g, "ct-100-1", &[]).unwrap_err().contains("--backup-passphrase-file"));
+    // Parolasız alınmış eski arşivler şifreli kurulumda da okunur.
+    open.backup(&g, "ct-100-3").unwrap();
+    assert!(d.verify_backup("ct-100-3", &[]).is_ok() && !d.export_backup("ct-100-3", 0).unwrap().unwrap().1);
+    let _ = std::fs::remove_dir_all(dir);
+}

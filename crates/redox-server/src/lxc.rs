@@ -41,13 +41,15 @@ pub struct LxcConfig {
     pub idmap: Option<(u64, u64, u64, u64)>,
     /// Konteyner yedeklerinin (tar.gz) durduğu dizin.
     pub backups_dir: PathBuf,
+    /// Verilirse yedek arşivleri diske bu parolayla şifreli yazılır.
+    pub backup_passphrase: Option<String>,
 }
 
 impl LxcConfig {
     pub fn new(lxc_path: impl Into<PathBuf>) -> Self {
         let lxc_path = lxc_path.into();
         let backups_dir = lxc_path.parent().map(|p| p.join("backups")).unwrap_or_else(|| lxc_path.join("backups"));
-        LxcConfig { lxc_path, bin_dir: None, stop_timeout: Duration::from_secs(30), idmap: None, backups_dir }
+        LxcConfig { lxc_path, bin_dir: None, stop_timeout: Duration::from_secs(30), idmap: None, backups_dir, backup_passphrase: None }
     }
 }
 
@@ -431,7 +433,9 @@ impl Hypervisor for LxcDriver {
     /// Kök dosya sistemini boşaltıp arşivi yerine açar. Yapılandırma (sınırlar, ağ) değişmez.
     fn restore(&self, g: &Guest, id: &str, _disks: &[u8]) -> Result<(), String> {
         let source = self.backup_path(id)?;
-        let file = std::fs::File::open(&source).map_err(|_| format!("yedek dosyası bulunamadı: {}", source.display()))?;
+        if !source.is_file() {
+            return Err(format!("yedek dosyası bulunamadı: {}", source.display()));
+        }
         let rootfs = self.rootfs(g.vmid)?;
         let step = |out: std::io::Result<std::process::Output>, what: &str| match out {
             Ok(o) if o.status.success() => Ok(()),
@@ -439,10 +443,9 @@ impl Hypervisor for LxcDriver {
             Err(e) => Err(format!("{what}: {e}")),
         };
         step(self.userns().arg("find").arg(&rootfs).args(["-mindepth", "1", "-delete"]).output(), "eski dosyalar silinemedi")?;
-        step(
-            self.userns().args(["tar", "--numeric-owner", "-C"]).arg(&rootfs).args(["-xzf", "-"]).stdin(file).output(),
-            "yedek geri yüklenemedi",
-        )
+        let mut unpack = self.userns();
+        unpack.args(["tar", "--numeric-owner", "-C"]).arg(&rootfs).args(["-xzf", "-"]);
+        step(self.feed(id, unpack), "yedek geri yüklenemedi")
     }
 
     fn delete_backup(&self, id: &str) -> Result<(), String> {
@@ -458,13 +461,38 @@ impl Hypervisor for LxcDriver {
         self.backup_path(id).ok()
     }
 
+    fn backups_sealed(&self) -> bool {
+        self.cfg.backup_passphrase.is_some()
+    }
+
+    /// İndirme ve eş sunucuya aktarma için arşivin açık kopyası: şifreli arşiv geçici bir dizine çözülür.
+    fn export_backup(&self, id: &str, _disk: u8) -> Result<Option<(PathBuf, bool)>, String> {
+        let path = self.backup_path(id)?;
+        if !self.sealed(&path) {
+            return Ok(Some((path, false)));
+        }
+        let dir = self.cfg.backups_dir.join(format!(".acik-{id}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{} oluşturulamadı: {e}", dir.display()))?;
+        let plain = dir.join(format!("{id}.tar.gz"));
+        let written = std::fs::File::create(&plain).map_err(|e| format!("{} oluşturulamadı: {e}", plain.display())).and_then(|mut out| self.pour(id, &mut out));
+        match written {
+            Ok(()) => Ok(Some((plain, true))),
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&dir);
+                Err(e)
+            }
+        }
+    }
+
     /// Arşivin sıkıştırma bütünlüğünü denetler.
     fn verify_backup(&self, id: &str, _disks: &[u8]) -> Result<String, String> {
         let path = self.backup_path(id)?;
         if !path.is_file() {
             return Err(format!("yedek dosyası bulunamadı: {}", path.display()));
         }
-        match std::process::Command::new("gzip").arg("-t").arg(&path).output() {
+        let mut check = std::process::Command::new("gzip");
+        check.arg("-t");
+        match self.feed(id, check) {
             Ok(o) if o.status.success() => Ok("arşiv tutarlı".to_string()),
             Ok(o) => Err(format!("yedek bozuk: {}", last_line(&o.stderr))),
             Err(e) => Err(format!("gzip çalıştırılamadı: {e}")),
@@ -499,19 +527,55 @@ impl Hypervisor for LxcDriver {
 }
 
 impl LxcDriver {
-    /// Kök dosya sistemini `target` arşivine yazar.
+    /// Arşiv dosyası şifreli mi (başında şifreleme imi var mı)?
+    fn sealed(&self, path: &std::path::Path) -> bool {
+        use std::io::Read;
+        let mut head = [0u8; 8];
+        std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)).is_ok() && crate::offsite::is_encrypted(&head)
+    }
+
+    /// Arşivin açık içeriğini `out` içine döker; şifreliyse çözer.
+    fn pour(&self, id: &str, out: &mut dyn std::io::Write) -> Result<(), String> {
+        let path = self.backup_path(id)?;
+        let mut file = std::fs::File::open(&path).map_err(|_| format!("yedek dosyası bulunamadı: {}", path.display()))?;
+        if !self.sealed(&path) {
+            return std::io::copy(&mut file, out).map(|_| ()).map_err(|e| format!("yedek okunamadı: {e}"));
+        }
+        let passphrase = self.cfg.backup_passphrase.as_deref().ok_or("yedek şifreli: sunucuyu --backup-passphrase-file ile başlatın")?;
+        crate::offsite::decrypt(&mut file, passphrase, out, id, true).map_err(|_| "yedek çözülemedi: yerel yedek parolası yanlış ya da dosya bozulmuş".to_string())
+    }
+
+    /// Komutu çalıştırır ve arşivin açık içeriğini standart girdisine verir.
+    fn feed(&self, id: &str, mut command: Command) -> std::io::Result<std::process::Output> {
+        let mut child = command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn()?;
+        let mut stdin = child.stdin.take().expect("stdin borusu");
+        let poured = self.pour(id, &mut stdin);
+        drop(stdin);
+        let output = child.wait_with_output()?;
+        // Arşiv okunamadıysa ya da çözülemediyse asıl neden budur; komutun yakınması bunun sonucudur.
+        poured.map(|()| output).map_err(std::io::Error::other)
+    }
+
+    /// Kök dosya sistemini `target` arşivine yazar; parola varsa arşiv diske şifreli yazılır.
     fn archive(&self, g: &Guest, target: &std::path::Path) -> Result<BackupSize, String> {
         let rootfs = self.rootfs(g.vmid)?;
-        let file = std::fs::File::create(target).map_err(|e| format!("{} oluşturulamadı: {e}", target.display()))?;
-        let out = self
-            .userns()
-            .args(["tar", "--numeric-owner", "-C"])
-            .arg(&rootfs)
-            .args(["-czf", "-", "."])
-            .stdin(Stdio::null())
-            .stdout(file)
-            .output()
-            .map_err(|e| format!("tar çalıştırılamadı: {e}"));
+        let mut file = std::fs::File::create(target).map_err(|e| format!("{} oluşturulamadı: {e}", target.display()))?;
+        let mut pack = self.userns();
+        pack.args(["tar", "--numeric-owner", "-C"]).arg(&rootfs).args(["-czf", "-", "."]).stdin(Stdio::null());
+        let out = match &self.cfg.backup_passphrase {
+            None => pack.stdout(file).output().map_err(|e| format!("tar çalıştırılamadı: {e}")),
+            Some(passphrase) => (|| {
+                let id = target.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".tar.gz")).ok_or("geçersiz yedek adı")?;
+                let mut child = pack.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("tar çalıştırılamadı: {e}"))?;
+                let stdout = child.stdout.take().expect("stdout borusu");
+                let copied = crate::offsite::EncryptReader::new(stdout, passphrase, id).and_then(|mut sealed| std::io::copy(&mut sealed, &mut file).map_err(|e| format!("yedek yazılamadı: {e}")));
+                let output = child.wait_with_output().map_err(|e| format!("tar çalıştırılamadı: {e}"))?;
+                match copied {
+                    Err(e) if output.status.success() => Err(e),
+                    _ => Ok(output),
+                }
+            })(),
+        };
         match out {
             Ok(o) if o.status.success() => Ok(BackupSize::full(std::fs::metadata(target).map(|m| m.len()).unwrap_or(0).div_ceil(1024 * 1024))),
             other => {

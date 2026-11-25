@@ -165,7 +165,7 @@ impl Hypervisor for HostDriver {
     }
 
     fn backups_sealed(&self) -> bool {
-        self.vm.backups_sealed()
+        self.vm.backups_sealed() || self.ct.as_ref().is_some_and(|ct| ct.backups_sealed())
     }
 
     fn backup_raw(&self, id: &str, disk: u8, dest: &std::path::Path) -> Result<(), String> {

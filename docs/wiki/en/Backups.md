@@ -65,13 +65,13 @@ redox serve … --incremental-backups --backup-passphrase-file /etc/redox/backup
 ```
 
 The file holds one line with a passphrase of at least 12 characters (`chmod 600`). From then on the chunks of virtual
-machine backups are written to disk encrypted with ChaCha20-Poly1305; the key is derived from the passphrase with
+machine backups and the container archives are written to disk encrypted with ChaCha20-Poly1305; the key is derived from the passphrase with
 Argon2id. The *Backups* page shows an **encrypted store** label.
 
 - **If you lose the passphrase these backups cannot be opened.** Keep it somewhere outside the server too.
 - An encrypted store does not open without the passphrase or with a wrong one; the server refuses to start.
 - Backups taken before encryption was enabled stay as they are (unencrypted) and remain readable.
-- Not encrypted: container backups, full (non-incremental) backups and the backup indexes (chunk hashes and disk
+- Not encrypted: full (non-incremental) virtual machine backups and the backup indexes (chunk hashes and disk
   sizes). Restores and exports create temporary plain files that are deleted when the job ends.
 - Chunks sent to an off-site target are sent encrypted as well (twice if the target has its own passphrase).
 - An encrypted store keeps no plain cache for incremental replication; replication from this server copies in full on
