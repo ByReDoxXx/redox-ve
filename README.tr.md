@@ -58,6 +58,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Salt okunur API token'ları ve isteğe bağlı API hız sınırı.
 - Yerel yedek şifrelemesi (`--backup-passphrase-file`): artımlı yedek parçaları diskte şifreli durur.
 - Sunucular arası ortak konuk ağı için VXLAN kurulum komutları (`redox net vxlan`), aracılı aygıtla ekran kartı paylaşımı (vGPU) ve depolamanın altındaki ZFS, LVM ve NFS'in tanınması.
+- API'nin OpenAPI belgesi (`/api/v1/openapi.json`), canlı konsola metni tuş vuruşu olarak yazdırma, şifreli konteyner yedekleri ve VXLAN için kalıcı systemd birimi (`redox net vxlan … --unit`).
 - Hakemli kendiliğinden devralma: kaynak sunucu ölünce ve üçüncü bir sunucu onaylayınca yedek kopya başlatılır.
 - Artımlı çoğaltma: ilk turdan sonra ağdan yalnızca değişen 4 MiB'lik bloklar geçer; her blok özetiyle doğrulanır.
 - Konteynerler sunucular arasında kopyalanır ve çoğaltılır; yedek alanının ne zaman dolacağı tahmin edilir; kaynak
@@ -426,7 +427,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 510, Windows'ta 439 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 514, Windows'ta 442 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
@@ -455,7 +456,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 - Depolama her zaman imaj dosyalarının durduğu bir dizindir. Dizin ZFS, LVM ya da NFS üzerinde olabilir (tanınır ve gösterilir), ama yerleşik zvol ya da mantıksal birim havuzu yönetimi yoktur.
 - Çalışan sanal makineye işlemci ve bellek eklenemez (balon belleği yalnızca düşürür ve geri verir).
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
-- Canlı konsolda pano ve ses yoktur.
+- Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).
 - Arayüz yalnızca Türkçe ve İngilizcedir.
 
 ## Lisans

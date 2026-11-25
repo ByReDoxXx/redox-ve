@@ -31,3 +31,13 @@ the `error` message is English when you send `Accept-Language: en`.
 
 **Limits:** with `--api-rate N`, requests beyond the limit get 429 and `Retry-After`. With the four-eyes principle on,
 delete requests return 202 and `{"approval": <n>}`.
+
+## OpenAPI document
+
+`GET /api/v1/openapi.json` returns an OpenAPI 3 description of the API: every endpoint, its methods, path
+parameters and a one-line summary. It does **not** contain request or response body schemas; see the examples on
+this page for those. The document is compared with the server's real routes in a test, so no endpoint can be missing.
+
+```
+curl -H "Authorization: Bearer $TOKEN" https://redox.example/api/v1/openapi.json
+```

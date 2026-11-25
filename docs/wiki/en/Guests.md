@@ -47,3 +47,10 @@ for backups taken while running, disk usage inside the guest is read, and pre/po
 
 The *Pools* page. A pool puts a quota on the total cores, memory and disk a group of guests may allocate. You put a guest
 into a pool from its *Options* tab.
+
+## Typing text into the console
+
+The live console has no clipboard sharing. Instead, text entered in the box at the top of the console page is sent
+to the guest as keystrokes with **Type** (for long passwords and commands). No agent is needed in the guest. Only
+characters on a US keyboard are typed and the guest's keyboard layout must be US English; with another layout symbols
+come out differently. The client logic is tested; it was not tried on a real guest.

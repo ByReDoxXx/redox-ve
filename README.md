@@ -62,6 +62,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Read-only API tokens and an optional API rate limit.
 - Local backup encryption (`--backup-passphrase-file`): incremental backup chunks are stored encrypted on disk.
 - VXLAN setup commands for a guest network shared between servers (`redox net vxlan`), graphics card sharing through mediated devices (vGPU), and detection of ZFS, LVM and NFS under a storage.
+- An OpenAPI document of the API (`/api/v1/openapi.json`), typing text into the live console as keystrokes, encrypted container backups, and a persistent systemd unit for VXLAN (`redox net vxlan … --unit`).
 - Automatic failover with a witness: the standby copy starts when the source server dies and a third server agrees.
 - Incremental replication: after the first run only the changed 4 MiB blocks cross the network, each verified by hash.
 - Containers can be copied and replicated between servers; a forecast of when the backup storage fills up; CSV export
@@ -424,7 +425,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-510 tests pass on Linux and 439 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+514 tests pass on Linux and 442 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
@@ -453,7 +454,7 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
 - Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
 - CPU and memory cannot be added to a running VM (the balloon only lowers and restores memory).
 - Containers cannot be moved to another storage or to another server.
-- The live console has no clipboard or audio.
+- The live console has no clipboard or audio (text can be typed in as keystrokes).
 - The interface is in Turkish and English only.
 
 ## License

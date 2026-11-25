@@ -95,3 +95,18 @@ kopya yapılamaz ve taşıma olağan yoldan sürer.
 
 Bu, kesintisiz canlı taşıma **değildir**: konuk yine duraklar, yalnızca daha kısa. Bellek sayfalarını konuk çalışırken
 aktaran gerçek canlı taşıma yoktur. Sahte QEMU ile sınandı; gerçek QEMU ile süre ölçülmedi.
+
+## Devralmadan sonra geri dönüş
+
+Kendiliğinden bir geri dönüş yoktur; adımları siz atarsınız. Kaynak sunucu (ankara) geri geldiğinde:
+
+1. **Önce ankara'daki eski konuğun çalışmadığından emin olun.** Açılışta başlat işaretliyse kendiliğinden açılmış
+   olabilir; aynı adresle iki kopya ağı karıştırır. Kapatın ve *açılışta başlat* işaretini kaldırın.
+2. Ankara'da *Birleşik görünüm* sayfasından, bu sunucuda çalışan kopyayı **Buraya Al** ile geri taşıyın (ankara'nın
+   `--peers` dosyasında bu sunucu tanımlı olmalıdır). Çalışan konuk bellek durumuyla taşınır; devralmadan beri
+   yazılanlar korunur.
+3. Taşınan konuğun çalıştığını gördükten sonra ankara'daki eski konuğu ve bu sunucuda askıda kalan kopyayı silin.
+4. Bu sunucudaki çoğaltma kaydını kaldırıp yeni konuk kimliğiyle yeniden ekleyin; ilk tur bittiğinde devralma
+   yeniden kurulur.
+
+Bu sıra elle denenmedi; her adım tek tek sınanmış işlemlerden (taşıma, silme, çoğaltma) oluşur.

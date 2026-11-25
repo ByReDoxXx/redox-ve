@@ -48,3 +48,10 @@ dondurulur, konuk içi disk doluluğu okunur ve yedek öncesi/sonrası komutlar�
 
 *Havuzlar* sayfası. Havuz, bir grup konuğun toplam çekirdek, bellek ve disk ayırmasına kota koyar. Konuğu havuza
 *Seçenekler* sekmesinden alırsınız.
+
+## Konsola metin yazdırma
+
+Canlı konsolda pano paylaşımı yoktur. Bunun yerine konsol sayfasının üstündeki kutuya yazdığınız metin **Yazdır** ile
+konuğa tuş vuruşları olarak gönderilir (uzun parolalar ve komutlar için). Konukta ajan gerekmez. Yalnızca ABD
+klavyesindeki karakterler yazılır ve konuğun klavye düzeni ABD İngilizcesi olmalıdır; başka düzende simgeler farklı
+çıkar. İstemci mantığı testlidir; gerçek bir konukta denenmedi.

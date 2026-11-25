@@ -31,3 +31,13 @@ iletisi `Accept-Language: en` başlığıyla İngilizce döner.
 
 **Sınırlar:** `--api-rate N` açıksa aşan istek 429 ve `Retry-After` alır. Dört göz ilkesi açıkken silme istekleri 202 ve
 `{"approval": <no>}` döndürür.
+
+## OpenAPI belgesi
+
+`GET /api/v1/openapi.json`, API'nin OpenAPI 3 tarifini verir: bütün uçlar, yöntemleri, yol değişkenleri ve birer
+satırlık (İngilizce) açıklamaları. İstek ve yanıt gövdelerinin şemaları **yoktur**; onlar için bu sayfadaki
+örneklere bakın. Belge, sunucudaki gerçek yönlendirmelerle bir testte karşılaştırılır, yani eksik uç olamaz.
+
+```
+curl -H "Authorization: Bearer $TOKEN" https://redox.example/api/v1/openapi.json
+```

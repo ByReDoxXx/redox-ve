@@ -98,3 +98,18 @@ source server stores its backups encrypted, pre-copy is not possible and the mov
 This is **not** zero-downtime live migration: the guest still pauses, only for less time. There is no true live
 migration that transfers memory pages while the guest runs. Tested with fake QEMU; the pause was not measured with
 real QEMU.
+
+## Failing back after a failover
+
+There is no automatic failback; you take the steps. When the source server (ankara) is back:
+
+1. **First make sure the old guest on ankara is not running.** If it is marked to start at boot it may have come up
+   by itself; two copies with the same address confuse the network. Stop it and clear *start at boot*.
+2. On ankara, in the *Combined view*, move the copy running on this server back with **Copy Here** (this server
+   must be listed in ankara's `--peers` file). A running guest moves with its memory state; everything written since
+   the failover is kept.
+3. Once the moved guest is running, delete the old guest on ankara and the suspended copy left on this server.
+4. Remove the replication on this server and add it again with the new guest ID; when the first run finishes,
+   failover is armed again.
+
+This sequence was not tried by hand; each step is an operation that is tested on its own (move, delete, replicate).
