@@ -110,6 +110,7 @@ pub fn app(state: AppState) -> Router {
         .route("/pools/{name}/delete", post(ui_ops::pool_delete))
         .route("/media/upload", post(ui_ops::media_upload).layer(axum::extract::DefaultBodyLimit::disable()))
         .route("/media/fetch", post(ui_ops::media_fetch))
+        .route("/media/catalog/{key}", post(ui_ops::media_catalog))
         .route("/media/{name}/delete", post(ui_ops::media_delete))
         .route("/cluster", get(ui::peers))
         .route("/cluster/import", post(ui::peer_import))

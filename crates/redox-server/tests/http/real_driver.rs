@@ -121,3 +121,16 @@ pub(super) async fn real_driver_create_validates_iso_and_kind() {
 }
 
 // ---------- Konuk işlemleri: düzenleme, anlık görüntü, yedek, klon, toplu işlem, konsol ----------
+
+#[tokio::test]
+async fn cloud_image_catalog_is_listed_and_fetched_by_key() {
+    let (app, state) = setup_real();
+    let storage = page(&app, "/storage").await;
+    assert!(storage.contains("Hazır bulut imajları") && storage.contains(r#"action="/media/catalog/debian-12""#) && storage.contains("Ubuntu 24.04 LTS"));
+    let (status, list) = api(&app, request(Method::GET, "/api/v1/media/catalog").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(list.as_array().unwrap().iter().any(|e| e["key"] == "rocky-9" && e["url"].as_str().unwrap().starts_with("https://")));
+    // Bilinmeyen anahtar reddedilir ve geçerli olanlar söylenir.
+    let err = state.catalog_fetch("windows-11", "admin").unwrap_err().to_string();
+    assert!(err.contains("katalogda") && err.contains("debian-12"), "{err}");
+}

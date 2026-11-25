@@ -132,6 +132,13 @@ pub async fn media_fetch(State(st): State<AppState>, Extension(me): Extension<Id
     }
 }
 
+pub async fn media_catalog(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(key): Path<String>) -> Redirect {
+    match st.catalog_fetch(&key, &me.user) {
+        Ok(name) => flash("/storage", "notice", &format!("{name} indiriliyor; bitince görev günlüğünde görünür. Yeni konuk formunda imaj olarak seçilir.")),
+        Err(e) => failed("/storage", &e),
+    }
+}
+
 pub async fn media_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> Redirect {
     match st.media_delete(&name, &me.user) {
         Ok(()) => flash("/storage", "notice", &format!("{name} silindi.")),

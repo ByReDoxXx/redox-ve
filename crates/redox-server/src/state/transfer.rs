@@ -47,6 +47,14 @@ impl AppState {
         Ok(name)
     }
 
+    /// Katalogdaki hazır bulut imajını indirir; kaydedilen dosya adını döndürür.
+    pub fn catalog_fetch(&self, key: &str, user: &str) -> Result<String, Error> {
+        let (_, _, file, url) = crate::media::CATALOG.iter().find(|e| e.0 == key).ok_or_else(|| {
+            Error::InvalidSpec(format!("katalogda \"{key}\" yok; olanlar: {}", crate::media::CATALOG.iter().map(|e| e.0).collect::<Vec<_>>().join(", ")))
+        })?;
+        self.media_fetch(url, file, "", user)
+    }
+
     /// Yüklenen kalıbın ya da imajın kaydını görev günlüğüne düşer.
     pub fn media_uploaded(&self, name: &str, outcome: &Result<(), String>, user: &str) {
         self.mutate(|c| {

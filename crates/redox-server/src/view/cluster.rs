@@ -197,6 +197,16 @@ pub fn storage(p: &Page, media: &[crate::media::Media]) -> String {
                     }
                     @if p.admin {
                         div class="intake" {
+                            div {
+                                h3 { "Hazır bulut imajları" }
+                                @for (key, label, _, _) in crate::media::CATALOG {
+                                    form class="line" method="post" action={ "/media/catalog/" (key) } {
+                                        span { (label) }
+                                        button class="btn sm" type="submit" { (icon("migrate")) "İndir" }
+                                    }
+                                }
+                                p { "Dağıtımın kendi sunucusundan en güncel imaj iner. İmajlar cloud-init ile açılır: yeni konuk formunda imajı seçip kullanıcı adı ve SSH anahtarı verin." }
+                            }
                             form method="post" action="/media/upload" enctype="multipart/form-data" {
                                 h3 { label for="media-file" { "Bilgisayardan yükle" } }
                                 div class="line" {

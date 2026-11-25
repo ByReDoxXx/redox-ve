@@ -34,6 +34,19 @@ pub struct Media {
 }
 
 /// Adın gösterdiği dosyanın sunucudaki yolu. Ad geçersizse ya da sürücü dosya tutmuyorsa hata.
+/// Hazır bulut imajı kataloğu: `(anahtar, görünen ad, kaydedilecek dosya adı, adres)`. Dağıtımların kendi
+/// sunucularındaki "en güncel" adresleridir; imajlar cloud-init ile açılır (kullanıcı ve SSH anahtarı
+/// konuk oluşturulurken verilir). İçerik sürekli güncellendiği için sabit bir özetle doğrulanamaz;
+/// bütünlük yalnızca https bağlantısına dayanır.
+pub const CATALOG: [(&str, &str, &str, &str); 6] = [
+    ("debian-12", "Debian 12 (bookworm)", "debian-12-genericcloud-amd64.qcow2", "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"),
+    ("debian-13", "Debian 13 (trixie)", "debian-13-genericcloud-amd64.qcow2", "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"),
+    ("ubuntu-24.04", "Ubuntu 24.04 LTS (noble)", "ubuntu-24.04-server-cloudimg-amd64.qcow2", "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"),
+    ("ubuntu-22.04", "Ubuntu 22.04 LTS (jammy)", "ubuntu-22.04-server-cloudimg-amd64.qcow2", "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"),
+    ("almalinux-9", "AlmaLinux 9", "almalinux-9-genericcloud-x86_64.qcow2", "https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"),
+    ("rocky-9", "Rocky Linux 9", "rocky-9-genericcloud-x86_64.qcow2", "https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"),
+];
+
 pub fn target(st: &AppState, name: &str) -> Result<(PathBuf, bool), Error> {
     let driver = st.driver();
     let found = if redox_core::valid_iso_name(name) {
@@ -261,6 +274,18 @@ pub fn fetch(url: &str, dest: &Path, sha256: Option<&str>, allowed: &dyn Fn(&str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_entries_are_public_https_images_with_valid_names() {
+        let mut keys: Vec<&str> = CATALOG.iter().map(|e| e.0).collect();
+        keys.dedup();
+        assert_eq!(keys.len(), CATALOG.len(), "anahtarlar benzersiz");
+        for (key, label, file, url) in CATALOG {
+            assert!(!label.is_empty() && key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'), "{key}");
+            assert!(redox_core::hw::valid_image_name(file), "{file}");
+            assert!(url.starts_with("https://"), "{url}");
+        }
+    }
     use std::io::{BufRead, BufReader, Read};
 
     fn temp(name: &str) -> PathBuf {

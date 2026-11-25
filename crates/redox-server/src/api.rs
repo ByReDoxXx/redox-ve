@@ -65,6 +65,8 @@ pub fn routes() -> Router<AppState> {
         .route("/storage", get(storage))
         .route("/media", get(media_list))
         .route("/media/fetch", post(media_fetch))
+        .route("/media/catalog", get(media_catalog))
+        .route("/media/catalog/{key}", post(media_catalog_fetch))
         .route("/media/{name}", axum::routing::put(media_put).delete(media_delete))
         .route("/peers", get(peers))
         .route("/peers/{name}/import/{vmid}", post(peer_import))
@@ -550,6 +552,16 @@ fn usage_json(c: &redox_core::Cluster, g: &redox_core::Guest) -> serde_json::Val
         "disk_read_mb": u.disk_read_bytes >> 20, "disk_write_mb": u.disk_write_bytes >> 20,
         "net_rx_mb": u.net_rx_bytes >> 20, "net_tx_mb": u.net_tx_bytes >> 20,
     })
+}
+
+/// Hazır bulut imajı kataloğu.
+async fn media_catalog() -> Json<Vec<serde_json::Value>> {
+    Json(crate::media::CATALOG.iter().map(|(key, label, file, url)| json!({ "key": key, "label": label, "file": file, "url": url })).collect())
+}
+
+async fn media_catalog_fetch(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(key): Path<String>) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let name = st.catalog_fetch(&key, &me.user)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "name": name }))))
 }
 
 /// Konuğun içinden (konuk ajanıyla) okunan dosya sistemi dolulukları.

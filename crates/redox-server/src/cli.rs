@@ -57,6 +57,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox approval list | approve <no> | reject <no>   (dört göz ilkesi: bekleyen silme istekleri; kendi isteğinizi onaylayamazsınız)
   redox backup ack <yedek>               (olağan dışı değişim uyarısını kapatır: baktınız, sorun yok)
   redox backup archive | recover <yedek>   (yerelde silinmiş ama kopya hedefinde saklanan yedekler; recover listeye geri getirir)
+  redox media catalog | get <anahtar>    (hazır bulut imajları: Debian, Ubuntu, AlmaLinux, Rocky; get indirir)
   redox vm df <kimlik>                   (konuğun içindeki disklerin doluluğu; konukta qemu-guest-agent gerekir)
   redox usage | vm usage <kimlik> [reset]   (birikimli kaynak tüketimi: çekirdek-saat, GB-saat, disk G/Ç; reset sayaçları sıfırlar)
   redox vm balloon <kimlik> auto <MB>    (dinamik bellek: hedef kullanıma göre <MB> ile belleğin tamamı arasında; 0 kapatır)
@@ -125,6 +126,8 @@ pub enum View {
     Approvals,
     /// `{ "done": ... }` döndüren onay.
     Approved,
+    /// Hazır imaj kataloğu.
+    Catalog,
     /// Konuğun içindeki dosya sistemleri.
     Filesystems,
     /// Kaynak ölçümü: bir konuk (nesne) ya da hepsi (dizi).
@@ -315,6 +318,8 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         }
         ["media", "list"] => get("/media", View::Media),
         ["media", "delete", name] => req("DELETE", format!("/media/{name}"), None, View::Done("silindi")),
+        ["media", "catalog"] => get("/media/catalog", View::Catalog),
+        ["media", "get", key] => req("POST", format!("/media/catalog/{key}"), None, View::Done("indiriliyor; sonuç: redox task list")),
         ["media", "fetch", url] => req("POST", "/media/fetch".to_string(), Some(json!({ "url": url })), View::Done("indiriliyor; sonuç: redox task list")),
         ["media", "fetch", url, sha] => req("POST", "/media/fetch".to_string(), Some(json!({ "url": url, "sha256": sha })), View::Done("indiriliyor; sonuç: redox task list")),
         ["backup", "list"] => get("/backups", View::Backups),
@@ -509,6 +514,7 @@ pub fn render(view: View, v: &Value) -> String {
                 None => line(v),
             }
         }
+        View::Catalog => rows(&|e| format!("{:<14} {:<28} {}", s(e, "key"), s(e, "label"), s(e, "file"))),
         View::Filesystems => or_none(
             rows(&|f| {
                 let (used, total) = (n(f, "used_mb"), n(f, "total_mb"));
@@ -732,6 +738,8 @@ mod tests {
         assert!(parse(&args("vm balloon 103 cok")).unwrap_err().contains("bir sayı olmalı"));
         assert_eq!(parsed("usage"), ("GET", "/usage".into(), None, View::Usage));
         assert_eq!(parsed("vm df 103"), ("GET", "/guests/103/filesystems".into(), None, View::Filesystems));
+        assert_eq!(parsed("media catalog"), ("GET", "/media/catalog".into(), None, View::Catalog));
+        assert_eq!(parsed("media get debian-12").1, "/media/catalog/debian-12");
         assert_eq!(render(View::Filesystems, &json!([{"mount": "/", "used_mb": 900, "total_mb": 1000}])), "/                                 900 /     1000 MB   %90");
         assert!(render(View::Filesystems, &json!([])).contains("ölçüm yok"));
         assert_eq!(parsed("backup archive"), ("GET", "/backups/archive".into(), None, View::Backups));
