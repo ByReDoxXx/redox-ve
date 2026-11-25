@@ -22,6 +22,21 @@ pub fn backups(p: &Page) -> String {
             "backup list",
             &[],
         ))
+        @if let Some((storage, f)) = p.cluster.backup_forecast(p.now) {
+            div class="card" style="margin-bottom:var(--s4)" {
+                header {
+                    h2 { (tx("Doluluk tahmini")) }
+                    @match f.days_left {
+                        Some(days) if days <= crate::alerts::FORECAST_CRIT_DAYS => span class="pill err" { (icon("alert")) (days) (tx(" gün kaldı")) },
+                        Some(days) if days <= crate::alerts::FORECAST_WARN_DAYS => span class="pill warn" { (icon("alert")) (days) (tx(" gün kaldı")) },
+                        Some(days) => span class="pill ok" { (days) (tx(" gün kaldı")) },
+                        None => span class="pill ok" { (tx("büyüme yok")) },
+                    }
+                    span class="note mono" { (storage) " · " (f.mb_per_day) (tx(" MB/gün")) }
+                }
+                footer { (tx("Son iki haftada alınan yedeklerin eklediği veriden hesaplanır; silinen yedeklerin geri verdiği yer sayılmaz, yani tahmin temkinlidir. 14 gün kala uyarı, 3 gün kala kritik uyarı verilir.")) }
+            }
+        }
         (unprotected_card(p))
         (archive_card(p))
         (jobs_card(p))

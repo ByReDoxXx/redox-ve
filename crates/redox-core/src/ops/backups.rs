@@ -118,6 +118,14 @@ impl Cluster {
             .map(|b| b.id.clone())
     }
 
+    /// Yedeklerin durduğu alanın doluluk tahmini. Yedekler, içeriğinde yedek ("backup" / "yedek") olan depolama alanında, yoksa
+    /// `local` alanında (sunucunun veri dizini) sayılır. Tahmin için yeterli yedek yoksa `None`.
+    pub fn backup_forecast(&self, now: u64) -> Option<(String, crate::retention::Forecast)> {
+        let storage = self.storages.iter().find(|s| s.content.iter().any(|c| c.eq_ignore_ascii_case("backup") || c == "yedek")).or_else(|| self.storages.iter().find(|s| s.id == "local"))?;
+        let added: Vec<(u64, u64)> = self.backups.iter().map(|b| (b.created, b.new_mb.unwrap_or(b.size_mb))).collect();
+        crate::retention::forecast(&added, storage.free_gb() * 1024, now).map(|f| (storage.id.clone(), f))
+    }
+
     /// Sınama sonucunu yedeğe yazar; yedek o arada silinmişse sessizce geçer.
     pub fn set_backup_test(&mut self, id: &str, test: BackupTest) {
         if let Some(b) = self.backups.iter_mut().find(|b| b.id == id) {

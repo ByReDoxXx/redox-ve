@@ -90,6 +90,34 @@ pub fn kept(created: &[u64], keep: u32, gfs: Gfs) -> Vec<bool> {
     keep_flags
 }
 
+/// Doluluk tahmininde bakılan süre (gün) ve tahmin için gereken en az yedek sayısı.
+pub const FORECAST_WINDOW_DAYS: u64 = 14;
+pub const FORECAST_MIN_BACKUPS: usize = 3;
+
+/// Yedeklerin büyüme hızından, yedeklerin durduğu alanın kaç gün sonra dolacağı tahmini.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Forecast {
+    /// Son iki haftada günde ortalama eklenen yedek verisi (MB).
+    pub mb_per_day: u64,
+    /// Bu hızla alanın dolmasına kalan gün; büyüme yoksa `None`.
+    pub days_left: Option<u64>,
+}
+
+/// `added`: son `FORECAST_WINDOW_DAYS` günde alınan yedeklerin diske eklediği veri (MB), `(an, MB)` çiftleri.
+/// Silinen yedeklerin geri verdiği yer hesaba katılmaz: tahmin temkinlidir (gerçekte daha geç dolar).
+pub fn forecast(added: &[(u64, u64)], free_mb: u64, now: u64) -> Option<Forecast> {
+    let since = now.saturating_sub(FORECAST_WINDOW_DAYS * DAY_SECS);
+    let recent: Vec<&(u64, u64)> = added.iter().filter(|(at, _)| *at >= since && *at <= now).collect();
+    if recent.len() < FORECAST_MIN_BACKUPS {
+        return None;
+    }
+    // Yedekler iki haftadan kısa bir süredir alınıyorsa o süreye bölünür (en az bir gün).
+    let oldest = recent.iter().map(|(at, _)| *at).min().unwrap_or(now);
+    let days = (now.saturating_sub(oldest)).div_ceil(DAY_SECS).clamp(1, FORECAST_WINDOW_DAYS);
+    let mb_per_day = recent.iter().map(|(_, mb)| *mb).sum::<u64>() / days;
+    Some(Forecast { mb_per_day, days_left: (mb_per_day > 0).then(|| free_mb / mb_per_day) })
+}
+
 /// Olağan dışı değişim için en az bu kadar önceki yedek gerekir.
 pub const ANOMALY_MIN_SAMPLES: usize = 3;
 /// Değişen veri, önceki yedeklerin ortancasının en az bu kadar katıysa şüphelidir.
@@ -116,6 +144,24 @@ pub fn change_anomaly(history: &[u64], new_mb: u64, size_mb: u64) -> Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forecast_estimates_days_until_the_backup_storage_is_full() {
+        const NOW: u64 = 1_700_000_000;
+        let day = |d: u64, mb: u64| (NOW - d * DAY_SECS, mb);
+        assert_eq!(forecast(&[day(1, 500), day(2, 500)], 10_000, NOW), None, "yedek sayısı yetersiz");
+        // On günde 10 GB: günde 1 GB; 30 GB boş yer 30 günde dolar.
+        let ten: Vec<(u64, u64)> = (0..10).map(|d| day(d + 1, 1024)).collect();
+        assert_eq!(forecast(&ten, 30 * 1024, NOW), Some(Forecast { mb_per_day: 1024, days_left: Some(30) }));
+        // Pencerenin dışındaki eski yedekler sayılmaz.
+        let mut old = ten.clone();
+        old.push(day(40, 1_000_000));
+        assert_eq!(forecast(&old, 30 * 1024, NOW).unwrap().mb_per_day, 1024);
+        // Hiç veri eklenmiyorsa (tamamı artımlı ve değişiklik yok) dolma günü yoktur.
+        assert_eq!(forecast(&[day(1, 0), day(2, 0), day(3, 0)], 1000, NOW), Some(Forecast { mb_per_day: 0, days_left: None }));
+        // Yer kalmadıysa sıfır gün.
+        assert_eq!(forecast(&ten, 100, NOW).unwrap().days_left, Some(0));
+    }
 
     #[test]
     fn change_anomaly_needs_history_size_and_a_large_jump() {

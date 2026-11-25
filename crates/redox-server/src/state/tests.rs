@@ -291,3 +291,19 @@ fn api_rate_limit_counts_per_user_and_minute() {
     assert!(st.api_allowed("mehmet", t).is_ok(), "başka kullanıcı etkilenmez");
     assert!(st.api_allowed("ayse", t + 20).is_ok(), "yeni dakikada sayaç sıfırlanır");
 }
+
+#[test]
+fn a_filling_backup_storage_is_forecast_and_alerted() {
+    let mut c = Cluster::demo(now());
+    assert!(c.backup_forecast(now()).is_none(), "yedek yokken tahmin yok");
+    let (storage, free_gb) = c.storages.iter().find(|s| s.content.iter().any(|k| k == "yedek")).map(|s| (s.id.clone(), s.free_gb())).expect("yedek alanı");
+    // Beş günde, boş yerin tamamı kadar veri: bu hızla beş günde dolar.
+    let per_backup_mb = free_gb * 1024 / 5;
+    for day in 1..=5u64 {
+        c.add_backup(redox_core::Backup { id: format!("vm-103-{day}"), vmid: 103, guest_name: "x".into(), created: now() - day * 86_400 + 60, size_mb: per_backup_mb, auto: true, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
+    }
+    let (name, f) = c.backup_forecast(now()).unwrap();
+    assert_eq!((name.as_str(), f.days_left), (storage.as_str(), Some(5)));
+    let alert = crate::alerts::evaluate(&c).into_iter().find(|a| a.key == "backup-forecast").expect("uyarı");
+    assert!(alert.severity == crate::alerts::Severity::Warning && alert.message.contains("5 gün içinde dolacak"), "{}", alert.message);
+}

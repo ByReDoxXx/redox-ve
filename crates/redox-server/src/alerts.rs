@@ -8,6 +8,9 @@ use std::time::Duration;
 use redox_core::{Cluster, GuestStatus, NodeStatus, TaskId, TaskStatus, VmId};
 use serde_json::json;
 
+/// Yedek alanının dolmasına bu kadar gün kala uyarı ve kritik uyarı verilir.
+pub const FORECAST_WARN_DAYS: u64 = 14;
+pub const FORECAST_CRIT_DAYS: u64 = 3;
 pub const STORAGE_WARN_PCT: u8 = 80;
 pub const STORAGE_CRIT_PCT: u8 = 90;
 /// Kaynak uyarıları: düğümün belleği ve işlemcisi, konuğun işlemcisi.
@@ -55,6 +58,14 @@ pub fn evaluate(c: &Cluster) -> Vec<Alert> {
             add(key, Severity::Critical, format!("{}{place} deposu %{pct} dolu", s.id));
         } else if pct >= STORAGE_WARN_PCT {
             add(key, Severity::Warning, format!("{}{place} deposu %{pct} dolu", s.id));
+        }
+    }
+    // Yedek alanı bu hızla ne zaman dolar? Dolan alan yeni yedeği ve çoğu zaman çalışan konukları da durdurur.
+    if let Some((storage, f)) = c.backup_forecast(crate::state::now()) {
+        match f.days_left {
+            Some(days) if days <= FORECAST_CRIT_DAYS => add("backup-forecast".to_string(), Severity::Critical, format!("{storage} alanı yedeklerle {days} gün içinde dolacak (günde {} MB ekleniyor)", f.mb_per_day)),
+            Some(days) if days <= FORECAST_WARN_DAYS => add("backup-forecast".to_string(), Severity::Warning, format!("{storage} alanı yedeklerle {days} gün içinde dolacak (günde {} MB ekleniyor)", f.mb_per_day)),
+            _ => {}
         }
     }
     // Konuğun içindeki diskler (konuk ajanından): dolan disk konuğu durdurur, sunucudan bakınca görünmez.
