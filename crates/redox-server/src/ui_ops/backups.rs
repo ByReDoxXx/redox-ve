@@ -94,6 +94,13 @@ pub async fn backup_action(State(st): State<AppState>, Extension(me): Extension<
             Err(e) => failed("/backups", &e),
         };
     }
+    // Arşivdeki yedek henüz listede değildir: sahibi aranmadan geri getirilir.
+    if op == "recover" {
+        return match st.backup_recover(&id, &me.user) {
+            Ok(()) => flash("/backups", "notice", &format!("{id} arşivden geri getirildi; geri yüklenirken kopya hedefinden iner.")),
+            Err(e) => failed("/backups", &e),
+        };
+    }
     let owner = st.snapshot().backup(&id).map(|b| b.vmid);
     let back = match owner {
         Ok(vmid) => format!("/guests/{vmid}?tab=yedekler"),

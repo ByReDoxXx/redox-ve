@@ -131,15 +131,16 @@ pub(super) fn archive_card(p: &Page) -> Markup {
             div class="card" style="margin-bottom:var(--s4)" {
                 header { h2 { "Arşiv" } span class="note" { (list.len()) " yedek yalnızca kopya hedefinde duruyor" } }
                 div class="tw" { table {
-                    thead { tr { th { "Yedek" } th { "Konuk" } th { "Alındığı an" } th class="num" { "Boyut" } } }
+                    thead { tr { th { "Yedek" } th { "Konuk" } th { "Alındığı an" } th class="num" { "Boyut" } th { span class="sr" { "İşlem" } } } }
                     tbody { @for b in list { tr {
                         td class="mono" { (b.id) }
                         td { (b.guest_name) " " span class="mono muted" { (b.vmid) } }
                         td class="mono muted" { (datetime(b.created)) }
                         td class="num mono" { (b.size_mb) " MB" }
+                        td class="act" { @if p.admin { form method="post" action={ "/backups/" (b.id) "/recover" } { button class="btn sm" type="submit" { (icon("restart")) "Geri Getir" } } } }
                     } } }
                 } }
-                footer { "Bu yedekler yerelde silindi; kopya hedefinin saklama süresi (keep_days) dolana kadar orada durur. Geri getirmek için: " span class="mono" { "redox backup recover <yedek>" } " — sonra olağan bir yedek gibi geri yüklenir." }
+                footer { "Bu yedekler yerelde silindi; kopya hedefinin saklama süresi (keep_days) dolana kadar orada durur. Geri getirilen yedek listeye döner ve olağan bir yedek gibi geri yüklenir (dosyalar o sırada kopya hedefinden iner)." }
             }
         }
     }

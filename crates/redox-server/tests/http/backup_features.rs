@@ -282,3 +282,26 @@ pub(super) async fn job_windows_and_verification_are_set_from_the_form() {
     let (status, _) = api(&app, post_json("/api/v1/jobs", &json!({ "name": "api", "time": "01:00", "until": "99:00" }))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn archived_backups_are_recovered_from_the_backups_page() {
+    let (app, state) = setup();
+    assert!(!page(&app, "/backups").await.contains("Geri Getir"), "arşiv boşken kart çizilmez");
+    assert!(post_ok(&app, "/guests/103/backups", "").await.contains("notice="));
+    state.mutate(|c| {
+        let mut b = c.backups.remove(0);
+        b.id = "vm-103-arsivde".into();
+        c.archive_backup(b);
+    });
+    let list = page(&app, "/backups").await;
+    assert!(list.contains("Arşiv") && list.contains(r#"action="/backups/vm-103-arsivde/recover""#));
+    // Kopya hedefi yokken geri getirilemez; nedeni söylenir.
+    assert!(post_ok(&app, "/backups/vm-103-arsivde/recover", "").await.contains("error="));
+    let dir = std::env::temp_dir().join(format!("redox-arsiv-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    state.add_offsite_copy(redox_server::offsite::Config::parse(&format!("kind = dir\npath = {}\nkeep_days = 30\n", dir.display())).unwrap());
+    assert!(post_ok(&app, "/backups/vm-103-arsivde/recover", "").await.contains("notice="));
+    let c = state.snapshot();
+    assert!(c.archive.is_empty() && c.backup("vm-103-arsivde").is_ok());
+    let _ = std::fs::remove_dir_all(dir);
+}
