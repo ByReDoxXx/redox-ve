@@ -1912,6 +1912,8 @@ pub static TEMPLATES: &[(&str, &str)] = &[
     ("{} her {} dk   {}", "{0} every {1} min   {2}"),
     ("{} hâlâ yedeğe dayanıyor", "{0} still depends on the backup"),
     ("{} imaj tutarlı", "{0} images consistent"),
+    ("{} imajı indirilemedi; sunucunun internete çıkabildiğini denetleyin ({})", "the {0} image could not be downloaded; check that the server can reach the internet ({1})"),
+    ("{} imajı indirme sunucusunda yok (sürüm eskimiş olabilir); başka bir şablon seçin", "the {0} image is not on the download server (the release may be retired); choose another template"),
     ("{} indiriliyor; bitince görev günlüğünde görünür.", "{0} is being downloaded; it appears in the task log when done."),
     ("{} indiriliyor; bitince görev günlüğünde görünür. Yeni konuk formunda imaj olarak seçilir.", "{0} is being downloaded; it appears in the task log when done. It can then be chosen as the image in the new guest form."),
     ("{} isteyen {}", "{0} requested by {1}"),

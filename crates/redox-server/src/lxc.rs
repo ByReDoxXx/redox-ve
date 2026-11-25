@@ -13,12 +13,64 @@ use std::time::{Duration, Instant};
 use redox_core::{mac_for, valid_bridge, Action, BackupSize, Guest, GuestKind, GuestStatus, Hypervisor, Probe, SnapshotOp, VmId, NAT};
 
 /// Sunulan şablonlar: (ad, dağıtım, sürüm). `download` şablonunun adlandırmasıyla.
-pub const TEMPLATES: [(&str, &str, &str); 4] = [
-    ("alpine-3.20", "alpine", "3.20"),
+pub const TEMPLATES: [(&str, &str, &str); 8] = [
+    ("alpine-3.24", "alpine", "3.24"),
+    ("debian-13", "debian", "trixie"),
     ("debian-12", "debian", "bookworm"),
+    ("ubuntu-26.04", "ubuntu", "resolute"),
     ("ubuntu-24.04", "ubuntu", "noble"),
+    ("rockylinux-10", "rockylinux", "10"),
     ("rockylinux-9", "rockylinux", "9"),
+    ("alpine-3.20", "alpine", "3.20"),
 ];
+
+/// İndirme sunucusundan kaldırılmış sürümler: var olan konteynerlerin etiketi geçerli kalsın diye tabloda
+/// durur, ama yeni konteyner için önerilmez.
+const RETIRED: [&str; 1] = ["alpine-3.20"];
+
+/// Hizmetin süreçlerinin durduğu alt grup (systemd `DelegateSubgroup=`); birim dosyasındakiyle aynı olmalıdır.
+pub const SUPERVISOR_SUBGROUP: &str = "supervisor";
+
+/// `/proc/self/cgroup` içeriğinden, hizmete devredilmiş cgroup'un yolu: süreç `…/supervisor` alt grubundaysa
+/// onun üstü. Başka her durumda (eski systemd, elle çalıştırma, cgroup v1) `None`.
+pub fn delegated_cgroup(proc_self_cgroup: &str) -> Option<&str> {
+    let own = proc_self_cgroup.lines().find_map(|line| line.strip_prefix("0::"))?;
+    let parent = own.strip_suffix(SUPERVISOR_SUBGROUP)?.strip_suffix('/')?;
+    (!parent.is_empty() && !parent.contains("..")).then_some(parent)
+}
+
+/// `lxc-start` günlüğünden asıl hata: genel kapanış satırları ve zararsız D-Bus uyarısı atlanır, ilk gerçek
+/// hatanın açıklaması (kaynak dosya öneki olmadan) verilir.
+pub fn start_failure(log: &str) -> Option<String> {
+    const NOISE: [&str; 7] = ["Failed opening dbus connection", "The container failed to start", "To get more details", "Additional information can be obtained", "instead of \"RUNNING\"", "Failed to spawn container", "An error occurred in another process"];
+    // Başarılı başlatmalarda da görülen satır: başka hata yoksa neden budur, varsa asıl neden o değildir.
+    const MINOR: &str = "controllers in the unified cgroup";
+    let errors: Vec<String> = log
+        .lines()
+        .filter(|line| line.contains(" ERROR "))
+        .filter(|line| !NOISE.iter().any(|noise| line.contains(noise)))
+        .filter_map(|line| line.rsplit_once(" - ").map(|(_, text)| text.trim().to_string()))
+        .filter(|text| !text.is_empty())
+        .collect();
+    let real: Vec<&String> = errors.iter().filter(|text| !text.contains(MINOR)).collect();
+    match real.as_slice() {
+        [] => errors.first().cloned(),
+        [only] => Some((*only).clone()),
+        [first, second, ..] => Some(format!("{first}; {second}")),
+    }
+}
+
+/// `lxc-create` hatasını açıklar: imaj sunucuda yoksa bunu söyler, yoksa aracın son satırını verir.
+pub fn explain_create(os: &str, stdout: &[u8], stderr: &[u8]) -> String {
+    let all = format!("{}\n{}", String::from_utf8_lossy(stdout), String::from_utf8_lossy(stderr));
+    if all.contains("Couldn't find a matching image") {
+        return format!("{os} imajı indirme sunucusunda yok (sürüm eskimiş olabilir); başka bir şablon seçin");
+    }
+    if all.contains("Failed to download") || all.contains("Unable to fetch") || all.contains("Temporary failure in name resolution") {
+        return format!("{os} imajı indirilemedi; sunucunun internete çıkabildiğini denetleyin ({})", last_line(stderr));
+    }
+    last_line(if stderr.is_empty() { stdout } else { stderr })
+}
 
 /// LXC'nin kendi NAT köprüsü (`lxc-net` hizmeti kurar).
 pub const LXC_NAT_BRIDGE: &str = "lxcbr0";
@@ -172,6 +224,14 @@ impl LxcDriver {
     /// Araçların varlığını denetler ve konteyner dizinini oluşturur.
     pub fn new(cfg: LxcConfig) -> Result<Self, String> {
         std::fs::create_dir_all(&cfg.lxc_path).map_err(|e| format!("{} oluşturulamadı: {e}", cfg.lxc_path.display()))?;
+        // Yetkisiz konteynerin kökü (eşlenmiş kimlik) kendi kök dosya sistemine ulaşmak için bu dizinden
+        // geçebilmelidir; hizmetin UMask'ı dizini 0700 oluşturur ve konteyner başlamaz. Yalnızca geçiş izni
+        // verilir: dizinin içeriği başkalarınca listelenemez.
+        #[cfg(unix)]
+        if cfg.idmap.is_some() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&cfg.lxc_path, std::fs::Permissions::from_mode(0o711));
+        }
         let driver = LxcDriver { cfg, samples: Mutex::new(HashMap::new()), ips: Mutex::new(HashMap::new()) };
         let probe = driver.tool("lxc-create").arg("--version").output();
         if !probe.is_ok_and(|o| o.status.success()) {
@@ -210,6 +270,62 @@ impl LxcDriver {
         }
     }
 
+    /// Konteyneri başlatır. Yetkisiz LXC, konteynerin cgroup'larını kendi bulunduğu grubun altında kurar ve o
+    /// grupta başka süreç olmamasını ister (cgroup v2 kuralı). Hizmetin kendi süreçleri de oradaysa konteyner
+    /// başlamaz; bu yüzden `lxc-start`, hizmete devredilmiş cgroup'un altında yalnızca kendisinin durduğu ayrı
+    /// bir gruptan çalıştırılır. Devredilmiş grup yoksa (bkz. `delegated_cgroup`) olağan yolla başlatılır.
+    fn start(&self, vmid: VmId) -> Result<Vec<u8>, String> {
+        // LXC'nin kendi hata iletisi geneldir ("ek bilgi için --logfile"); asıl neden günlükten okunur.
+        let log = self.cfg.lxc_path.join(format!(".{}.start.log", container_name(vmid)));
+        let _ = std::fs::remove_file(&log);
+        let mut command = match self.launch_group(vmid) {
+            Some(group) => {
+                let mut c = Command::new("sh");
+                c.arg("-c").arg(r#"echo $$ > "$0/cgroup.procs" && exec "$@""#).arg(group).arg(match &self.cfg.bin_dir {
+                    Some(dir) => dir.join("lxc-start"),
+                    None => PathBuf::from("lxc-start"),
+                });
+                c.arg("-P").arg(&self.cfg.lxc_path);
+                c
+            }
+            None => self.tool("lxc-start"),
+        };
+        let out = command
+            .args(["-n", &container_name(vmid)])
+            .arg("--logfile")
+            .arg(&log)
+            .args(["--logpriority", "ERROR"])
+            .output()
+            .map_err(|e| format!("lxc-start çalıştırılamadı: {e}"))?;
+        let reason = std::fs::read_to_string(&log).ok().and_then(|text| start_failure(&text));
+        let _ = std::fs::remove_file(&log);
+        if out.status.success() {
+            return Ok(out.stdout);
+        }
+        let message = reason.unwrap_or_else(|| last_line(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }));
+        Err(if message.starts_with("lxc-start") { message } else { format!("lxc-start: {message}") })
+    }
+
+    /// Bu konteynerin başlatılacağı cgroup dizini; kurulamıyorsa `None`.
+    fn launch_group(&self, vmid: VmId) -> Option<PathBuf> {
+        let own = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+        let base = PathBuf::from(format!("/sys/fs/cgroup{}", delegated_cgroup(&own)?));
+        // Denetleyiciler alt gruplara açılır (zaten açıksa ya da desteklenmiyorsa hata yok sayılır).
+        for controller in ["cpu", "memory", "pids", "io", "cpuset"] {
+            let _ = std::fs::write(base.join("cgroup.subtree_control"), format!("+{controller}"));
+        }
+        let group = base.join(format!("ct-{vmid}"));
+        std::fs::create_dir_all(&group).ok()?;
+        // Hizmetin UMask'ı dizini 0700 oluşturur; konteynerin kökü (eşlenmiş kimlik) kendi cgroup ağacına
+        // ulaşmak için buradan geçebilmelidir, yoksa konteynerde cgroup2 bağlanamaz.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&group, std::fs::Permissions::from_mode(0o755));
+        }
+        Some(group)
+    }
+
     fn config_path(&self, vmid: VmId) -> PathBuf {
         self.cfg.lxc_path.join(container_name(vmid)).join("config")
     }
@@ -243,7 +359,7 @@ impl Hypervisor for LxcDriver {
     }
 
     fn templates(&self) -> Vec<String> {
-        TEMPLATES.iter().map(|(name, _, _)| name.to_string()).collect()
+        TEMPLATES.iter().map(|(name, _, _)| name.to_string()).filter(|name| !RETIRED.contains(&name.as_str())).collect()
     }
 
     fn create(&self, g: &Guest) -> Result<(), String> {
@@ -255,9 +371,20 @@ impl Hypervisor for LxcDriver {
         let base = self.cfg.lxc_path.join(format!(".{}.conf", container_name(g.vmid)));
         std::fs::write(&base, idmap_lines(self.cfg.idmap)).map_err(|e| format!("{} yazılamadı: {e}", base.display()))?;
         let base_arg = base.display().to_string();
-        let created = self.run("lxc-create", g.vmid, &["-f", &base_arg, "-t", "download", "--", "-d", dist, "-r", release, "-a", "amd64"]);
+        let created = self
+            .tool("lxc-create")
+            .args(["-n", &container_name(g.vmid), "-f", &base_arg, "-t", "download", "--", "-d", dist, "-r", release, "-a", "amd64"])
+            .output()
+            .map_err(|e| format!("lxc-create çalıştırılamadı: {e}"));
         let _ = std::fs::remove_file(&base);
-        created?;
+        let created = created?;
+        if !created.status.success() {
+            // Yarım kalan dizin bir sonraki denemeyi engellemesin.
+            let _ = self.run("lxc-destroy", g.vmid, &[]);
+            let _ = std::fs::remove_dir_all(self.cfg.lxc_path.join(container_name(g.vmid)));
+            let message = explain_create(&g.os, &created.stdout, &created.stderr);
+            return Err(if message.starts_with("lxc-create") { message } else { format!("lxc-create: {message}") });
+        }
         self.write_managed(g).inspect_err(|_| {
             let _ = self.run("lxc-destroy", g.vmid, &[]);
         })
@@ -279,7 +406,7 @@ impl Hypervisor for LxcDriver {
     fn apply(&self, g: &Guest, action: Action) -> Result<(), String> {
         let timeout = self.cfg.stop_timeout.as_secs().to_string();
         let result = match action {
-            Action::Start => self.run("lxc-start", g.vmid, &[]),
+            Action::Start => self.start(g.vmid),
             // Süre dolunca lxc-stop konteyneri zorla durdurur.
             Action::Stop => self.run("lxc-stop", g.vmid, &["-t", &timeout]),
             Action::Reboot => self.run("lxc-stop", g.vmid, &["-r", "-t", &timeout]),
@@ -772,5 +899,46 @@ mod tests {
         let err = LxcDriver::new(cfg).err().expect("araç yoksa sürücü kurulmaz");
         assert!(err.contains("apt install lxc"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_errors_name_a_missing_image_and_retired_templates_are_not_offered() {
+        let missing = explain_create("alpine-3.20", b"Downloading the image index\nERROR: Couldn't find a matching image\n", b"lxc-create: x: Failed to create container x\n");
+        assert!(missing.contains("alpine-3.20 imajı indirme sunucusunda yok"), "{missing}");
+        assert!(explain_create("debian-13", b"", b"ERROR: Failed to download http://x\n").contains("internete"));
+        assert_eq!(explain_create("debian-13", b"", b"a\nlxc-create: boom\n"), "lxc-create: boom");
+        // Eski etiket çözülmeye devam eder, ama önerilenler arasında yoktur.
+        assert_eq!(template("alpine-3.20"), Some(("alpine", "3.20")));
+        assert_eq!(template("debian-13"), Some(("debian", "trixie")));
+        assert!(RETIRED.iter().all(|name| template(name).is_some()));
+    }
+
+    #[test]
+    fn delegated_cgroup_is_found_only_under_the_supervisor_subgroup() {
+        assert_eq!(delegated_cgroup("0::/system.slice/redox.service/supervisor\n"), Some("/system.slice/redox.service"));
+        assert_eq!(delegated_cgroup("1:name=systemd:/x\n0::/a/b/supervisor\n"), Some("/a/b"));
+        for other in ["0::/system.slice/redox.service\n", "0::/user.slice/user-1000.slice/session-3.scope\n", "0::/supervisor\n", "0::/a/notsupervisor\n", "0::/a/../supervisor\n", "12:memory:/x\n", ""] {
+            assert_eq!(delegated_cgroup(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn start_failure_picks_the_first_real_error_from_the_log() {
+        let log = "lxc-start redox-100 2026 WARN     apparmor - x.c:1 - Per-container AppArmor profiles are disabled
+lxc-start redox-100 2026 ERROR    cgfsng - ../src/lxc/cgroups/cgfsng.c:unpriv_systemd_create_scope:1529 - Failed opening dbus connection
+lxc-start redox-100 2026 ERROR    start - ../src/lxc/start.c:print_top_failing_dir:100 - Permission denied - Could not access /var/lib/redox/lxc. Please grant it x access
+lxc-start redox-100 2026 ERROR    lxc_start - ../src/lxc/tools/lxc_start.c:lxc_start_main:307 - The container failed to start
+";
+        assert_eq!(start_failure(log).as_deref(), Some("Could not access /var/lib/redox/lxc. Please grant it x access"));
+        let busy = "lxc-start x 2026 ERROR    cgfsng - c.c:1 - Device or resource busy - Could not enable \"+cpu\" controllers in the unified cgroup 11
+";
+        assert!(start_failure(busy).unwrap().contains("Could not enable"), "tek hata buysa o gösterilir");
+        let two = format!("{busy}lxc-start x 2026 ERROR    conf - c.c:2 - No such file or directory - Failed to set \"memory.max\" to \"256M\"
+lxc-start x 2026 ERROR    start - s.c:3 - Failed to setup cgroup limits for container \"x\"
+");
+        assert_eq!(start_failure(&two).as_deref(), Some("Failed to set \"memory.max\" to \"256M\"; Failed to setup cgroup limits for container \"x\""));
+        assert_eq!(start_failure("lxc-start x 2026 ERROR    lxc_start - a.c:1 - The container failed to start
+"), None);
+        assert_eq!(start_failure(""), None);
     }
 }

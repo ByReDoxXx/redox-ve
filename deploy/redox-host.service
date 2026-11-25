@@ -28,8 +28,11 @@ RestartSec=2
 # Hizmet yeniden başlarken sanal makineler ve konteynerler çalışmaya devam etsin.
 KillMode=process
 
-# Yetkisiz LXC kendi cgroup alt ağacını yönetebilmelidir.
+# Yetkisiz LXC kendi cgroup alt ağacını yönetebilmelidir. Hizmetin kendi süreçleri "supervisor" alt grubunda
+# durur; böylece devredilen grup boş kalır ve konteynerler onun altında kendi gruplarını kurabilir
+# (systemd 254 ve sonrası; eski sürümlerde bu satır yok sayılır ve konteynerler başlamayabilir).
 Delegate=yes
+DelegateSubgroup=supervisor
 
 # --- Sandbox (gevşek) ---
 # Şunlar YOK, çünkü gerekli:
@@ -37,8 +40,12 @@ Delegate=yes
 #   RestrictNamespaces   -> konteynerler kullanıcı/ağ/bağlama ad alanı kurar
 #   ProtectControlGroups -> LXC cgroup dosyalarına yazar
 #   SystemCallFilter     -> mount, unshare, setns gibi çağrılar gerekir
+#   ProtectHostname      -> konteyner kendi makine adını ayarlar (sethostname)
+#   ProtectKernelLogs    -> /proc üzerine örtü bağlar; çekirdek o zaman konteynere yeni /proc bağlatmaz
 # Yardımcıların alabileceği yetkiler şunlarla sınırlıdır:
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_MKNOD CAP_NET_RAW CAP_SYS_CHROOT CAP_KILL CAP_SETPCAP CAP_AUDIT_WRITE
+# CAP_SYS_PTRACE ve CAP_DAC_READ_SEARCH: lxc-user-nic, sanal kartı takmak için konteynerin ağ ad alanını
+# (/proc/<pid>/ns/net) açar; bu yetkiler olmadan "Failed opening network namespace path" ile başlamaz.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_MKNOD CAP_NET_RAW CAP_SYS_CHROOT CAP_KILL CAP_SETPCAP CAP_AUDIT_WRITE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
 AmbientCapabilities=
 ProtectSystem=full
 ProtectHome=true
@@ -55,9 +62,7 @@ DeviceAllow=char-pts rw
 DeviceAllow=/dev/urandom r
 DeviceAllow=/dev/random r
 ProtectKernelModules=true
-ProtectKernelLogs=true
 ProtectClock=true
-ProtectHostname=true
 RestrictRealtime=true
 LockPersonality=true
 SystemCallArchitectures=native

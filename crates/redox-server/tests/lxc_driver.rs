@@ -187,7 +187,7 @@ fn status(d: &LxcDriver, g: &Guest) -> GuestStatus {
 fn container_lifecycle_against_fake_tools() {
     let (cfg, dir) = setup();
     let d = LxcDriver::new(cfg.clone()).unwrap();
-    let g = guest(&dir, "kutu", "alpine-3.20");
+    let g = guest(&dir, "kutu", "alpine-3.24");
     let config = cfg.lxc_path.join("redox-100/config");
 
     assert_eq!(status(&d, &g), GuestStatus::Stopped, "var olmayan konteyner durmuş görünür");
@@ -195,7 +195,7 @@ fn container_lifecycle_against_fake_tools() {
 
     d.create(&g).unwrap();
     let text = std::fs::read_to_string(&config).unwrap();
-    assert!(text.contains("download -d alpine -r 3.20 -a amd64"), "şablon argümanları: {text}");
+    assert!(text.contains("download -d alpine -r 3.24 -a amd64"), "şablon argümanları: {text}");
     assert!(text.contains("lxc.idmap = u 0 100000 65536") && text.contains("lxc.idmap = g 0 100000 65536"), "yetkisiz kimlik eşlemesi");
     assert!(text.contains("lxc.cgroup2.memory.max = 256M") && text.contains("lxc.cgroup2.cpu.max = 200000 100000"));
     assert!(text.contains("lxc.net.0.link = lxcbr0") && text.contains("lxc.net.0.hwaddr = 52:54:00:00:00:64"));
@@ -270,7 +270,7 @@ fn failures_and_unsupported_operations_are_explained() {
     assert_eq!(d.create(&guest(&dir, "kutu", "ubuntu-24.04")).unwrap_err(), "lxc-create: ubuntu imajı indirilemedi");
     assert!(!cfg.lxc_path.join("redox-100/config").exists());
 
-    let broken = guest(&dir, "bozuk", "alpine-3.20");
+    let broken = guest(&dir, "bozuk", "alpine-3.24");
     d.create(&broken).unwrap();
     assert_eq!(d.apply(&broken, Action::Start).unwrap_err(), "lxc-start: konteyner başlatılamadı");
     assert_eq!(status(&d, &broken), GuestStatus::Stopped);
@@ -279,7 +279,7 @@ fn failures_and_unsupported_operations_are_explained() {
         assert!(err.contains("konteynerlerde desteklenmiyor"), "{err}");
     }
     assert!(d.supports(GuestKind::Ct) && !d.supports(GuestKind::Vm));
-    assert!(d.templates().contains(&"alpine-3.20".to_string()));
+    assert!(d.templates().contains(&"alpine-3.24".to_string()) && !d.templates().contains(&"alpine-3.20".to_string()), "kaldırılmış sürüm önerilmez");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -293,7 +293,7 @@ fn host_driver_routes_containers_and_vms() {
     let driver = HostDriver::new(qemu, Some(LxcDriver::new(cfg.clone()).unwrap()));
     assert!(driver.name().ends_with("+lxc") && driver.supports(GuestKind::Ct) && driver.supports(GuestKind::Vm));
     // Disk ekleme gibi isteğe bağlı işlemler de alttaki sürücüye iletilir (varsayılan "tamam" dönmemeli).
-    let mut probe_vm = guest(&dir, "vm", "alpine-3.20");
+    let mut probe_vm = guest(&dir, "vm", "alpine-3.24");
     probe_vm.kind = GuestKind::Vm;
     assert!(driver.add_disk(&probe_vm, 1, 1).is_err(), "qemu-img yokken disk eklemek hata vermeli");
     assert!(driver.backup_file("vm-1-1").is_some() && driver.backup_file("ct-1-1").is_some());
@@ -302,7 +302,7 @@ fn host_driver_routes_containers_and_vms() {
     let state = AppState::new(cluster, Box::new(driver), Duration::ZERO, None, auth);
 
     assert!(matches!(state.create_guest(&spec("kutu", &node, "windows-11"), "admin"), Err(Error::InvalidSpec(m)) if m.contains("bilinmeyen konteyner şablonu")));
-    let id = state.create_guest(&spec("kutu", &node, "alpine-3.20"), "admin").unwrap();
+    let id = state.create_guest(&spec("kutu", &node, "alpine-3.24"), "admin").unwrap();
     assert!(cfg.lxc_path.join(format!("redox-{id}/config")).is_file());
 
     state.run_action(id, Action::Start, "admin").unwrap();
@@ -362,7 +362,7 @@ fn without_lxc_only_vms_are_offered() {
     let (_, dir) = setup();
     let driver = HostDriver::new(QemuDriver::new(QemuConfig::new(dir.join("data"))).unwrap(), None);
     assert!(!driver.supports(GuestKind::Ct) && driver.supports(GuestKind::Vm) && driver.templates().is_empty());
-    let ct = guest(&dir, "kutu", "alpine-3.20");
+    let ct = guest(&dir, "kutu", "alpine-3.24");
     assert_eq!(driver.apply(&ct, Action::Start).unwrap_err(), "bu sunucuda LXC kurulu değil");
     assert!(driver.probe(&ct).is_none());
     std::fs::remove_dir_all(dir).unwrap();
@@ -372,7 +372,7 @@ fn without_lxc_only_vms_are_offered() {
 fn container_snapshots_map_our_names_to_lxc_names() {
     let (cfg, dir) = setup();
     let d = LxcDriver::new(cfg.clone()).unwrap();
-    let g = guest(&dir, "kutu", "alpine-3.20");
+    let g = guest(&dir, "kutu", "alpine-3.24");
     d.create(&g).unwrap();
     let rootfs = cfg.lxc_path.join("redox-100/rootfs");
     let file = rootfs.join("veri.txt");
@@ -410,7 +410,7 @@ fn container_snapshots_map_our_names_to_lxc_names() {
 fn container_backup_and_restore_round_trip() {
     let (cfg, dir) = setup();
     let d = LxcDriver::new(cfg.clone()).unwrap();
-    let g = guest(&dir, "kutu", "alpine-3.20");
+    let g = guest(&dir, "kutu", "alpine-3.24");
     d.create(&g).unwrap();
     let rootfs = cfg.lxc_path.join("redox-100/rootfs");
     std::fs::create_dir_all(rootfs.join("etc")).unwrap();
@@ -477,7 +477,7 @@ fn firewall_rules_follow_guest_changes() {
     // --firewall verilmeden: gerçek sürücüde güvenlik duvarı açılamaz.
     let plain = HostDriver::new(QemuDriver::new(QemuConfig::new(dir.join("data2"))).unwrap(), Some(LxcDriver::new(cfg.clone()).unwrap()));
     let off = AppState::new(local_cluster(&dir), Box::new(plain), Duration::ZERO, None, Auth::new(UserFile::default(), None, false, Cost::Test));
-    let id0 = off.create_guest(&spec("kutu", &node, "alpine-3.20"), "admin").unwrap();
+    let id0 = off.create_guest(&spec("kutu", &node, "alpine-3.24"), "admin").unwrap();
     let enable = redox_core::GuestPatch { firewall: Some(true), ..Default::default() };
     assert!(matches!(off.update_guest(id0, &enable, "admin"), Err(Error::InvalidSpec(m)) if m.contains("--firewall")));
     off.delete_guest(id0, "admin").unwrap();
@@ -488,7 +488,7 @@ fn firewall_rules_follow_guest_changes() {
     state.sync_firewall().unwrap();
     assert!(last().contains("table bridge redox {") && !last().contains("jump"), "başlangıçta boş tablo yüklenir");
 
-    let id = state.create_guest(&spec("kutu", &node, "alpine-3.20"), "admin").unwrap();
+    let id = state.create_guest(&spec("kutu", &node, "alpine-3.24"), "admin").unwrap();
     let rules = redox_core::hw::parse_fw_rules("tcp/22 from 10.0.0.0/8, tcp/443").unwrap();
     state.update_guest(id, &redox_core::GuestPatch { firewall: Some(true), fw_rules: Some(rules), ..Default::default() }, "admin").unwrap();
     let script = last();
@@ -521,12 +521,12 @@ fn generated_ruleset_loads_into_a_real_kernel() {
         return;
     }
     let (_, dir) = setup();
-    let mut vm = guest(&dir, "web", "alpine-3.20");
+    let mut vm = guest(&dir, "web", "alpine-3.24");
     vm.kind = GuestKind::Vm;
     vm.bridge = "vmbr0".into();
     vm.hw.firewall = true;
     vm.hw.fw_rules = redox_core::hw::parse_fw_rules("tcp/22 from 10.0.0.0/8, tcp/80-443, udp/53 from 192.168.1.10, udp, tcp, icmp").unwrap();
-    let mut ct = guest(&dir, "kutu", "alpine-3.20");
+    let mut ct = guest(&dir, "kutu", "alpine-3.24");
     ct.vmid = 201;
     ct.hw.firewall = true;
     let script = redox_server::firewall::ruleset(&[vm.clone(), ct]);
@@ -560,7 +560,7 @@ fn generated_ruleset_loads_into_a_real_kernel() {
 fn containers_are_cloned_with_their_own_identity() {
     let (cfg, dir) = setup();
     let d = LxcDriver::new(cfg.clone()).unwrap();
-    let source = guest(&dir, "kutu", "alpine-3.20");
+    let source = guest(&dir, "kutu", "alpine-3.24");
     d.create(&source).unwrap();
     let rootfs = cfg.lxc_path.join("redox-100/rootfs");
     std::fs::create_dir_all(rootfs.join("etc")).unwrap();
@@ -602,7 +602,7 @@ fn running_containers_are_frozen_for_the_backup_and_thawed_after() {
     let (cfg, dir) = setup();
     let d = LxcDriver::new(cfg.clone()).unwrap();
     assert!(d.live_backup(GuestKind::Ct) && !d.live_disk_ops(GuestKind::Ct), "yedek çalışırken alınır, anlık görüntü alınmaz");
-    let g = guest(&dir, "kutu", "alpine-3.20");
+    let g = guest(&dir, "kutu", "alpine-3.24");
     d.create(&g).unwrap();
     let home = cfg.lxc_path.join("redox-100");
     std::fs::create_dir_all(home.join("rootfs/etc")).unwrap();
@@ -655,7 +655,7 @@ async fn containers_are_copied_and_replicated_between_servers() {
     users.add_token("admin", "t", "es-sunucu-yonetici-tokeni").unwrap();
     let peer_driver = HostDriver::new(QemuDriver::new(QemuConfig::new(peer_dir.join("data"))).unwrap(), Some(LxcDriver::new(peer_cfg.clone()).unwrap()));
     let peer = AppState::new(peer_cluster, Box::new(peer_driver), Duration::ZERO, None, Auth::new(users, None, false, Cost::Test));
-    let source = peer.create_guest(&spec("web", &node, "alpine-3.20"), "admin").unwrap();
+    let source = peer.create_guest(&spec("web", &node, "alpine-3.24"), "admin").unwrap();
     let peer_rootfs = peer_cfg.lxc_path.join(format!("redox-{source}/rootfs"));
     std::fs::create_dir_all(peer_rootfs.join("etc")).unwrap();
     std::fs::write(peer_rootfs.join("etc/hostname"), "birinci\n").unwrap();
@@ -715,7 +715,7 @@ fn container_backups_are_encrypted_on_disk_when_a_passphrase_is_set() {
     cfg.backup_passphrase = Some("dogru-at-pil-zimba".into());
     let d = LxcDriver::new(cfg.clone()).unwrap();
     assert!(d.backups_sealed());
-    let g = guest(&dir, "kutu", "alpine-3.20");
+    let g = guest(&dir, "kutu", "alpine-3.24");
     d.create(&g).unwrap();
     let rootfs = cfg.lxc_path.join("redox-100/rootfs");
     std::fs::create_dir_all(rootfs.join("etc")).unwrap();

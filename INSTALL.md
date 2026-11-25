@@ -54,11 +54,15 @@ use NAT); the bridge is only set up on systems that use `/etc/network/interfaces
 
 ### What was tested and what was not
 
-The scripts' syntax, the network configuration rewrite (DHCP and static), idempotence on a second run, the systemd
-units and the installer answer file were tested. **Not tested yet:** building the ISO and booting and installing
-from it on a machine, the package installation, Caddy serving on 8006 with a self-signed certificate, and the musl
-build. Do not rely on this path in production until a real installation has confirmed it; the step-by-step manual
-installation follows below.
+**Tested (Debian 13.8, in a virtual machine with KVM):** building the ISO, booting it with BIOS and installing
+without questions (about 7 minutes), package installation, creation of the administrator on first boot, the console
+banner, the `vmbr0` bridge getting an address, the panel answering on `https://<address>:8006` with a self-signed
+certificate, and with real LXC: creating and starting an Alpine container, running a command in it and backing it
+up while running.
+
+**Not tested yet:** installation on a physical machine, UEFI boot, booting from a USB stick, the installer's
+interactive flow, and `install.sh` on Ubuntu. On real LXC, restarting a container, taking its snapshot and cloning it
+**currently fail** (see *Known gaps* below).
 
 ## Security model (summary)
 
@@ -99,7 +103,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # all must pass (514 tests on Linux; with Node installed the live console client's 7 tests run too)
+cargo test --workspace          # all must pass (517 tests on Linux; with Node installed the live console client's 7 tests run too)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -511,7 +515,7 @@ sudo systemctl restart redox
 journalctl -u redox -n 20 --no-pager      # shows qemu-kvm+lxc
 ```
 
-- **Templates:** alpine-3.20, debian-12, ubuntu-24.04, rockylinux-9, downloaded from
+- **Templates:** alpine-3.24, debian-13, debian-12, ubuntu-26.04, ubuntu-24.04, rockylinux-10, rockylinux-9, downloaded from
   `images.linuxcontainers.org` on first use.
 - **Network:** NAT attaches the container to LXC's own bridge (`lxcbr0`); a bridge attaches it directly.
 - **Console tab** runs one command in the container (as root, at most 20 seconds). No interactive programs.

@@ -50,10 +50,15 @@ yapılacakları yazar.
 
 ### Sınananlar ve sınanmayanlar
 
-Betiklerin sözdizimi, ağ ayarı dönüşümü (DHCP ve sabit adres), yeniden çalıştırmada yinelenmeme, systemd birimleri
-ve kurucu yanıt dosyası sınandı. **Henüz sınanmadı:** ISO'nun üretilmesi ve bir makinede önyüklenip kurulması,
-paketlerin kurulması, Caddy'nin kendinden imzalı sertifikayla 8006'da yayın yapması ve musl ile derleme. Bunlar
-gerçek bir kurulumla doğrulanmadan bu yolu üretimde kullanmayın; adım adım elle kurulum aşağıdadır.
+**Sınandı (Debian 13.8, KVM'li bir sanal makinede):** ISO'nun üretilmesi, BIOS ile önyüklenip soru sormadan
+kurulması (yaklaşık 7 dakika), paketlerin kurulması, ilk açılışta yönetici hesabının oluşması, konsoldaki açılış
+ekranı, `vmbr0` köprüsünün adres alması, panelin `https://<adres>:8006` üzerinde kendinden imzalı sertifikayla
+yanıt vermesi ve gerçek LXC ile bir Alpine konteynerinin oluşturulup başlatılması, içinde komut çalıştırılması ve
+çalışırken yedeğinin alınması.
+
+**Henüz sınanmadı:** fiziksel bir makinede kurulum, UEFI ile önyükleme, USB bellekten açılış, kurucunun soru soran
+(etkileşimli) akışı ve Ubuntu üzerinde `install.sh`. Gerçek LXC'de konteynerin yeniden başlatılması, anlık
+görüntüsü ve klonu **hata veriyor** (aşağıda *Bilinen eksikler*).
 
 ## Güvenlik modeli (özet)
 
@@ -92,7 +97,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # hepsi geçmeli (Linux'ta 514 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
+cargo test --workspace          # hepsi geçmeli (Linux'ta 517 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -615,7 +620,7 @@ sudo systemctl restart redox
 journalctl -u redox -n 20 --no-pager      # "sürücü: qemu-kvm+lxc" yazmalı
 ```
 
-- **Şablonlar:** alpine-3.20, debian-12, ubuntu-24.04, rockylinux-9. İlk oluşturmada imaj
+- **Şablonlar:** alpine-3.24, debian-13, debian-12, ubuntu-26.04, ubuntu-24.04, rockylinux-10, rockylinux-9. İlk oluşturmada imaj
   `images.linuxcontainers.org` adresinden indirilir (sunucunun internete çıkması gerekir); oluşturma isteği
   indirme bitene kadar bekler.
 - **Ağ:** `NAT` seçilirse konteyner LXC'nin kendi köprüsüne (`lxcbr0`, `lxc-net` hizmeti kurar) bağlanır;
