@@ -6,6 +6,7 @@
 # sorulur, gerisi kendiliğinden kurulur ve sunucu açıldığında konsolda panelin adresi yazar.
 #
 #   sh deploy/iso/build-iso.sh --debian-iso debian-13.x.y-amd64-netinst.iso --binary YOL/redox [--out redox-ve.iso]
+#       [--answers DOSYA]   # ek yanıtlar: kurucunun sorduklarını da önceden yanıtlar (hiç soru sormayan kurulum)
 #
 # Gerekenler: xorriso, cpio, gzip (Debian/Ubuntu: sudo apt install xorriso cpio).
 # İkili dosya durağan bağlanmış olmalıdır (musl), yoksa derlendiği sistemden eski bir Debian'da çalışmaz:
@@ -20,6 +21,7 @@ ISO=""
 BINARY=""
 OUT="redox-ve.iso"
 ALLOW_DYNAMIC=0
+ANSWERS=""
 
 die() { echo "hata / error: $*" >&2; exit 1; }
 
@@ -28,8 +30,9 @@ while [ $# -gt 0 ]; do
         --debian-iso) ISO="$2"; shift 2 ;;
         --binary) BINARY="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
+        --answers) ANSWERS="$2"; shift 2 ;;
         --allow-dynamic) ALLOW_DYNAMIC=1; shift ;;
-        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "bilinmeyen seçenek / unknown option: $1" ;;
     esac
 done
@@ -46,6 +49,11 @@ fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+[ -z "$ANSWERS" ] || [ -f "$ANSWERS" ] || die "$ANSWERS yok / not found"
+mkdir -p "$WORK/pre"
+cat "$HERE/preseed.cfg" > "$WORK/pre/preseed.cfg"
+[ -z "$ANSWERS" ] || cat "$ANSWERS" >> "$WORK/pre/preseed.cfg"
+
 extract() { xorriso -osirrox on -indev "$ISO" -extract "$1" "$2" >/dev/null 2>&1; }
 
 # Yanıt dosyası kurucunun başlangıç dosya sistemine (initrd) eklenir: /preseed.cfg kendiliğinden okunur.
@@ -54,7 +62,7 @@ add_preseed() {
     extract "$1" "$WORK/$2.gz" || return 1
     chmod u+w "$WORK/$2.gz"
     gzip -d "$WORK/$2.gz"
-    (cd "$HERE" && echo preseed.cfg | cpio -H newc -o -A -F "$WORK/$2" 2>/dev/null)
+    (cd "$WORK/pre" && echo preseed.cfg | cpio -H newc -o -A -F "$WORK/$2" 2>/dev/null)
     gzip -9 "$WORK/$2"
 }
 add_preseed /install.amd/initrd.gz initrd || die "kalıpta /install.amd/initrd.gz yok; bu bir Debian amd64 netinst kalıbı mı? / not a Debian amd64 netinst image?"

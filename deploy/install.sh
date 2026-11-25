@@ -53,6 +53,11 @@ PACKAGES="qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools lxc lxc-templates ui
 say "Paketler kuruluyor" "Installing packages"
 if [ -z "$ROOT" ]; then
     export DEBIAN_FRONTEND=noninteractive
+    # Kurulum ortamı paket kaynağı olarak hâlâ listede durur ve "apt-get update" bu yüzden hata verir;
+    # kurucu onu en sonda kendisi kapatır, burada daha önce kapatılır.
+    if [ -f /etc/apt/sources.list ] && grep -q '^deb cdrom:' /etc/apt/sources.list; then
+        run sed -i 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list
+    fi
     run apt-get update
     # shellcheck disable=SC2086
     run apt-get install -y --no-install-recommends $PACKAGES
