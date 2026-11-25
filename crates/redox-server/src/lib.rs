@@ -229,7 +229,8 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
     req.extensions_mut().insert(ClientIp(ip));
 
     let path = req.uri().path().to_string();
-    if path == "/login" || path == "/login/oidc" || path == "/login/oidc/callback" || path == "/healthz" || path.starts_with("/assets/") {
+    // Dil, giriş yapmadan da değiştirilebilir (giriş sayfasının kendisi için).
+    if path == "/lang" || path == "/login" || path == "/login/oidc" || path == "/login/oidc/callback" || path == "/healthz" || path.starts_with("/assets/") {
         return Ok(());
     }
     let is_api = path.starts_with("/api/") || path == "/metrics";

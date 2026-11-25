@@ -199,6 +199,15 @@ async fn the_interface_and_messages_follow_the_chosen_language() {
     let (_, body) = api(&app, request(Method::GET, "/api/v1/guests/999").body(Body::empty()).unwrap()).await;
     assert_eq!(body["error"].as_str(), Some("999 kimlikli konuk bulunamadı"));
 
+    // Giriş sayfası: oturum açmadan dil değiştirilir ve sayfa o dilde gelir.
+    let (status, headers, _) = send(&app, anon(Method::GET, "/lang?to=en&back=/login").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(headers[SET_COOKIE].to_str().unwrap().starts_with("lang=en;") && headers[LOCATION] == "/login");
+    let (_, _, login) = send(&app, anon(Method::GET, "/login").header(COOKIE, "lang=en").body(Body::empty()).unwrap()).await;
+    assert!(login.contains(r#"<html lang="en""#) && login.contains("Sign In") && login.contains("User name") && login.contains(r#"href="/lang?to=tr&amp;back=/login""#), "{}", &login[..login.len().min(400)]);
+    let (_, _, login) = send(&app, anon(Method::GET, "/login").body(Body::empty()).unwrap()).await;
+    assert!(login.contains("Giriş Yap") && login.contains(r#"href="/lang?to=en&amp;back=/login""#));
+
     // Sunucunun varsayılan dili: çerezi olmayan ziyaretçi.
     state.set_default_lang(redox_server::i18n::Lang::En);
     assert!(page(&app, "/").await.contains("Overview"));

@@ -38,7 +38,7 @@ pub fn help(p: &Page) -> String {
 pub fn login(theme: &str, next: &str, username: &str, error: Option<&str>, sso: bool) -> String {
     html! {
         (DOCTYPE)
-        html lang="tr" data-theme=(theme) {
+        html lang=(crate::i18n::current().code()) data-theme=(theme) {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
@@ -64,7 +64,7 @@ pub fn login(theme: &str, next: &str, username: &str, error: Option<&str>, sso: 
                         form method="post" action="/login" {
                             h1 { (tx("Giriş")) }
                             @if let Some(e) = error {
-                                p class="errsum" role="alert" { (e) }
+                                p class="errsum" role="alert" { (crate::i18n::message(e)) }
                             }
                             input type="hidden" name="next" value=(next);
                             div class="field" {
@@ -82,6 +82,8 @@ pub fn login(theme: &str, next: &str, username: &str, error: Option<&str>, sso: 
                                 span class="hint" { (tx("Yalnızca iki adımlı doğrulamayı açtıysanız.")) }
                             }
                             button class="btn primary" type="submit" { (tx("Giriş Yap")) }
+                            @let other = crate::i18n::current().other();
+                            p class="hint" { a href={ "/lang?to=" (other.code()) "&back=/login" } lang=(other.code()) { @if other == crate::i18n::Lang::En { "English" } @else { "Türkçe" } } }
                             @if sso {
                                 a class="btn" href="/login/oidc" { (icon("shield")) (tx("Kurumsal hesapla giriş yap")) }
                             }
@@ -98,7 +100,7 @@ pub fn login(theme: &str, next: &str, username: &str, error: Option<&str>, sso: 
 pub fn signed_in(theme: &str) -> String {
     html! {
         (DOCTYPE)
-        html lang="tr" data-theme=(theme) {
+        html lang=(crate::i18n::current().code()) data-theme=(theme) {
             head {
                 meta charset="utf-8";
                 meta http-equiv="refresh" content="0;url=/";
