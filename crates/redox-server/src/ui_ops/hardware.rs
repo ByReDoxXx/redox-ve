@@ -27,6 +27,29 @@ pub async fn storage_move(State(st): State<AppState>, Extension(me): Extension<I
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
+pub struct CoresForm {
+    cores: String,
+}
+
+/// Donanım sekmesindeki çalışırken çekirdek ekleme formu.
+pub async fn cores_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(raw): Path<String>, Form(f): Form<CoresForm>) -> Redirect {
+    let vmid = match vmid_of(&raw) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let back = format!("/guests/{vmid}?tab=donanim");
+    let Ok(cores) = f.cores.trim().parse::<u32>() else {
+        return flash(&back, "error", (tx("Çekirdek sayısı bir tam sayı olmalı.")));
+    };
+    match st.cores_add(vmid, cores, &me.user) {
+        Ok(true) => flash(&back, "notice", &tfmt(format!("Konuk {cores} çekirdeğe çıkarıldı; yeni çekirdekler konukta etkin."))),
+        Ok(false) => flash(&back, "notice", &tfmt(format!("Konuk {cores} çekirdeğe çıkarıldı. Konuk ajanı yanıt vermedi: yeni çekirdekleri konuğun içinde etkinleştirmeniz gerekebilir."))),
+        Err(e) => failed(&back, &e),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 pub struct BalloonForm {
     mb: String,
     /// Dinamik bellek formunda: alt sınır (MB); 0 kapatır.

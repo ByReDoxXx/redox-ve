@@ -43,6 +43,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - ISO'dan kurulum ya da hazır bulut imajından cloud-init ile oluşturma (kullanıcı, SSH anahtarı, makine adı).
   cloud-init ayarları, sabit adres dahil, sonradan panelden düzenlenir.
 - Sanal makine başına seçilebilen işlemci modeli ve hedefi çalışırken değişen bellek balonu.
+- Çalışan sanal makineye çekirdek ekleme (`redox vm cores 103 6`); üst sınır konuk başına verilir.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
 - Şablonlar, tam klonlar ve bağlı klonlar (bağlı klon bir saniyenin altında hazır olur).
 - En fazla 8 ek veri diski ve 3 ek ağ kartı; ikisi de çalışan sanal makineye takılabilir.
@@ -295,7 +296,7 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 | `POST /guests/{vmid}/{start,stop,reboot,pause,resume}` | Güç işlemleri |
 | `POST /guests/{vmid}/suspend`, `/discard-suspend`, `/detach` | Diske askıya alma, yedekten ayırma |
 | `POST /guests/{vmid}/snapshots`, `.../{name}/rollback` | Anlık görüntüler |
-| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/move` | Klonlar, donanım, depolar arası taşıma |
+| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/cores`, `/move` | Klonlar, donanım, depolar arası taşıma |
 | `GET /guests/{vmid}/export` | OVA dışa aktarma |
 | `POST /guests/{vmid}/backups`, `GET /backups` | Yedekler |
 | `POST /backups/{id}/restore`, `/push`, `/verify`, `GET .../download` | Geri yükleme, dış kopya, doğrulama, indirme |
@@ -428,7 +429,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 517, Windows'ta 445 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 521, Windows'ta 448 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
@@ -455,7 +456,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
   Kesintisiz bir canlı taşıma değildir.
 - Kendiliğinden devralma yalnızca çoğaltılan konuklar içindir ve bir hakem sunucu ister; kaynağı zorla kapatma (fencing) ve ortak durumlu küme yoktur. Gerçek bir kesintide denenmedi.
 - Depolama her zaman imaj dosyalarının durduğu bir dizindir. Dizin ZFS, LVM ya da NFS üzerinde olabilir (tanınır ve gösterilir), ama yerleşik zvol ya da mantıksal birim havuzu yönetimi yoktur.
-- Çalışan sanal makineye işlemci ve bellek eklenemez (balon belleği yalnızca düşürür ve geri verir).
+- Çalışan sanal makineye çekirdek eklenir ama çıkarılmaz; eklenebilecek sayı, konuk kapalıyken verilen "en fazla çekirdek" değeriyle sınırlıdır. Bellek, konuğun açıldığı değerin üstüne çıkarılamaz (balon yalnızca düşürür ve geri verir). Çekirdek ekleme gerçek QEMU'da bir Linux konukla, ardından askıya alıp geri dönerek denendi; Windows konukla denenmedi, yeni çekirdeklerin konuk ajanıyla etkinleştirilmesi yalnızca sahte QEMU'ya karşı sınandı.
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
 - Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).
 - Arayüz yalnızca Türkçe ve İngilizcedir.

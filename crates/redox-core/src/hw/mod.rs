@@ -57,6 +57,9 @@ pub struct Hardware {
     /// İç içe sanallaştırma: konuğa sanallaştırma uzantıları (VT-x / AMD-V) gösterilir; konuk kendi sanal
     /// makinelerini (KVM, Hyper-V, WSL2, Docker Desktop) çalıştırabilir.
     pub nested: bool,
+    /// Çalışırken çıkılabilecek en fazla çekirdek sayısı; 0 ise çalışan konuğa çekirdek eklenemez. Konuk bu
+    /// kadar çekirdek yuvasıyla açılır, boş yuvalar çalışırken doldurulur.
+    pub max_cores: u32,
     /// Bellek balonu aygıtı takılı mı? Takılıysa konuğun belleği çalışırken küçültülüp büyütülebilir.
     pub balloon: bool,
     /// Balonla hedeflenen bellek (MB); 0 ise konuk belleğinin tamamını kullanır.

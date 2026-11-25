@@ -46,6 +46,7 @@ pub struct EditForm {
     pub pci: String,
     pub cpu_type: String,
     pub balloon: Option<String>,
+    pub max_cores: String,
     pub nested: Option<String>,
     pub ci_user: String,
     pub ci_ssh_key: String,
@@ -91,6 +92,7 @@ impl EditForm {
             pci: g.hw.pci.join(", "),
             cpu_type: g.hw.cpu_type.clone(),
             balloon: g.hw.balloon.then(|| "1".to_string()),
+            max_cores: g.hw.max_cores.to_string(),
             nested: g.hw.nested.then(|| "1".to_string()),
             ci_user: g.hw.ci_user.clone().unwrap_or_default(),
             ci_ssh_key: g.hw.ci_ssh_key.clone().unwrap_or_default(),
@@ -158,6 +160,11 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                             span class="label" { (tx("İç içe sanallaştırma")) }
                             label class="check" { input type="checkbox" form="hw" name="nested" value="1" checked[f.nested.is_some()] disabled[off]; (tx("Konuğa VT-x / AMD-V göster")) }
                             span class="hint" tabindex="0" role="note" { (tx("Konuk kendi sanal makinelerini çalıştırabilir (KVM, Hyper-V, WSL2, Docker Desktop). Sunucunun KVM modülünde iç içe sanallaştırma açık olmalıdır; qemu64 ve kvm64 modelleriyle kullanılamaz.")) }
+                        }
+                        div class="field" {
+                            label for="max_cores" { (tx("En fazla çekirdek")) }
+                            input id="max_cores" form="hw" name="max_cores" type="text" inputmode="numeric" value=(f.max_cores) disabled[off];
+                            span class="hint" tabindex="0" role="note" { (tx("Çalışırken çıkılabilecek çekirdek sayısı; 0 ise çalışan konuğa çekirdek eklenmez. Konuk bu kadar çekirdek yuvasıyla açılır, kullanılmayan yuvalar işlemci harcamaz.")) }
                         }
                         div class="field" {
                             span class="label" { (tx("Bellek balonu")) }
@@ -268,6 +275,22 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                             label for="net_mbps" { (tx("Ağ (Mbit/sn)")) }
                             input id="net_mbps" form="hw" name="net_mbps" type="text" inputmode="numeric" value=(f.net_mbps) disabled[off];
                             span class="hint" tabindex="0" role="note" { (tx("Her yönde, köprüye bağlı her karta ayrı. NAT kartına uygulanamaz. Sunucuda iproute2 ve hizmette CAP_NET_ADMIN yetkisi gerekir; uygulanamazsa konuk başlatılmaz.")) }
+                        }
+                    }
+                }
+                @if vm && g.hw.max_cores > 0 {
+                    div class="card" {
+                        header { h2 { (tx("Çalışırken çekirdek")) } (tip("Çalışan konuğa, kapatmadan işlemci çekirdeği ekler.")) span class="note" { (g.cores) " / " (g.hw.max_cores) } }
+                        @if p.admin {
+                            form class="inline" method="post" action={ (base) "/cores" } {
+                                label for="hot_cores" { (tx("Çekirdek")) }
+                                input id="hot_cores" name="cores" type="text" inputmode="numeric" value=((g.cores + 1).min(g.hw.max_cores)) required disabled[!hot || g.cores >= g.hw.max_cores];
+                                button class="btn sm" type="submit" disabled[!hot || g.cores >= g.hw.max_cores] { (icon("check")) (tx("Uygula")) }
+                            }
+                        }
+                        footer {
+                            (tx("Yalnızca konuk çalışırken ve yalnızca artırılır; azaltmak için konuğu kapatıp çekirdek sayısını değiştirin. "))
+                            (tx("Konukta ajan (qemu-guest-agent) çalışıyorsa yeni çekirdekler kendiliğinden etkinleşir; yoksa konuğun içinde etkinleştirmeniz gerekebilir."))
                         }
                     }
                 }

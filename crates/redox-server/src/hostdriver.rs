@@ -200,6 +200,14 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.hot_add_nic(guest, index, network)
     }
 
+    fn hot_add_core(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.hot_add_core(guest)
+    }
+
+    fn online_cores(&self, guest: &Guest) -> bool {
+        self.of(guest).is_ok_and(|d| d.online_cores(guest))
+    }
+
     fn uefi(&self) -> bool {
         self.vm.uefi()
     }

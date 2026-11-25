@@ -226,6 +226,17 @@ pub trait Hypervisor: Send + Sync {
         Err("bu sürücü çalışan konuğa ağ kartı takamaz".to_string())
     }
 
+    /// Çalışan konuğa bir çekirdek ekler (konuk boş çekirdek yuvalarıyla açılmış olmalıdır).
+    fn hot_add_core(&self, _guest: &Guest) -> Result<(), String> {
+        Err("bu sürücü çalışan konuğa çekirdek ekleyemez".to_string())
+    }
+
+    /// Sonradan eklenen çekirdekleri konuk ajanıyla etkinleştirir. Ajan yoksa ya da yapamadıysa `false`:
+    /// çekirdek takılıdır, ama konuğun içinde elle etkinleştirilmesi gerekebilir.
+    fn online_cores(&self, _guest: &Guest) -> bool {
+        false
+    }
+
     /// UEFI donanım yazılımı kurulu mu?
     fn uefi(&self) -> bool {
         false

@@ -966,3 +966,43 @@ fn scheduled_boot_tests_pick_the_newest_backup_that_is_due() {
     add(&mut c, &format!("ct-{ct}-1"), ct, 1, None);
     assert_eq!(c.next_backup_to_test(NOW, 7), None);
 }
+
+#[test]
+fn cores_are_added_to_a_running_vm_only_up_to_its_limit() {
+    let mut c = cluster();
+    let limit = |max: u32| GuestPatch { max_cores: Some(max), ..patch() };
+    let node_cores = c.node(&c.guest(103).unwrap().node.clone()).unwrap().cores;
+    // Sınır yalnızca kapalı sanal makinede, çekirdek sayısı ile düğümün çekirdekleri arasında verilir.
+    assert!(matches!(c.update_guest(100, &limit(4), "u", NOW), Err(Error::RequiresStopped { .. })));
+    c.update_guest(103, &GuestPatch { cores: Some(2), ..patch() }, "u", NOW).unwrap();
+    for bad in [1, node_cores + 1] {
+        assert!(c.update_guest(103, &limit(bad), "u", NOW).unwrap_err().to_string().contains("en fazla çekirdek 2 ile"), "{bad}");
+    }
+    let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct && g.status == GuestStatus::Stopped).unwrap().vmid;
+    assert!(c.update_guest(ct, &limit(4), "u", NOW).unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
+    c.update_guest(103, &limit(4), "u", NOW).unwrap();
+    assert_eq!(c.guest(103).unwrap().hw.max_cores, 4);
+    // Çekirdek sayısı sınırın üstüne çıkarılamaz; sınırla birlikte değiştirilebilir.
+    assert!(c.update_guest(103, &GuestPatch { cores: Some(5), ..patch() }, "u", NOW).unwrap_err().to_string().contains("en fazla çekirdek"));
+    c.update_guest(103, &GuestPatch { cores: Some(3), max_cores: Some(4), ..patch() }, "u", NOW).unwrap();
+    c.update_guest(103, &GuestPatch { cores: Some(2), ..patch() }, "u", NOW).unwrap();
+
+    // Kapalı konuğa, sınırı olmayan konuğa ve konteynere çalışırken eklenmez.
+    assert!(c.check_core_add(103, 3).unwrap_err().to_string().contains("çalışmıyor"));
+    assert!(c.check_core_add(100, 64).unwrap_err().to_string().contains("çalışırken çekirdek ekleme kapalı"));
+    let running_ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct && g.status == GuestStatus::Running).unwrap().vmid;
+    assert!(c.check_core_add(running_ct, 64).unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
+
+    c.guest_mut(103).unwrap().status = GuestStatus::Running;
+    assert_eq!(c.check_core_add(103, 4).unwrap(), 2, "şimdiki sayı döner");
+    assert!(c.check_core_add(103, 2).unwrap_err().to_string().contains("yalnızca artırılır"));
+    assert!(c.check_core_add(103, 1).unwrap_err().to_string().contains("yalnızca artırılır"));
+    assert!(c.check_core_add(103, 5).unwrap_err().to_string().contains("en fazla 4 çekirdeğe"));
+    c.note_core_added(103);
+    assert_eq!(c.guest(103).unwrap().cores, 3);
+    // Çalışırken sınır değişmez; 0 (kapalıyken) özelliği kapatır.
+    assert!(matches!(c.update_guest(103, &limit(0), "u", NOW), Err(Error::RequiresStopped { .. })));
+    c.guest_mut(103).unwrap().status = GuestStatus::Stopped;
+    c.update_guest(103, &limit(0), "u", NOW).unwrap();
+    assert_eq!(c.guest(103).unwrap().hw.max_cores, 0);
+}

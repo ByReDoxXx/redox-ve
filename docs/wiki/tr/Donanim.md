@@ -11,6 +11,7 @@ Donanım ayarları (*Donanım* sekmesi) konuk **kapalıyken** değişir; aşağ�
 | Çekirdek, bellek | Kapalıyken. |
 | İşlemci türü | Varsayılan `host` (en hızlı). Farklı işlemcili sunucuya taşıyacaksanız ortak bir model seçin. |
 | İç içe sanallaştırma | Konuk kendi sanal makinelerini çalıştırır. Sunucuda `kvm_intel`/`kvm_amd` modülünde `nested` açık olmalı. |
+| En fazla çekirdek | 0'dan büyükse konuk bu kadar çekirdek yuvasıyla açılır ve **çalışırken** çekirdek eklenir: `redox vm set 103 max-cores=8`, sonra konuk çalışırken `redox vm cores 103 6`. Yalnızca artırılır; azaltmak için konuk kapatılır. Konukta ajan (qemu-guest-agent) varsa yeni çekirdekler kendiliğinden etkinleşir; yoksa konukta `echo 1 > /sys/devices/system/cpu/cpuN/online` gerekebilir. |
 | Bellek balonu | Takılıysa bellek hedefi **çalışırken** değişir. |
 | Dinamik bellek | Hedefi konuğun kullanımına göre RedoX ayarlar: `redox vm balloon 103 auto 2048`. Konukta balon sürücüsü gerekir. |
 | Ek diskler (en çok 8) | **Çalışırken** de eklenir. Disk yalnızca büyütülür. |

@@ -525,6 +525,30 @@ impl Hypervisor for QemuDriver {
         }
     }
 
+    fn hot_add_core(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::hot_add_core(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn online_cores(&self, guest: &Guest) -> bool {
+        #[cfg(unix)]
+        {
+            imp::online_cores(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            false
+        }
+    }
+
     fn snapshot(&self, guest: &Guest, op: SnapshotOp<'_>) -> Result<(), String> {
         if matches!(op, SnapshotOp::Rollback(_)) {
             // Geri dönüş diskin içeriğini haritaya işlenmeden değiştirir: harita artık güvenilmez.

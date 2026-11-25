@@ -1,4 +1,4 @@
-//! Çalışan konuğa disk ve ağ kartı takma.
+//! Çalışan konuğa disk, ağ kartı ve çekirdek ekleme.
 
 use super::*;
 
@@ -94,4 +94,51 @@ pub fn hot_add_nic(d: &QemuDriver, g: &Guest, index: u8, network: &str) -> Resul
         }
     }
     Ok(())
+}
+
+pub(super) const NO_SLOTS: &str = "bu konuk boş çekirdek yuvası olmadan açılmış; bir kez kapatıp açın, sonra yeniden deneyin";
+
+/// Çalışan konuğa bir çekirdek ekler: boş yuvaların en küçük numaralısı doldurulur. Böylece sonradan eklenen
+/// çekirdekler, konuk aynı sayıyla yeniden açıldığında (ya da askıdan döndüğünde) aynı yerde durur.
+pub fn hot_add_core(d: &QemuDriver, g: &Guest) -> Result<(), String> {
+    let Some(pid) = live_pid(d, g.vmid) else {
+        return Err("konuk çalışmıyor (QEMU süreci yok)".to_string());
+    };
+    if !std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|c| String::from_utf8_lossy(&c).contains(",maxcpus=")) {
+        return Err(NO_SLOTS.to_string());
+    }
+    let sock = d.cfg.qmp_path(g.vmid);
+    let reply = qmp(&sock, &["query-hotpluggable-cpus"])?;
+    let slots = reply.first().and_then(Value::as_array).ok_or("konuğun çekirdek yuvaları QEMU'dan okunamadı")?;
+    let place = |slot: &Value| ["socket-id", "die-id", "cluster-id", "module-id", "core-id", "thread-id"].map(|key| slot["props"][key].as_i64().unwrap_or(0));
+    let free = slots.iter().filter(|slot| slot.get("qom-path").is_none()).min_by_key(|slot| place(slot)).ok_or("konukta boş çekirdek yuvası kalmadı")?;
+    let present = slots.iter().filter(|slot| slot.get("qom-path").is_some()).count();
+    let mut arguments = free["props"].clone();
+    if !arguments.is_object() || !free["type"].is_string() {
+        return Err("konuğun çekirdek yuvaları QEMU'dan okunamadı".to_string());
+    }
+    arguments["driver"] = free["type"].clone();
+    arguments["id"] = format!("xcpu{present}").into();
+    qmp_values(&sock, &[serde_json::json!({ "execute": "device_add", "arguments": arguments })]).map(|_| ()).map_err(|e| format!("çekirdek konuğa eklenemedi: {e}"))
+}
+
+/// Sonradan eklenen çekirdekleri konuk ajanıyla etkinleştirir. Konuk yeni çekirdeği hemen görmeyebilir: ajan
+/// beklenen sayıyı bildirene kadar birkaç kez sorulur.
+pub fn online_cores(d: &QemuDriver, g: &Guest) -> bool {
+    let qga = d.cfg.qga_path(g.vmid);
+    for attempt in 0..8 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        let Ok(reply) = crate::qga::call(&qga, "guest-get-vcpus", Duration::from_secs(3)) else {
+            return false;
+        };
+        let Some(list) = reply.as_array() else { return false };
+        if list.len() < g.cores as usize {
+            continue;
+        }
+        let offline: Vec<Value> = list.iter().filter(|cpu| cpu["online"] == false).map(|cpu| serde_json::json!({ "logical-id": cpu["logical-id"], "online": true })).collect();
+        return offline.is_empty() || crate::qga::call_with(&qga, "guest-set-vcpus", Some(serde_json::json!({ "vcpus": offline })), Duration::from_secs(5)).is_ok();
+    }
+    false
 }

@@ -48,6 +48,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Install from an ISO, or create from a cloud image with cloud-init (user, SSH key, host name). The
   cloud-init settings, including a static address, can be edited later from the panel.
 - Selectable CPU model per VM, and a memory balloon whose target can be changed while the VM runs.
+- Cores can be added to a running VM (`redox vm cores 103 6`), up to a per-VM maximum.
 - Import `vmdk`, `vdi`, `vhdx` disks and OVA archives; export a guest as OVA.
 - Templates, full clones and linked clones (a linked clone is ready in under a second).
 - Up to 8 extra data disks and 3 extra network cards; both can be hot-plugged into a running VM.
@@ -294,7 +295,7 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 | `POST /guests/{vmid}/{start,stop,reboot,pause,resume}` | Power actions |
 | `POST /guests/{vmid}/suspend`, `/discard-suspend`, `/detach` | Suspend to disk, detach from backup |
 | `POST /guests/{vmid}/snapshots`, `.../{name}/rollback` | Snapshots |
-| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/move` | Clones, hardware, storage move |
+| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/cores`, `/move` | Clones, hardware, storage move |
 | `GET /guests/{vmid}/export` | OVA export |
 | `POST /guests/{vmid}/backups`, `GET /backups` | Backups |
 | `POST /backups/{id}/restore`, `/push`, `/verify`, `GET .../download` | Restore, off-site, verify, download |
@@ -426,7 +427,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-517 tests pass on Linux and 445 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+521 tests pass on Linux and 448 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
@@ -453,7 +454,7 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
   zero-downtime live migration.
 - Automatic failover exists only for replicated guests and needs a witness server; there is no fencing and no shared-state cluster. It has not been tried in a real outage.
 - Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
-- CPU and memory cannot be added to a running VM (the balloon only lowers and restores memory).
+- Cores can be added to a running VM but not removed, and only up to the "maximum cores" set while it was stopped. Memory cannot be raised above what the VM started with (the balloon only lowers and restores it). Core hot-add was tried on real QEMU with a Linux guest, including suspend and resume afterwards; it was not tried with a Windows guest, and bringing the new cores online through the guest agent was only tested against the fake QEMU.
 - Containers cannot be moved to another storage or to another server.
 - The live console has no clipboard or audio (text can be typed in as keystrokes).
 - The interface is in Turkish and English only.

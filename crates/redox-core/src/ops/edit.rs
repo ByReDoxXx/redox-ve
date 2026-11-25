@@ -30,6 +30,7 @@ impl Cluster {
             || patch.apply_cloud_init(&mut guest.hw.clone())
             || patch.cpu_type.as_ref().is_some_and(|c| *c != guest.hw.cpu_type)
             || patch.balloon.is_some_and(|b| b != guest.hw.balloon)
+            || patch.max_cores.is_some_and(|m| m != guest.hw.max_cores)
             || patch.nested.is_some_and(|n| n != guest.hw.nested);
         if hardware && guest.status != GuestStatus::Stopped {
             return Err(Error::RequiresStopped { vmid, what: "donanım ayarlarını değiştirmek".to_string() });
@@ -46,6 +47,15 @@ impl Cluster {
         if let Some(cores) = patch.cores {
             if cores == 0 || cores > node.cores {
                 return Err(Error::InvalidSpec(format!("çekirdek sayısı 1 ile {} arasında olmalı", node.cores)));
+            }
+        }
+        if patch.cores.is_some() || patch.max_cores.is_some() {
+            let (cores, max) = (patch.cores.unwrap_or(guest.cores), patch.max_cores.unwrap_or(guest.hw.max_cores));
+            if max != 0 && guest.kind != GuestKind::Vm {
+                return Err(Error::InvalidSpec("çalışırken çekirdek ekleme yalnızca sanal makinelerde kullanılır".to_string()));
+            }
+            if max != 0 && (max < cores || max > node.cores) {
+                return Err(Error::InvalidSpec(format!("en fazla çekirdek {cores} ile {} arasında olmalı (0: çalışırken çekirdek eklenmez)", node.cores)));
             }
         }
         if let Some(mem) = patch.memory_mb {
@@ -255,6 +265,9 @@ impl Cluster {
         }
         if let Some(balloon) = patch.balloon {
             g.hw.balloon = balloon;
+        }
+        if let Some(max) = patch.max_cores {
+            g.hw.max_cores = max;
         }
         if let Some(guard) = patch.nic_guard {
             g.hw.nic_guard = guard;

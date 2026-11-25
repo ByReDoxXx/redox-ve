@@ -41,6 +41,13 @@ impl Hypervisor for RealLike {
     fn hot_add_nic(&self, _: &Guest, index: u8, _: &str) -> Result<(), String> {
         if index == 3 { Err("bağlantı noktası yanıt vermedi".into()) } else { Ok(()) }
     }
+    // Beşinci çekirdekten sonrası "eklenemez": yarıda kalan eklemenin kaydı sınansın.
+    fn hot_add_core(&self, g: &Guest) -> Result<(), String> {
+        if g.cores >= 5 { Err("çekirdek yuvası yanıt vermedi".into()) } else { Ok(()) }
+    }
+    fn online_cores(&self, _: &Guest) -> bool {
+        true
+    }
     fn templates(&self) -> Vec<String> {
         vec!["alpine-3.20".into(), "debian-12".into()]
     }

@@ -32,6 +32,7 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("delete", "/guests/{vmid}/disks/{id}", "Remove an extra disk"),
     ("post", "/guests/{vmid}/nics", "Add a network card"),
     ("post", "/guests/{vmid}/balloon", "Set the memory balloon target or dynamic memory"),
+    ("post", "/guests/{vmid}/cores", "Add CPU cores to a running virtual machine"),
     ("get", "/guests/{vmid}/usage", "Resource usage counters of a guest"),
     ("delete", "/guests/{vmid}/usage", "Reset the usage counters of a guest"),
     ("get", "/guests/{vmid}/filesystems", "Disk usage inside the guest (needs the guest agent)"),

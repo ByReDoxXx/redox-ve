@@ -33,6 +33,10 @@ for i, a in enumerate(args):
         devices[a.split(",if=none,id=", 1)[1].split(",")[0]] = a.split("file=", 1)[1].split(",if=none")[0]
 ports = [a.split("id=", 1)[1].split(",")[0] for a in args if a.startswith("pcie-root-port,")]
 used_ports = set(a.split("bus=", 1)[1].split(",")[0] for a in args if ",bus=hp" in a)
+# Çekirdek yuvaları: "-smp N,maxcpus=M". İlk N yuva doludur; kalanı çalışırken doldurulur.
+smp = value("-smp").split(",")
+cpus = [True] * int(smp[0])
+cpus += [False] * (max([int(part.split("=")[1]) for part in smp[1:] if part.startswith("maxcpus=")] + [len(cpus)]) - len(cpus))
 # Bir diskin kopyası başarısız olunca durdurulmayı bekleyen diğer işler.
 waiting = set()
 
@@ -127,6 +131,14 @@ def agent(listener):
                         reply = {"return": [
                             {"name": "vda1", "mountpoint": "/", "type": "ext4", "used-bytes": 9 << 30, "total-bytes": 10 << 30},
                             {"name": "proc", "mountpoint": "/proc", "type": "proc"}]}
+                    elif command == "guest-get-vcpus":
+                        # Sonradan eklenen çekirdekler konukta kapalı görünür; ajan açana kadar.
+                        opened = os.path.exists(qga_path + ".cpus")
+                        cold = int(smp[0])
+                        reply = {"return": [{"logical-id": i, "online": i < cold or opened, "can-offline": i > 0} for i in range(sum(cpus))]}
+                    elif command == "guest-set-vcpus":
+                        open(qga_path + ".cpus", "w").write(" ".join(str(c["logical-id"]) for c in arguments["vcpus"]))
+                        reply = {"return": len(arguments["vcpus"])}
                     elif command == "guest-get-osinfo":
                         reply = {"return": {"name": "Debian GNU/Linux", "pretty-name": "Debian GNU/Linux 12 (bookworm)", "version": "12"}}
                     else:
@@ -306,6 +318,15 @@ while True:
                     if os.path.exists(sock_path + ".nohot"):
                         send({"error": {"class": "GenericError", "desc": "Hot plug refused"}})
                         continue
+                    if arguments["driver"].endswith("-cpu"):
+                        core = arguments.get("core-id", -1)
+                        if not 0 <= core < len(cpus) or cpus[core]:
+                            send({"error": {"class": "GenericError", "desc": "CPU[%d] with APIC ID %d exists" % (core, core)}})
+                            continue
+                        cpus[core] = True
+                        hot("device_add cpu %s core %d" % (arguments["id"], core))
+                        send({"return": {}})
+                        continue
                     if bus not in ports:
                         send({"error": {"class": "GenericError", "desc": "Bus '%s' not found" % bus}})
                         continue
@@ -319,6 +340,15 @@ while True:
                 else:
                     hot("%s %s" % (command, arguments["id"]))
                 send({"return": {}})
+            elif command == "query-hotpluggable-cpus":
+                # Gerçek QEMU gibi: en yüksek numaralı yuva başta; dolu yuvaların "qom-path" alanı vardır.
+                slots = []
+                for core in reversed(range(len(cpus))):
+                    slot = {"props": {"core-id": core, "thread-id": 0, "socket-id": 0}, "vcpus-count": 1, "type": "host-x86_64-cpu"}
+                    if cpus[core]:
+                        slot["qom-path"] = "/machine/unattached/device[%d]" % core
+                    slots.append(slot)
+                send({"return": slots})
             elif command == "human-monitor-command":
                 verb, _, name = arguments["command-line"].partition(" ")
                 snaps_path = disk_path + ".snaps"

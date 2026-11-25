@@ -11,6 +11,7 @@ Hardware settings (the *Hardware* tab) change while the guest is **stopped**, ex
 | Cores, memory | While stopped. |
 | CPU type | Default `host` (fastest). Choose a common model if you will move the guest to a server with a different CPU. |
 | Nested virtualization | The guest runs its own virtual machines. `nested` must be on in the host's `kvm_intel`/`kvm_amd` module. |
+| Maximum cores | When above 0 the guest starts with this many core slots and cores can be added **while running**: `redox vm set 103 max-cores=8`, then with the guest running `redox vm cores 103 6`. Upwards only; stop the guest to lower it. With the agent (qemu-guest-agent) in the guest the new cores come online by themselves; without it you may need `echo 1 > /sys/devices/system/cpu/cpuN/online` in the guest. |
 | Memory balloon | When attached, the memory target changes **while running**. |
 | Dynamic memory | RedoX sets the target from the guest's usage: `redox vm balloon 103 auto 2048`. Needs the balloon driver in the guest. |
 | Extra disks (up to 8) | Can be added **while running**. Disks can only grow. |

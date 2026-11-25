@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
         .route("/guests/{vmid}/disks", post(disk_add))
         .route("/guests/{vmid}/nics", post(nic_add))
         .route("/guests/{vmid}/balloon", post(balloon))
+        .route("/guests/{vmid}/cores", post(cores_add))
         .route("/guests/{vmid}/usage", get(usage).delete(usage_reset))
         .route("/guests/{vmid}/filesystems", get(filesystems))
         .route("/usage", get(usage_all))
@@ -542,6 +543,18 @@ struct MoveBody {
 async fn storage_move(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<MoveBody>) -> Result<(StatusCode, Json<Task>), ApiError> {
     let id = st.storage_move(vmid, body.storage.trim(), &me.user)?;
     accepted(&st, id)
+}
+
+#[derive(serde::Deserialize)]
+struct CoresBody {
+    /// Çıkılacak çekirdek sayısı (şimdikinden büyük, konuğun en fazla çekirdek değerinden büyük değil).
+    cores: u32,
+}
+
+/// Çalışan sanal makineye çekirdek ekler. `online`: eklenenleri konuk ajanı etkinleştirdi mi?
+async fn cores_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<CoresBody>) -> ApiResult<serde_json::Value> {
+    let online = st.cores_add(vmid, body.cores, &me.user)?;
+    Ok(Json(json!({ "cores": body.cores, "online": online })))
 }
 
 #[derive(serde::Deserialize)]

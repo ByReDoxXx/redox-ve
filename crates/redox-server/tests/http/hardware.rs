@@ -101,3 +101,57 @@ pub(super) async fn cpu_type_and_memory_balloon_are_set_from_the_hardware_tab() 
 }
 
 // ---------- Kaynak havuzları ve kotalar ----------
+
+// ---------- Çalışırken çekirdek ekleme ----------
+
+#[tokio::test]
+pub(super) async fn cores_are_added_to_a_running_vm_from_the_hardware_tab() {
+    let (app, state) = setup_real();
+    let cores = |state: &AppState| state.snapshot().guest(103).unwrap().cores;
+    let run = |state: &AppState, status| state.mutate(|c| c.guest_mut_for_import(103).unwrap().status = status);
+    let base = "part=donanim&cores=2&memory_mb=16384&iso=&bridge=vmbr0&forwards=&firmware=bios&nics=";
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains(r#"<input id="max_cores" form="hw" name="max_cores""#) && !tab.contains("Çalışırken çekirdek"), "sınır yokken ekleme formu yok");
+    assert!(!page(&app, "/guests/202?tab=donanim").await.contains(r#"name="max_cores""#), "konteynerde yok");
+
+    // Sınır çekirdek sayısından küçük olamaz.
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&max_cores=1")).await.contains("error="));
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&max_cores=6")).await.contains("notice="));
+    assert_eq!((cores(&state), state.snapshot().guest(103).unwrap().hw.max_cores), (2, 6));
+    assert!(post_ok(&app, "/guests/103/cores", "cores=3").await.contains("error="), "kapalı konuğa çalışırken eklenmez");
+
+    run(&state, GuestStatus::Running);
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains(r#"action="/guests/103/cores""#) && tab.contains("2 / 6") && tab.contains(r#"name="cores" type="text" inputmode="numeric" value="3""#), "{tab}");
+
+    // API: eklenenleri konuk ajanının etkinleştirip etkinleştirmediği de döner.
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/cores", &json!({ "cores": 3 }))).await;
+    assert_eq!((status, v["online"].as_bool(), cores(&state)), (StatusCode::OK, Some(true), 3), "{v}");
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/cores", &json!({ "cores": 9 }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+
+    assert!(post_ok(&app, "/guests/103/cores", "cores=4").await.contains("notice="));
+    assert_eq!((cores(&state), state.snapshot().tasks[0].command.as_str()), (4, "vm cores 103 4"));
+    for bad in ["cores=4", "cores=3", "cores=7", "cores=cok"] {
+        assert!(post_ok(&app, "/guests/103/cores", bad).await.contains("error="), "{bad}");
+    }
+    assert_eq!(cores(&state), 4, "reddedilen istek kaydı değiştirmez");
+
+    // Yarıda kalan ekleme: kayıt, konukta gerçekten olan sayıyı gösterir.
+    assert!(post_ok(&app, "/guests/103/cores", "cores=6").await.contains("error="));
+    assert_eq!((cores(&state), state.snapshot().tasks[0].status), (5, TaskStatus::Failed));
+
+    // İzleyiciye ve operatöre açık değildir.
+    let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, "/guests/103/cores"), "cores=6")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(redox_server::operator_target("/guests/103/cores"), None);
+
+    // Çalışırken takmayı bilmeyen sürücü (benzetim) reddeder.
+    let (sim, sim_state) = setup();
+    sim_state.mutate(|c| {
+        let g = c.guest_mut_for_import(103).unwrap();
+        (g.hw.max_cores, g.status) = (16, GuestStatus::Running);
+    });
+    assert!(post_ok(&sim, "/guests/103/cores", "cores=9").await.contains("error="));
+    assert_eq!(sim_state.snapshot().guest(103).unwrap().cores, 8);
+}

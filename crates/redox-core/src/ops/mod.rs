@@ -7,6 +7,7 @@ use crate::model::*;
 
 mod backups;
 mod clone;
+mod cpu;
 mod disks;
 mod edit;
 mod memory;

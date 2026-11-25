@@ -456,6 +456,8 @@ pub struct GuestPatch {
     pub ci_dns: Option<String>,
     /// İşlemci modeli; boş metin sunucunun kendi işlemcisi.
     pub cpu_type: Option<String>,
+    /// Çalışırken çıkılabilecek en fazla çekirdek; 0 kapatır.
+    pub max_cores: Option<u32>,
     /// Bellek balonu aygıtı.
     pub balloon: Option<bool>,
     /// İç içe sanallaştırma.

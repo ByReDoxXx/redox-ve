@@ -115,7 +115,10 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         push(&["-chardev", &format!("socket,id=chrtpm,path={}", opt(&cfg.tpm_sock(g.vmid)))]);
         push(&["-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-crb,tpmdev=tpm0"]);
     }
-    push(&["-smp", &g.cores.to_string(), "-m", &format!("{}M", g.mem_total_mb)]);
+    // Çalışırken çekirdek ekleme: konuk boş çekirdek yuvalarıyla açılır. Yuva sayısı konuğun kaydındadır;
+    // böylece askıya alınan ya da başka sunucuya geçen konuk aynı düzenle döner.
+    let smp = if g.hw.max_cores >= g.cores && g.hw.max_cores > 0 { format!("{},maxcpus={}", g.cores, g.hw.max_cores) } else { g.cores.to_string() };
+    push(&["-smp", &smp, "-m", &format!("{}M", g.mem_total_mb)]);
     // Disk hız sınırı her diske ayrı uygulanır (okuma ve yazma toplamı).
     let throttle = disk_throttle(g);
     push(&["-drive", &format!("file={},if=virtio,format=qcow2{throttle}", opt(&cfg.disk_of(g)))]);

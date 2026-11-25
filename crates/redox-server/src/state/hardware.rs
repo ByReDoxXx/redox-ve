@@ -54,6 +54,29 @@ impl AppState {
         outcome.map(|()| index).map_err(Error::Driver)
     }
 
+    /// Çalışan sanal makinenin çekirdek sayısını `target` değerine çıkarır. Çekirdekler tek tek eklenir ve her
+    /// biri eklendikçe kayda işlenir: yarıda kalırsa kayıt konukta gerçekten olan sayıyı gösterir. Dönen değer,
+    /// eklenen çekirdekleri konuk ajanının etkinleştirip etkinleştirmediğidir.
+    pub fn cores_add(&self, vmid: VmId, target: u32, user: &str) -> Result<bool, Error> {
+        let driver = self.driver();
+        if !driver.hotplug(redox_core::GuestKind::Vm) {
+            return Err(Error::InvalidSpec("bu sürücü çalışan konuğa çekirdek ekleyemez".to_string()));
+        }
+        let (from, mut guest) = self.mutate(|c| Ok::<_, Error>((c.check_core_add(vmid, target)?, c.guest(vmid)?.clone())))?;
+        let mut outcome = Ok(());
+        for _ in from..target {
+            outcome = driver.hot_add_core(&guest);
+            if outcome.is_err() {
+                break;
+            }
+            guest.cores += 1;
+            self.mutate(|c| c.note_core_added(vmid));
+        }
+        let online = guest.cores > from && driver.online_cores(&guest);
+        self.mutate(|c| c.log(&guest.node, user, format!("vm cores {vmid} {target}"), &outcome, now(), Some(vmid)));
+        outcome.map(|()| online).map_err(Error::Driver)
+    }
+
     /// Bellek balonunun hedefini ayarlar (MB; 0: belleğin tamamı). Konuk çalışıyorsa hemen uygulanır,
     /// kapalıysa bir sonraki açılışta. Uygulanamazsa kayıt eski değerine döner.
     pub fn balloon_set(&self, vmid: VmId, target_mb: u64, user: &str) -> Result<(), Error> {

@@ -443,3 +443,17 @@ fn guest_traffic_is_read_from_the_tap_counters_with_directions_swapped() {
     assert_eq!(tap_counters(&sys, &[]), None, "NAT'taki konukta arayüz yoktur");
     std::fs::remove_dir_all(sys).unwrap();
 }
+
+#[test]
+fn free_core_slots_are_declared_only_when_a_limit_is_set() {
+    let mut g = guest(None);
+    assert!(args(&cfg(), &g).join(" ").contains(" -smp 2 -m "), "sınır yokken eski komut satırı aynen kalır");
+    g.hw.max_cores = 6;
+    assert!(args(&cfg(), &g).join(" ").contains(" -smp 2,maxcpus=6 -m "));
+    // Sınıra ulaşmış konuk da aynı düzenle açılır (askıdan dönüş aynı makineyi bulsun).
+    g.cores = 6;
+    assert!(args(&cfg(), &g).join(" ").contains(" -smp 6,maxcpus=6 -m "));
+    // Sınırın altında kalmış tutarsız kayıt QEMU'ya geçersiz değer olarak gitmez.
+    g.hw.max_cores = 4;
+    assert!(args(&cfg(), &g).join(" ").contains(" -smp 6 -m "));
+}

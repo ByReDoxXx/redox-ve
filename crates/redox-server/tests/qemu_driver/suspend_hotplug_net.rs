@@ -438,3 +438,55 @@ pub(super) fn shared_folders_are_created_and_passed_to_the_guest() {
     assert_eq!(std::fs::read_to_string(cfg.shares_dir().join("ortak/not.txt")).unwrap(), "kalsin");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+pub(super) fn cores_are_hot_added_into_free_slots_and_brought_online_by_the_agent() {
+    if !python_available() {
+        return;
+    }
+    let (cfg, dir) = config();
+    let d = QemuDriver::new(cfg.clone()).unwrap();
+    let mut g = guest(&cfg, "cekirdek");
+    d.create(&g).unwrap();
+    let first = g.cores;
+    let file = |suffix: &str| std::fs::read_to_string(format!("{}{suffix}", cfg.qmp_path(g.vmid).display())).unwrap_or_default();
+
+    assert!(d.hot_add_core(&g).unwrap_err().contains("çalışmıyor"), "kapalı konuğa eklenmez");
+    // Boş yuvasız açılmış konuk: bir kez kapatıp açmak gerekir.
+    d.apply(&g, Action::Start).unwrap();
+    assert!(d.hot_add_core(&g).unwrap_err().contains("bir kez kapatıp açın"));
+    d.apply(&g, Action::Stop).unwrap();
+
+    g.hw.max_cores = first + 2;
+    d.apply(&g, Action::Start).unwrap();
+    assert!(file(".args").contains(&format!("-smp\n{first},maxcpus={}\n", first + 2)), "{}", file(".args"));
+    // Yuvalar küçük numaradan başlayarak dolar: konuk aynı sayıyla yeniden açıldığında çekirdekler aynı yerde durur.
+    d.hot_add_core(&g).unwrap();
+    g.cores += 1;
+    assert!(!d.online_cores(&g), "ajan yokken etkinleştirilemez");
+    d.hot_add_core(&g).unwrap();
+    g.cores += 1;
+    assert!(file(".hot").contains(&format!("device_add cpu xcpu{first} core {first}\ndevice_add cpu xcpu{0} core {0}\n", first + 1)), "{}", file(".hot"));
+    assert!(d.hot_add_core(&g).unwrap_err().contains("boş çekirdek yuvası kalmadı"));
+    d.apply(&g, Action::Stop).unwrap();
+
+    // Konuk reddederse hata açıkça bildirilir.
+    g.cores = first;
+    d.apply(&g, Action::Start).unwrap();
+    std::fs::write(format!("{}.nohot", cfg.qmp_path(g.vmid).display()), b"").unwrap();
+    let refused = d.hot_add_core(&g).unwrap_err();
+    assert!(refused.contains("çekirdek konuğa eklenemedi") && refused.contains("Hot plug refused"), "{refused}");
+    std::fs::remove_file(format!("{}.nohot", cfg.qmp_path(g.vmid).display())).unwrap();
+    d.apply(&g, Action::Stop).unwrap();
+
+    // Ajan varsa yeni çekirdek konukta etkinleştirilir (yalnızca kapalı görünenler).
+    std::fs::write(cfg.qmp_path(g.vmid).parent().unwrap().join("ajan-var"), b"").unwrap();
+    d.apply(&g, Action::Start).unwrap();
+    d.hot_add_core(&g).unwrap();
+    g.cores += 1;
+    assert!(d.online_cores(&g));
+    assert_eq!(std::fs::read_to_string(format!("{}.cpus", cfg.qga_path(g.vmid).display())).unwrap(), first.to_string(), "yalnızca yeni çekirdek açılır");
+    assert!(d.online_cores(&g), "hepsi açıkken yapılacak iş yok");
+    d.apply(&g, Action::Stop).unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
