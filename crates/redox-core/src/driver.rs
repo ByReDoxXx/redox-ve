@@ -15,6 +15,20 @@ pub struct Probe {
     pub mem_used_mb: Option<u64>,
 }
 
+/// Konuğun içinden (konuk ajanıyla) okunan bir dosya sisteminin doluluğu.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FsUsage {
+    pub mount: String,
+    pub used_mb: u64,
+    pub total_mb: u64,
+}
+
+impl FsUsage {
+    pub fn pct(&self) -> u8 {
+        crate::fmt::pct(self.used_mb, self.total_mb)
+    }
+}
+
 /// Konuğun balon sürücüsünün bildirdiği bellek durumu (MB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BalloonStats {
@@ -164,6 +178,11 @@ pub trait Hypervisor: Send + Sync {
 
     /// Çalışan konuğun köprüdeki kartlarından açılıştan beri (aldığı, gönderdiği) bayt; ölçülemiyorsa `None`.
     fn net_counters(&self, _guest: &Guest) -> Option<(u64, u64)> {
+        None
+    }
+
+    /// Çalışan konuğun dosya sistemleri (konuk ajanı gerekir); okunamıyorsa `None`.
+    fn guest_filesystems(&self, _guest: &Guest) -> Option<Vec<FsUsage>> {
         None
     }
 

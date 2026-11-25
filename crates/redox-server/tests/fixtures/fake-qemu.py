@@ -123,6 +123,10 @@ def agent(listener):
                             {"name": "lo", "ip-addresses": [{"ip-address-type": "ipv4", "ip-address": "127.0.0.1", "prefix": 8}]},
                             {"name": "eth0", "ip-addresses": [{"ip-address-type": "ipv6", "ip-address": "fe80::1", "prefix": 64},
                                                               {"ip-address-type": "ipv4", "ip-address": "10.0.2.15", "prefix": 24}]}]}
+                    elif command == "guest-get-fsinfo":
+                        reply = {"return": [
+                            {"name": "vda1", "mountpoint": "/", "type": "ext4", "used-bytes": 9 << 30, "total-bytes": 10 << 30},
+                            {"name": "proc", "mountpoint": "/proc", "type": "proc"}]}
                     elif command == "guest-get-osinfo":
                         reply = {"return": {"name": "Debian GNU/Linux", "pretty-name": "Debian GNU/Linux 12 (bookworm)", "version": "12"}}
                     else:

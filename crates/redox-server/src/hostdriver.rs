@@ -168,6 +168,10 @@ impl Hypervisor for HostDriver {
         self.of(guest).ok()?.net_counters(guest)
     }
 
+    fn guest_filesystems(&self, guest: &Guest) -> Option<Vec<redox_core::FsUsage>> {
+        self.of(guest).ok()?.guest_filesystems(guest)
+    }
+
     fn balloon_stats(&self, guest: &Guest) -> Option<redox_core::BalloonStats> {
         self.of(guest).ok()?.balloon_stats(guest)
     }

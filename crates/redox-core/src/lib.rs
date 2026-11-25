@@ -21,7 +21,7 @@ pub mod usage;
 
 pub use approvals::Approval;
 pub use cluster::{Cluster, ClusterSummary};
-pub use driver::{BackupSize, BalloonStats, Hypervisor, Probe, Remote, SimDriver, SnapshotOp};
+pub use driver::{BackupSize, BalloonStats, FsUsage, Hypervisor, Probe, Remote, SimDriver, SnapshotOp};
 pub use error::{Error, ErrorKind};
 pub use hw::Hardware;
 pub use jobs::{BackupJob, JobStep, MAX_JOBS};

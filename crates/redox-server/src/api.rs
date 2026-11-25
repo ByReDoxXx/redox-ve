@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
         .route("/guests/{vmid}/nics", post(nic_add))
         .route("/guests/{vmid}/balloon", post(balloon))
         .route("/guests/{vmid}/usage", get(usage).delete(usage_reset))
+        .route("/guests/{vmid}/filesystems", get(filesystems))
         .route("/usage", get(usage_all))
         .route("/guests/{vmid}/move", post(storage_move))
         .route("/guests/{vmid}/disks/{id}", delete_route(disk_remove))
@@ -549,6 +550,13 @@ fn usage_json(c: &redox_core::Cluster, g: &redox_core::Guest) -> serde_json::Val
         "disk_read_mb": u.disk_read_bytes >> 20, "disk_write_mb": u.disk_write_bytes >> 20,
         "net_rx_mb": u.net_rx_bytes >> 20, "net_tx_mb": u.net_tx_bytes >> 20,
     })
+}
+
+/// Konuğun içinden (konuk ajanıyla) okunan dosya sistemi dolulukları.
+async fn filesystems(State(st): State<AppState>, Path(vmid): Path<VmId>) -> Result<Json<Vec<redox_core::FsUsage>>, ApiError> {
+    let c = st.snapshot();
+    c.guest(vmid)?;
+    Ok(Json(c.filesystems_of(vmid).to_vec()))
 }
 
 /// Konuğun birikimli kaynak tüketimi.

@@ -373,3 +373,18 @@ fn state_survives_json_round_trip() {
     let next = back.begin_action(100, Action::Pause, "u", NOW).unwrap();
     assert!(next > t);
 }
+
+#[test]
+fn guest_filesystems_are_kept_sorted_bounded_and_dropped_with_the_guest() {
+    use crate::driver::FsUsage;
+    let mut c = cluster();
+    let fs = |mount: &str, used_mb, total_mb| FsUsage { mount: mount.into(), used_mb, total_mb };
+    c.observe_filesystems(103, Some(vec![fs("/var", 900, 1000), fs("/", 10, 100), fs("/", 10, 100), fs("/proc", 0, 0)]));
+    assert_eq!(c.filesystems_of(103).iter().map(|f| (f.mount.as_str(), f.pct())).collect::<Vec<_>>(), [("/", 10), ("/var", 90)]);
+    assert!(c.filesystems_of(100).is_empty());
+    c.observe_filesystems(999, Some(vec![fs("/", 1, 2)]));
+    c.observe_filesystems(103, None);
+    assert!(c.guest_fs.is_empty(), "olmayan konuğun kaydı da temizlenir");
+    c.observe_filesystems(103, Some((0..40).map(|i| fs(&format!("/m{i:02}"), 1, 2)).collect()));
+    assert_eq!(c.filesystems_of(103).len(), observe::MAX_GUEST_FS);
+}

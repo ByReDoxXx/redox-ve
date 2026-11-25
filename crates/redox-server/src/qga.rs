@@ -145,9 +145,37 @@ mod imp {
 #[cfg(unix)]
 pub use imp::{call, call_with, exec};
 
+/// `guest-get-fsinfo` yanıtından dosya sistemi dolulukları. Boyut bildirmeyen (sanal) dosya sistemleri atlanır;
+/// bağlama noktası denetim karakteri içeriyorsa ya da çok uzunsa da atlanır (konuk bu metni kendisi belirler).
+pub fn filesystems(info: &serde_json::Value) -> Vec<redox_core::FsUsage> {
+    const MB: u64 = 1024 * 1024;
+    info.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| {
+            let mount = f["mountpoint"].as_str().filter(|m| !m.is_empty() && m.len() <= 128 && !m.chars().any(char::is_control))?;
+            let (used, total) = (f["used-bytes"].as_u64()?, f["total-bytes"].as_u64().filter(|t| *t > 0)?);
+            Some(redox_core::FsUsage { mount: mount.to_string(), used_mb: used / MB, total_mb: (total / MB).max(1) })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filesystem_report_skips_virtual_and_hostile_entries() {
+        let info = serde_json::json!([
+            {"name": "vda1", "mountpoint": "/", "type": "ext4", "used-bytes": 3u64 << 30, "total-bytes": 10u64 << 30},
+            {"name": "proc", "mountpoint": "/proc", "type": "proc"},
+            {"name": "x", "mountpoint": "/kötü\nad", "used-bytes": 1, "total-bytes": 2},
+            {"name": "C", "mountpoint": "C:\\", "type": "NTFS", "used-bytes": 90u64 << 30, "total-bytes": 100u64 << 30}
+        ]);
+        let list = filesystems(&info);
+        assert_eq!(list.iter().map(|f| (f.mount.as_str(), f.used_mb, f.total_mb, f.pct())).collect::<Vec<_>>(), [("/", 3072, 10240, 30), ("C:\\", 92160, 102400, 90)]);
+        assert!(filesystems(&serde_json::json!({"hata": true})).is_empty());
+    }
     use serde_json::json;
 
     #[test]

@@ -38,6 +38,9 @@ pub struct Cluster {
     pub approvals: Vec<crate::approvals::Approval>,
     #[serde(default)]
     pub(crate) approval_seq: u64,
+    /// Konukların içinden okunan dosya sistemi dolulukları (yalnızca çalışan ve ajanı yanıt veren konuklar).
+    #[serde(default)]
+    pub guest_fs: Vec<(VmId, Vec<crate::driver::FsUsage>)>,
     /// Konuk başına birikimli kaynak tüketimi (kimliğe göre sıralı).
     #[serde(default)]
     pub usage: Vec<crate::usage::Usage>,
@@ -75,6 +78,7 @@ impl Cluster {
             pools: Vec::new(),
             usage: Vec::new(),
             archive: Vec::new(),
+            guest_fs: Vec::new(),
             approvals: Vec::new(),
             approval_seq: 0,
             next_task_id: 1,

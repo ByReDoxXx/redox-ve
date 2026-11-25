@@ -57,6 +57,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox approval list | approve <no> | reject <no>   (dört göz ilkesi: bekleyen silme istekleri; kendi isteğinizi onaylayamazsınız)
   redox backup ack <yedek>               (olağan dışı değişim uyarısını kapatır: baktınız, sorun yok)
   redox backup archive | recover <yedek>   (yerelde silinmiş ama kopya hedefinde saklanan yedekler; recover listeye geri getirir)
+  redox vm df <kimlik>                   (konuğun içindeki disklerin doluluğu; konukta qemu-guest-agent gerekir)
   redox usage | vm usage <kimlik> [reset]   (birikimli kaynak tüketimi: çekirdek-saat, GB-saat, disk G/Ç; reset sayaçları sıfırlar)
   redox vm balloon <kimlik> auto <MB>    (dinamik bellek: hedef kullanıma göre <MB> ile belleğin tamamı arasında; 0 kapatır)
   redox vm disk add <kimlik> <GB> | disk remove <kimlik> <numara>
@@ -124,6 +125,8 @@ pub enum View {
     Approvals,
     /// `{ "done": ... }` döndüren onay.
     Approved,
+    /// Konuğun içindeki dosya sistemleri.
+    Filesystems,
     /// Kaynak ölçümü: bir konuk (nesne) ya da hepsi (dizi).
     Usage,
     /// Yedeğin içindeki dizin listesi.
@@ -340,6 +343,7 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["backup", "verify", id] => req("POST", format!("/backups/{id}/verify"), None, View::Done("doğrulanıyor; sonuç: redox task list")),
         ["backup", "delete", id] => req("DELETE", format!("/backups/{id}"), None, View::Done("yedek silindi")),
         ["vm", "move", id, storage] => req("POST", format!("/guests/{}/move", vmid(id)?), Some(json!({ "storage": storage })), View::Task),
+        ["vm", "df", id] => get(&format!("/guests/{}/filesystems", vmid(id)?), View::Filesystems),
         ["usage"] => get("/usage", View::Usage),
         ["vm" | "ct", "usage", id] => get(&format!("/guests/{}/usage", vmid(id)?), View::Usage),
         ["vm" | "ct", "usage", id, "reset"] => req("DELETE", format!("/guests/{}/usage", vmid(id)?), None, View::Done("ölçüm sayaçları sıfırlandı")),
@@ -505,6 +509,13 @@ pub fn render(view: View, v: &Value) -> String {
                 None => line(v),
             }
         }
+        View::Filesystems => or_none(
+            rows(&|f| {
+                let (used, total) = (n(f, "used_mb"), n(f, "total_mb"));
+                format!("{:<28} {:>8} / {:>8} MB   %{}", s(f, "mount"), used, total, redox_core::fmt::pct(used, total))
+            }),
+            "ölçüm yok (konuk çalışmıyor ya da konuk ajanı kurulu değil)",
+        ),
         View::Approvals => or_none(rows(&|a| format!("#{:<4} {:<14} {:<24} isteyen {}", n(a, "id"), s(a, "action"), s(a, "target"), s(a, "by"))), "onay bekleyen istek yok"),
         View::Approved => s(v, "done").to_string(),
         View::Pools => or_none(
@@ -720,6 +731,9 @@ mod tests {
         assert_eq!((balloon.path.as_str(), balloon.body.unwrap()), ("/guests/103/balloon", json!({"mb": 4096})));
         assert!(parse(&args("vm balloon 103 cok")).unwrap_err().contains("bir sayı olmalı"));
         assert_eq!(parsed("usage"), ("GET", "/usage".into(), None, View::Usage));
+        assert_eq!(parsed("vm df 103"), ("GET", "/guests/103/filesystems".into(), None, View::Filesystems));
+        assert_eq!(render(View::Filesystems, &json!([{"mount": "/", "used_mb": 900, "total_mb": 1000}])), "/                                 900 /     1000 MB   %90");
+        assert!(render(View::Filesystems, &json!([])).contains("ölçüm yok"));
         assert_eq!(parsed("backup archive"), ("GET", "/backups/archive".into(), None, View::Backups));
         assert_eq!(parsed("backup ack vm-103-1").1, "/backups/vm-103-1/ack");
         assert_eq!(parsed("approval list"), ("GET", "/approvals".into(), None, View::Approvals));

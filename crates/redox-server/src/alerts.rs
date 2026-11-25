@@ -57,6 +57,14 @@ pub fn evaluate(c: &Cluster) -> Vec<Alert> {
             add(key, Severity::Warning, format!("{}{place} deposu %{pct} dolu", s.id));
         }
     }
+    // Konuğun içindeki diskler (konuk ajanından): dolan disk konuğu durdurur, sunucudan bakınca görünmez.
+    for (vmid, list) in &c.guest_fs {
+        let name = c.guest(*vmid).map(|g| g.name.as_str()).unwrap_or("?");
+        for f in list.iter().filter(|f| f.pct() >= STORAGE_WARN_PCT) {
+            let severity = if f.pct() >= STORAGE_CRIT_PCT { Severity::Critical } else { Severity::Warning };
+            add(format!("guest-fs:{vmid}:{}", f.mount), severity, format!("{vmid} ({name}) konuğunun {} diski %{} dolu", f.mount, f.pct()));
+        }
+    }
     // Kaynak kullanımı: sayfada hemen görünür; bildirim için koşulun sürmesi beklenir.
     let mut load = |key: String, severity, message: String| alerts.push(Alert { key, severity, message, hold_secs: LOAD_HOLD_SECS });
     for n in c.nodes.iter().filter(|n| n.status == NodeStatus::Online) {
@@ -256,6 +264,19 @@ mod tests {
 
     fn keys(alerts: &[Alert]) -> Vec<(&str, Severity)> {
         alerts.iter().map(|a| (a.key.as_str(), a.severity)).collect()
+    }
+
+    #[test]
+    fn full_disks_inside_guests_raise_alerts() {
+        let mut c = Cluster::demo(1_700_000_000);
+        let before = evaluate(&c).len();
+        let fs = |mount: &str, used_mb| redox_core::FsUsage { mount: mount.into(), used_mb, total_mb: 1000 };
+        c.observe_filesystems(100, Some(vec![fs("/", 500), fs("/var", STORAGE_WARN_PCT as u64 * 10), fs("/data", 990)]));
+        let alerts = evaluate(&c);
+        assert_eq!(alerts.len(), before + 2);
+        let var = alerts.iter().find(|a| a.key == "guest-fs:100:/var").unwrap();
+        assert!(var.severity == Severity::Warning && var.message.contains("/var diski %") && var.message.starts_with("100 ("), "{}", var.message);
+        assert_eq!(alerts.iter().find(|a| a.key == "guest-fs:100:/data").unwrap().severity, Severity::Critical);
     }
 
     #[test]

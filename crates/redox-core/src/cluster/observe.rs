@@ -107,3 +107,26 @@ impl Cluster {
         }
     }
 }
+
+/// Konuk başına tutulan dosya sistemi sayısının üst sınırı (ajanın bildirdiği liste sınırsız büyümesin).
+pub const MAX_GUEST_FS: usize = 16;
+
+impl Cluster {
+    /// Konuğun içinden okunan dosya sistemlerini kaydeder; `None` kaydı siler (konuk durdu ya da ajan yok).
+    pub fn observe_filesystems(&mut self, vmid: VmId, list: Option<Vec<crate::driver::FsUsage>>) {
+        self.guest_fs.retain(|(id, _)| *id != vmid && self.guests.iter().any(|g| g.vmid == *id));
+        if let Some(mut list) = list.filter(|l| !l.is_empty()) {
+            list.retain(|f| f.total_mb > 0);
+            list.sort_by(|a, b| a.mount.cmp(&b.mount));
+            list.dedup_by(|a, b| a.mount == b.mount);
+            list.truncate(MAX_GUEST_FS);
+            self.guest_fs.push((vmid, list));
+            self.guest_fs.sort_by_key(|(id, _)| *id);
+        }
+    }
+
+    /// Konuğun içinden okunan dosya sistemleri; bilinmiyorsa boş.
+    pub fn filesystems_of(&self, vmid: VmId) -> &[crate::driver::FsUsage] {
+        self.guest_fs.iter().find(|(id, _)| *id == vmid).map(|(_, list)| list.as_slice()).unwrap_or(&[])
+    }
+}

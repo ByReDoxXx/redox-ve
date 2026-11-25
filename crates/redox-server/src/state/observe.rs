@@ -63,6 +63,23 @@ impl AppState {
         history.iter().map(|(k, v)| (k.clone(), v.iter().copied().collect())).collect()
     }
 
+    /// Çalışan ve ajanı yanıt veren sanal makinelerin dosya sistemi doluluklarını okur (dakikada bir çağrılır).
+    /// Bloklayan G/Ç yapar. Okunan konuk sayısını döndürür.
+    pub fn guest_fs_tick(&self) -> usize {
+        let driver = self.driver();
+        let guests = self.snapshot().guests;
+        let seen: Vec<_> = guests
+            .iter()
+            .map(|g| {
+                let live = g.kind == redox_core::GuestKind::Vm && g.status == redox_core::GuestStatus::Running && g.agent.is_some();
+                (g.vmid, if live { driver.guest_filesystems(g) } else { None })
+            })
+            .collect();
+        let read = seen.iter().filter(|(_, list)| list.is_some()).count();
+        self.mutate(|c| seen.into_iter().for_each(|(vmid, list)| c.observe_filesystems(vmid, list)));
+        read
+    }
+
     /// Gerçek sürücüden konukların, düğümün ve depolamanın güncel durumunu okur.
     /// Bloklayan G/Ç yapar; `spawn_blocking` içinden çağrılmalıdır.
     pub fn refresh(&self, host: Option<&HostSample>, disk_gb: Option<(u64, u64)>) {

@@ -920,6 +920,19 @@ impl Hypervisor for QemuDriver {
         tap_counters(&self.cfg.sys_net, &self.guest_taps(guest.vmid))
     }
 
+    fn guest_filesystems(&self, guest: &Guest) -> Option<Vec<redox_core::FsUsage>> {
+        #[cfg(unix)]
+        {
+            let info = self.agent_call(guest.vmid, "guest-get-fsinfo", Duration::from_secs(5))?;
+            Some(crate::qga::filesystems(&info))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            None
+        }
+    }
+
     fn balloon_stats(&self, guest: &Guest) -> Option<redox_core::BalloonStats> {
         #[cfg(unix)]
         {

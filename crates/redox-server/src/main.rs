@@ -414,6 +414,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                 st.power_tick(&today, weekday, minute);
                 st.jobs_tick(&today, weekday, minute);
                 st.auto_test_tick(minute);
+                st.guest_fs_tick();
                 if let Some(Err(e)) = st.report_tick(&today, minute) {
                     eprintln!("yedek raporu gönderilemedi: {e}");
                 }

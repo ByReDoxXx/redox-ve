@@ -222,3 +222,27 @@ fn newest_backups_are_boot_tested_on_a_schedule() {
     assert_eq!(state.auto_test_tick(186), None);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn disk_usage_inside_the_guest_is_read_through_the_agent() {
+    if !python_available() {
+        return;
+    }
+    let (cfg, dir) = config();
+    let cluster = local_cluster(&cfg);
+    let node = cluster.nodes[0].id.clone();
+    let state = AppState::new(cluster, Box::new(QemuDriver::new(cfg.clone()).unwrap()), Duration::ZERO, None, Auth::new(UserFile::default(), None, false, Cost::Test));
+    let id = state.create_guest(&spec("ajanli-disk", &node), "admin").unwrap();
+    assert_eq!(state.guest_fs_tick(), 0, "kapalı konuk okunmaz");
+    state.run_action(id, Action::Start, "admin").unwrap();
+    state.refresh(None, None);
+    assert_eq!(state.guest_fs_tick(), 1);
+    let c = state.snapshot();
+    assert_eq!(c.filesystems_of(id).iter().map(|f| (f.mount.as_str(), f.pct())).collect::<Vec<_>>(), [("/", 90)]);
+    assert!(redox_server::alerts::evaluate(&c).iter().any(|a| a.key == format!("guest-fs:{id}:/")), "dolan disk uyarı üretir");
+    state.run_action(id, Action::Stop, "admin").unwrap();
+    state.refresh(None, None);
+    state.guest_fs_tick();
+    assert!(state.snapshot().filesystems_of(id).is_empty(), "duran konuğun ölçümü silinir");
+    let _ = std::fs::remove_dir_all(dir);
+}

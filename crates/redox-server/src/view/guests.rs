@@ -233,6 +233,15 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
                                 }
                             }
                             dt { "IP adresi" } dd class="mono" { (g.ip.as_deref().unwrap_or("-")) }
+                            @let fs = c.filesystems_of(g.vmid);
+                            @if !fs.is_empty() {
+                                dt { "Konuk içi diskler" } dd class="mono" {
+                                    @for f in fs {
+                                        @let tone = if f.pct() >= 90 { "pill err" } else if f.pct() >= 80 { "pill warn" } else { "tag" };
+                                        span class=(tone) title={ (f.used_mb) " / " (f.total_mb) " MB" } { (f.mount) " %" (f.pct()) } " "
+                                    }
+                                }
+                            }
                             dt { "Ağ" } dd class="mono" {
                                 @if g.bridge == redox_core::NAT { "NAT" } @else { "köprü: " (g.bridge) @if g.hw.vlan > 0 { " · VLAN " (g.hw.vlan) } }
                                 @for (i, n) in g.hw.nics.iter().enumerate() {
