@@ -130,6 +130,8 @@ pub fn live_console_page(p: &Page, g: &Guest, available: bool) -> String {
                     @if available {
                         span id="console-status" class="pill idle" role="status" { (tx("Betik bekleniyor…")) }
                         div class="btns" style="margin-left:auto" {
+                            input id="console-text" class="console-text" type="text" autocomplete="off" spellcheck="false" aria-label=(tx("Konuğa yazdırılacak metin")) placeholder=(tx("Konuğa yazdırılacak metin"));
+                            button id="console-type" class="btn sm" type="button" data-skipped=(tx("karakter yazılamadı (yalnızca ABD klavyesindeki karakterler yazılır)")) title=(tx("Metni konuğa tuş vuruşları olarak gönderir. Pano yerine geçer; konukta ajan gerekmez. Konuğun klavye düzeni ABD İngilizcesi olmalıdır.")) { (tx("Yazdır")) }
                             button id="console-cad" class="btn sm" type="button" { "Ctrl+Alt+Del" }
                             button id="console-full" class="btn sm" type="button" { (tx("Tam Ekran")) }
                             button id="console-blur" class="btn sm" type="button" title=(tx("Klavye odağını konuktan geri alır")) { (tx("Odağı Bırak")) }

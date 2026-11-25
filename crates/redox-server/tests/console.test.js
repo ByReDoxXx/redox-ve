@@ -2,7 +2,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { XT, keysymOf, buttonMask, msg, toRgba, Reader, Session } = require("../assets/console.js");
+const { XT, keysymOf, typedKey, buttonMask, msg, toRgba, Reader, Session } = require("../assets/console.js");
 
 const bytes = (...parts) => Uint8Array.from(parts.flatMap((p) => Array.from(p)));
 const u16 = (v) => [v >> 8, v & 0xff];
@@ -159,4 +159,35 @@ test("hatalı sunucu oturumu kapatır, sayfayı bozmaz", async () => {
     assert.match(last[1], expected, name);
     assert.equal(h.calls.filter((c) => c[0] === "draw").length, 0, name);
   }
+});
+
+test("metin tuş vuruşları olarak yazdırılır", async () => {
+  // Yazdırılabilen her karakterin tuşu tarama kodu tablosunda vardır.
+  for (let cp = 32; cp < 127; cp++) {
+    const hit = typedKey(String.fromCharCode(cp));
+    assert.ok(hit && Object.prototype.hasOwnProperty.call(XT, hit[1]), "karakter " + cp);
+  }
+  assert.deepEqual(typedKey("a"), ["a", "KeyA", false]);
+  assert.deepEqual(typedKey("A"), ["A", "KeyA", true]);
+  assert.deepEqual(typedKey("@"), ["@", "Digit2", true]);
+  assert.deepEqual(typedKey("|"), ["|", "Backslash", true]);
+  assert.deepEqual(typedKey("\""), ["\"", "Quote", true]);
+  assert.equal(typedKey("ş"), null);
+
+  // Tarama kodlu oturum: "aB\n" → a, Shift+b, Enter; "ş" atlanır ve sayılır.
+  const h = harness();
+  h.session.feed(serverHello(2, 2, ""));
+  h.session.feed(bytes([0, 0], u16(1), u16(0), u16(0), u16(0), u16(0), u32(-258 >>> 0)));
+  await tick();
+  h.sent.length = 0;
+  let waits = 0;
+  const skipped = await h.session.type("aBş\r\n", async () => { waits++; });
+  assert.equal(skipped, 1);
+  assert.equal(waits, 3);
+  const scancodes = h.sent.map((m) => [m[3], m.slice(-4).reduce((a, b) => a * 256 + b, 0)]);
+  assert.deepEqual(scancodes, [
+    [1, XT.KeyA], [0, XT.KeyA],
+    [1, XT.ShiftLeft], [1, XT.KeyB], [0, XT.KeyB], [0, XT.ShiftLeft],
+    [1, XT.Enter], [0, XT.Enter],
+  ]);
 });

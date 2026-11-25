@@ -35,6 +35,27 @@
     PrintScreen: 0xff61, ContextMenu: 0xff67,
   };
 
+  // Metin yapıştırma: karakter → [event.key, event.code, Shift gerekli mi]. ABD klavye düzenine göre; konuk başka
+  // bir düzen kullanıyorsa simgeler farklı çıkabilir. Bu düzende olmayan karakter için null.
+  const PAIRS = { Minus: "-_", Equal: "=+", BracketLeft: "[{", BracketRight: "]}", Backslash: "\\|", Semicolon: ";:", Quote: "'\"", Backquote: "`~", Comma: ",<", Period: ".>", Slash: "/?" };
+  const TYPED = new Map([[" ", [" ", "Space", false]], ["\n", ["Enter", "Enter", false]], ["\t", ["Tab", "Tab", false]]]);
+  for (let i = 0; i < 26; i++) {
+    const lower = String.fromCharCode(97 + i);
+    TYPED.set(lower, [lower, "Key" + lower.toUpperCase(), false]);
+    TYPED.set(lower.toUpperCase(), [lower.toUpperCase(), "Key" + lower.toUpperCase(), true]);
+  }
+  Array.from(")!@#$%^&*(").forEach((symbol, digit) => {
+    TYPED.set(String(digit), [String(digit), "Digit" + digit, false]);
+    TYPED.set(symbol, [symbol, "Digit" + digit, true]);
+  });
+  Object.entries(PAIRS).forEach(([code, pair]) => {
+    TYPED.set(pair[0], [pair[0], code, false]);
+    TYPED.set(pair[1], [pair[1], code, true]);
+  });
+  function typedKey(ch) {
+    return TYPED.get(ch) || null;
+  }
+
   // Tuş olayının X11 simgesi; bilinmiyorsa 0.
   function keysymOf(key, code) {
     if (Object.prototype.hasOwnProperty.call(KEYSYM, key)) {
@@ -239,6 +260,23 @@
     }
 
     // Tarayıcının kendine ayırdığı bileşimi konuğa gönderir.
+    // Metni tuş vuruşları olarak gönderir (pano gerektirmez; konukta ajan olması gerekmez). Yazılamayan
+    // karakterlerin sayısını döndürür. `wait`: iki tuş arasında beklenen söz (konuğun arabelleği taşmasın).
+    async type(text, wait) {
+      let skipped = 0;
+      for (const ch of Array.from(String(text).replace(/\r\n?/g, "\n"))) {
+        const hit = typedKey(ch);
+        if (!hit) { skipped++; continue; }
+        const [key, code, shift] = hit;
+        if (shift) this.key(true, "Shift", "ShiftLeft");
+        this.key(true, key, code);
+        this.key(false, key, code);
+        if (shift) this.key(false, "Shift", "ShiftLeft");
+        if (wait) await wait();
+      }
+      return skipped;
+    }
+
     ctrlAltDel() {
       const keys = [["Control", "ControlLeft"], ["Alt", "AltLeft"], ["Delete", "Delete"]];
       keys.forEach(([k, c]) => this.key(true, k, c));
@@ -246,7 +284,7 @@
     }
   }
 
-  const api = { XT, keysymOf, buttonMask, msg, toRgba, Reader, Session };
+  const api = { XT, keysymOf, typedKey, buttonMask, msg, toRgba, Reader, Session };
   if (typeof module !== "undefined" && module.exports) { module.exports = api; return; }
   root.RedoxConsole = api;
 
@@ -309,4 +347,19 @@
   on("console-cad", () => { session.ctrlAltDel(); canvas.focus(); });
   on("console-full", () => { if (canvas.requestFullscreen) canvas.requestFullscreen(); canvas.focus(); });
   on("console-blur", () => canvas.blur());
+  const field = document.getElementById("console-text");
+  const typeButton = document.getElementById("console-type");
+  if (field && typeButton) {
+    const send = async () => {
+      if (!field.value || typeButton.disabled) return;
+      typeButton.disabled = true;
+      const skipped = await session.type(field.value, () => new Promise((done) => setTimeout(done, 12)));
+      typeButton.disabled = false;
+      if (skipped) say(skipped + " " + typeButton.dataset.skipped, true);
+      else field.value = "";
+      canvas.focus();
+    };
+    typeButton.addEventListener("click", send);
+    field.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send(); } });
+  }
 })(typeof window !== "undefined" ? window : globalThis);
