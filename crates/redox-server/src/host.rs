@@ -147,6 +147,50 @@ pub fn local_node() -> Node {
 
 pub const LOCAL_STORAGE: &str = "local";
 
+/// `/proc/self/mounts` içeriğinden `dir` dizinini taşıyan bağlama noktası: (aygıt, dosya sistemi türü).
+fn mount_of<'a>(mounts: &'a str, dir: &Path) -> Option<(&'a str, &'a str)> {
+    mounts
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (device, point, kind) = (fields.next()?, fields.next()?, fields.next()?);
+            dir.starts_with(point).then_some((point.len(), device, kind))
+        })
+        // En uzun bağlama noktası kazanır; eşitlikte sonradan bağlanan (üstte duran).
+        .fold(None, |best: Option<(usize, &str, &str)>, m| if best.is_none_or(|b| m.0 >= b.0) { Some(m) } else { best })
+        .map(|(_, device, kind)| (device, kind))
+}
+
+fn kind_from(mounts: &str, dir: &Path, dm_uuid: &dyn Fn(&str) -> Option<String>) -> StorageKind {
+    match mount_of(mounts, dir) {
+        Some((_, "zfs")) => StorageKind::Zfs,
+        Some((_, kind)) if kind.starts_with("nfs") => StorageKind::Nfs,
+        Some((device, _)) if device.starts_with("/dev/") && dm_uuid(device).is_some_and(|uuid| uuid.starts_with("LVM-")) => StorageKind::Lvm,
+        _ => StorageKind::Dir,
+    }
+}
+
+/// Dizinin durduğu depolamanın türü: ZFS veri kümesi, NFS paylaşımı, LVM birimi ya da düz dizin.
+/// Yalnızca bilgi içindir; disk imajları her durumda dosya olarak durur.
+pub fn storage_kind(dir: &Path) -> StorageKind {
+    let Ok(mounts) = std::fs::read_to_string("/proc/self/mounts") else { return StorageKind::Dir };
+    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    kind_from(&mounts, &dir, &|device| {
+        let real = std::fs::canonicalize(device).ok()?;
+        read_trimmed(&format!("/sys/block/{}/dm/uuid", real.file_name()?.to_str()?))
+    })
+}
+
+/// Depolama alanlarının türünü dizinlerine bakarak günceller (sunucu başlarken).
+pub fn detect_storage_kinds(c: &mut redox_core::Cluster, images: &Path, extras: &[(String, std::path::PathBuf)]) {
+    for s in c.storages.iter_mut() {
+        let dir = if s.id == LOCAL_STORAGE { Some(images) } else { extras.iter().find(|(id, _)| *id == s.id).map(|(_, dir)| dir.as_path()) };
+        if let Some(dir) = dir {
+            s.kind = storage_kind(dir);
+        }
+    }
+}
+
 /// Disk imajlarının durduğu dizini tek depolama olarak tanımlar.
 pub fn local_storage(node: &str, images_dir: &Path) -> Storage {
     let (used_gb, total_gb) = disk_usage_gb(images_dir).unwrap_or((0, 0));
@@ -295,7 +339,7 @@ mod storage_tests {
 
 #[cfg(test)]
 mod boot_tests {
-    use super::booted_since_last_run;
+    use super::*;
 
     #[test]
     fn boot_is_detected_once_per_boot_id() {
@@ -308,5 +352,23 @@ mod boot_tests {
         assert!(booted_since_last_run(&marker, Some("bbb")), "kimlik değişti: sunucu yeniden açıldı");
         assert!(!booted_since_last_run(&marker, Some("bbb")));
         std::fs::remove_file(&marker).unwrap();
+    }
+
+    #[test]
+    fn storage_kind_follows_the_longest_mount_point() {
+        const MOUNTS: &str = "/dev/sda2 / ext4 rw 0 0\ntank/vm /srv/vm zfs rw 0 0\n10.0.0.5:/yedek /srv/yedek nfs4 rw 0 0\n/dev/mapper/vg0-hizli /srv/hizli ext4 rw 0 0\n/dev/mapper/sifreli /srv/luks ext4 rw 0 0\n";
+        let dm = |device: &str| match device {
+            "/dev/mapper/vg0-hizli" => Some("LVM-abc".to_string()),
+            "/dev/mapper/sifreli" => Some("CRYPT-LUKS2-abc".to_string()),
+            _ => None,
+        };
+        let kind = |dir: &str| kind_from(MOUNTS, Path::new(dir), &dm);
+        assert_eq!(kind("/srv/vm/images"), StorageKind::Zfs);
+        assert_eq!(kind("/srv/yedek"), StorageKind::Nfs);
+        assert_eq!(kind("/srv/hizli/a/b"), StorageKind::Lvm);
+        assert_eq!(kind("/srv/luks"), StorageKind::Dir, "her aygıt eşleyici birimi LVM değildir");
+        assert_eq!(kind("/var/lib/redox"), StorageKind::Dir);
+        assert_eq!(kind("/srv/vmx"), StorageKind::Dir, "ad benzerliği bağlama noktası sayılmaz");
+        assert_eq!(kind_from("", Path::new("/x"), &dm), StorageKind::Dir);
     }
 }

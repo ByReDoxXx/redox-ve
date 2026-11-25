@@ -209,6 +209,8 @@ pub enum StorageKind {
     Nfs,
     #[serde(rename = "lvm-thin")]
     LvmThin,
+    #[serde(rename = "lvm")]
+    Lvm,
     #[serde(rename = "dir")]
     Dir,
 }
@@ -219,6 +221,7 @@ impl StorageKind {
             StorageKind::Zfs => "ZFS",
             StorageKind::Nfs => "NFS",
             StorageKind::LvmThin => "LVM-thin",
+            StorageKind::Lvm => "LVM",
             StorageKind::Dir => "Dizin",
         }
     }

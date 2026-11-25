@@ -168,7 +168,7 @@ pub fn storage(p: &Page, media: &[crate::media::Media]) -> String {
             div class="card" {
                 header { h2 { (tx("Depolama alanları")) } (tip("Konuk disklerinin, kalıpların ve yedeklerin durduğu alanlar ve dolulukları.")) }
                 div class="tw" { table {
-                    thead { tr { th { (tx("Alan")) } th { (tx("Tür")) } th { (tx("İçerik")) } th style="width:34%" { (tx("Kullanım")) } th class="num" { (tx("Dolu / Toplam")) } } }
+                    thead { tr { th { (tx("Alan")) } th { (tx("Tür")) (tip("Dizinin durduğu depolama: düz dizin, ZFS veri kümesi, LVM birimi ya da NFS paylaşımı. Sunucu başlarken tanınır. Diskler her durumda imaj dosyası olarak durur.")) } th { (tx("İçerik")) } th style="width:34%" { (tx("Kullanım")) } th class="num" { (tx("Dolu / Toplam")) } } }
                     tbody { @for s in &c.storages { tr {
                         td class="mono" { (s.id) span class="sub" { (s.node.as_deref().unwrap_or((tx("paylaşımlı")))) } }
                         td { (tx(s.kind.label())) }
