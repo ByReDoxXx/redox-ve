@@ -51,6 +51,7 @@ pub fn routes() -> Router<AppState> {
         .route("/backups/{id}/test", post(backup_test))
         .route("/backups/archive", get(backup_archive))
         .route("/approvals", get(approvals))
+        .route("/maintenance", get(maintenance).post(maintenance_set))
         .route("/approvals/{id}/approve", post(approval_approve))
         .route("/approvals/{id}", delete_route(approval_reject))
         .route("/backups/{id}/recover", post(backup_recover))
@@ -552,6 +553,24 @@ fn usage_json(c: &redox_core::Cluster, g: &redox_core::Guest) -> serde_json::Val
         "disk_read_mb": u.disk_read_bytes >> 20, "disk_write_mb": u.disk_write_bytes >> 20,
         "net_rx_mb": u.net_rx_bytes >> 20, "net_tx_mb": u.net_tx_bytes >> 20,
     })
+}
+
+async fn maintenance(State(st): State<AppState>) -> Json<serde_json::Value> {
+    let c = st.snapshot();
+    Json(json!({ "on": c.maintenance, "resume": c.maintenance_resume }))
+}
+
+#[derive(serde::Deserialize)]
+struct MaintenanceBody {
+    on: bool,
+    /// Bakıma girerken çalışan konukları kapat (bakım bitince yeniden başlatılırlar).
+    #[serde(default)]
+    drain: bool,
+}
+
+async fn maintenance_set(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<MaintenanceBody>) -> Json<serde_json::Value> {
+    let guests = if body.on { st.maintenance_on(body.drain, &me.user) } else { st.maintenance_off(&me.user) };
+    Json(json!({ "on": body.on, "guests": guests }))
 }
 
 /// Hazır bulut imajı kataloğu.

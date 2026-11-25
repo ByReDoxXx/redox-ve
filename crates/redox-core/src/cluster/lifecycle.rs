@@ -247,3 +247,29 @@ impl Cluster {
         Ok(())
     }
 }
+
+impl Cluster {
+    /// Bakım kipinde konuk başlatılamaz.
+    pub fn check_not_in_maintenance(&self) -> Result<(), Error> {
+        if self.maintenance {
+            return Err(Error::InvalidSpec("sunucu bakım kipinde: konuk başlatılamaz. Bakımı bitirin (redox maintenance off)".to_string()));
+        }
+        Ok(())
+    }
+
+    /// Bakım için kapatılacak konuklar: çalışanlar, açılış sırasının tersine (en son açılan en önce kapanır).
+    /// Görevi süren (kilitli) konuklar listeye girmez.
+    pub fn maintenance_drain_plan(&self) -> Vec<VmId> {
+        let mut running: Vec<&Guest> = self.guests.iter().filter(|g| g.status != GuestStatus::Stopped && g.lock.is_none()).collect();
+        running.sort_by_key(|g| (g.hw.boot_order == 0, g.hw.boot_order, g.vmid));
+        running.iter().rev().map(|g| g.vmid).collect()
+    }
+
+    /// Bakım bitti: yeniden başlatılacak konuklar (hâlâ var olan ve kapalı duranlar), açılış sırasıyla.
+    pub fn maintenance_finish(&mut self) -> Vec<VmId> {
+        self.maintenance = false;
+        let mut back: Vec<&Guest> = std::mem::take(&mut self.maintenance_resume).into_iter().filter_map(|vmid| self.guest(vmid).ok()).filter(|g| g.status == GuestStatus::Stopped && !g.hw.template).collect();
+        back.sort_by_key(|g| (g.hw.boot_order == 0, g.hw.boot_order, g.vmid));
+        back.iter().map(|g| g.vmid).collect()
+    }
+}

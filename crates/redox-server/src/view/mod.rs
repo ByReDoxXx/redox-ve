@@ -209,6 +209,13 @@ fn top(p: &Page, crumbs: &[(&str, &str)]) -> Markup {
 fn flash(p: &Page) -> Markup {
     let pending = if p.admin { p.cluster.pending_approvals(p.now) } else { Vec::new() };
     html! {
+        @if p.cluster.maintenance {
+            div class="flash bad" role="status" {
+                (icon("alert"))
+                span { "Bakım kipi açık: konuk başlatılmaz, zamanlanmış yedekler ve güç işlemleri durdu." @if !p.cluster.maintenance_resume.is_empty() { " Bakım bitince " (p.cluster.maintenance_resume.len()) " konuk yeniden başlatılacak." } " " }
+                @if p.admin { form class="inline" method="post" action="/maintenance/off" { button class="btn sm" type="submit" { "Bakımı Bitir" } } }
+            }
+        }
         // Dört göz ilkesi: onay bekleyen silme istekleri her sayfada yöneticilere gösterilir.
         @for a in &pending {
             div class="flash" role="status" {

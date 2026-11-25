@@ -41,6 +41,12 @@ pub struct Cluster {
     /// Konukların içinden okunan dosya sistemi dolulukları (yalnızca çalışan ve ajanı yanıt veren konuklar).
     #[serde(default)]
     pub guest_fs: Vec<(VmId, Vec<crate::driver::FsUsage>)>,
+    /// Bakım kipi: açıkken hiçbir konuk başlatılmaz ve zamanlanmış işler (yedek, güç, gözcü) durur.
+    #[serde(default)]
+    pub maintenance: bool,
+    /// Bakıma girerken kapatılan konuklar: bakım bitince yeniden başlatılır.
+    #[serde(default)]
+    pub maintenance_resume: Vec<VmId>,
     /// Konuk başına birikimli kaynak tüketimi (kimliğe göre sıralı).
     #[serde(default)]
     pub usage: Vec<crate::usage::Usage>,
@@ -78,6 +84,8 @@ impl Cluster {
             pools: Vec::new(),
             usage: Vec::new(),
             archive: Vec::new(),
+            maintenance: false,
+            maintenance_resume: Vec::new(),
             guest_fs: Vec::new(),
             approvals: Vec::new(),
             approval_seq: 0,

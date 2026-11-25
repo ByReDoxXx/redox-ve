@@ -124,6 +124,16 @@ pub fn node(p: &Page, n: &Node) -> String {
                 (stat("Çalışma Süresi", &uptime(n.uptime_secs), "", &format!("linux {} · {}", n.kernel, n.ip), None))
             }
             (usage_card(p, "node", n.cores as u64, n.cpu_pct, mp))
+            @if p.admin && !p.cluster.maintenance {
+                div class="card" {
+                    header { h2 { "Bakım" } span class="note" { "sunucuyu güncellemeden ya da yeniden başlatmadan önce" } }
+                    div class="inline" {
+                        form method="post" action="/maintenance/drain" { button class="btn sm" type="submit" { (icon("stop")) "Konukları Kapat ve Bakıma Al" } }
+                        form method="post" action="/maintenance/on" { button class="btn sm quiet" type="submit" { "Yalnızca Bakıma Al" } }
+                    }
+                    footer { "Bakım kipinde hiçbir konuk başlatılmaz; zamanlanmış yedekler, güç işlemleri ve kendiliğinden yeniden başlatma durur. Kapatılan konuklar bakım bitince açılış sırasıyla yeniden başlatılır. Sunucu bu sırada yeniden başlasa da kip korunur." }
+                }
+            }
             div {
                 div class="tools" {
                     h2 { "Bu düğümdeki konuklar" }

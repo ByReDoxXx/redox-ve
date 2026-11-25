@@ -12,6 +12,9 @@ impl AppState {
     /// Zamanlayıcının bir turu: saati gelen otomatik yedekleri başlatır ve saklama sayısını
     /// aşan eski otomatik yedekleri siler. Başlatılan yedek sayısını döndürür.
     pub fn scheduler_tick(&self, today: &str, minute_of_day: u16) -> usize {
+        if self.in_maintenance() {
+            return 0;
+        }
         let due = self.lock().auto_backups_due(today, minute_of_day);
         for vmid in &due {
             // Önce işaretle: başarısız olsa da aynı gün her turda yeniden denenmesin.
@@ -35,6 +38,9 @@ impl AppState {
     /// Yedek işlerinin bir turu: saati gelen işleri başlatır ve süren turlarda sıradaki konuğun yedeğini
     /// başlatır (bütün işler arasında aynı anda en çok bir yedek). Başlatılan yedek sayısını döndürür.
     pub fn jobs_tick(&self, today: &str, weekday: u8, minute_of_day: u16) -> usize {
+        if self.in_maintenance() {
+            return 0;
+        }
         self.mutate(|c| c.start_due_jobs(today, weekday, minute_of_day));
         // Yedek penceresi kapandıysa sıradaki konuklara başlanmaz; kaç konuğun kaldığı günlüğe yazılır.
         self.mutate(|c| {
@@ -92,6 +98,9 @@ impl AppState {
     /// Yeniden başlatma turu: "yeniden başlat" işaretli, beklenmedik biçimde kapanmış konukları açar.
     /// Başlatılan konuk sayısını döndürür. Vazgeçilen konuk görev günlüğüne hata olarak yazılır.
     pub fn ha_tick(&self) -> usize {
+        if self.in_maintenance() {
+            return 0;
+        }
         let snapshot = self.snapshot();
         let decisions = self.0.ha.lock().unwrap_or_else(|e| e.into_inner()).update(&snapshot, now());
         let mut started = 0;
@@ -121,6 +130,9 @@ impl AppState {
     /// Zamanlayıcının güç turu: saati gelen başlat, kapat ve yeniden başlat işlemlerini çalıştırır.
     /// Konuk zaten istenen durumdaysa işlem sessizce atlanır. Başlatılan görev sayısını döndürür.
     pub fn power_tick(&self, today: &str, weekday: u8, minute_of_day: u16) -> usize {
+        if self.in_maintenance() {
+            return 0;
+        }
         let due = self.lock().schedules_due(today, weekday, minute_of_day);
         let mut started = 0;
         for (vmid, index, action) in due {
@@ -142,6 +154,9 @@ impl AppState {
     /// bitince o konuğun gecikmesi kadar beklenir. `pause` beklemeyi yapar (testlerde kaydedilir).
     /// Başlatılan konuk sayısını döndürür; başlatılamayan konuk görev günlüğüne yazılır ve sıra sürer.
     pub fn autostart(&self, pause: &dyn Fn(Duration)) -> usize {
+        if self.in_maintenance() {
+            return 0;
+        }
         let plan = self.lock().boot_plan();
         let mut started = 0;
         for (i, (vmid, delay)) in plan.iter().enumerate() {

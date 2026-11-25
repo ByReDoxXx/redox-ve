@@ -54,6 +54,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox vm resize <kimlik> <GB>
   redox vm move <kimlik> <depolama>      (kapalı sanal makinenin disklerini başka depolama alanına taşır)
   redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
+  redox maintenance status | on [--drain] | off   (bakım kipi: konuk başlatılmaz, zamanlanmış işler durur;
+        --drain çalışan konukları sırayla kapatır, off onları yeniden başlatır)
   redox approval list | approve <no> | reject <no>   (dört göz ilkesi: bekleyen silme istekleri; kendi isteğinizi onaylayamazsınız)
   redox backup ack <yedek>               (olağan dışı değişim uyarısını kapatır: baktınız, sorun yok)
   redox backup archive | recover <yedek>   (yerelde silinmiş ama kopya hedefinde saklanan yedekler; recover listeye geri getirir)
@@ -126,6 +128,8 @@ pub enum View {
     Approvals,
     /// `{ "done": ... }` döndüren onay.
     Approved,
+    /// Bakım kipi durumu ya da değişikliği.
+    Maintenance,
     /// Hazır imaj kataloğu.
     Catalog,
     /// Konuğun içindeki dosya sistemleri.
@@ -328,6 +332,10 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["backup", "restore", id] => req("POST", format!("/backups/{id}/restore"), None, View::Task),
         ["backup", "instant", id, name] => req("POST", format!("/backups/{id}/instant"), Some(json!({ "name": name })), View::Cloned),
         ["vm", "detach", id] => req("POST", format!("/guests/{}/detach", vmid(id)?), None, View::Task),
+        ["maintenance", "status"] => get("/maintenance", View::Maintenance),
+        ["maintenance", "on"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": true })), View::Maintenance),
+        ["maintenance", "on", "--drain"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": true, "drain": true })), View::Maintenance),
+        ["maintenance", "off"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": false })), View::Maintenance),
         ["approval", "list"] => get("/approvals", View::Approvals),
         ["approval", "approve", id] => req("POST", format!("/approvals/{}/approve", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Approved),
         ["approval", "reject", id] => req("DELETE", format!("/approvals/{}", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Done("istek reddedildi")),
@@ -514,6 +522,12 @@ pub fn render(view: View, v: &Value) -> String {
                 None => line(v),
             }
         }
+        View::Maintenance => match (v["on"].as_bool() == Some(true), v["guests"].as_u64(), v["resume"].as_array().map(Vec::len)) {
+            (true, Some(stopped), _) => format!("bakım kipi açık; {stopped} konuk kapatılıyor"),
+            (false, Some(started), _) => format!("bakım kipi kapalı; {started} konuk yeniden başlatılıyor"),
+            (true, None, waiting) => format!("bakım kipi açık; bakım bitince başlatılacak konuk: {}", waiting.unwrap_or(0)),
+            (false, None, _) => "bakım kipi kapalı".to_string(),
+        },
         View::Catalog => rows(&|e| format!("{:<14} {:<28} {}", s(e, "key"), s(e, "label"), s(e, "file"))),
         View::Filesystems => or_none(
             rows(&|f| {
@@ -745,6 +759,10 @@ mod tests {
         assert_eq!(parsed("backup archive"), ("GET", "/backups/archive".into(), None, View::Backups));
         assert_eq!(parsed("backup ack vm-103-1").1, "/backups/vm-103-1/ack");
         assert_eq!(parsed("approval list"), ("GET", "/approvals".into(), None, View::Approvals));
+        assert_eq!(parsed("maintenance on --drain"), ("POST", "/maintenance".into(), Some(json!({"on": true, "drain": true})), View::Maintenance));
+        assert_eq!(parsed("maintenance off").2, Some(json!({"on": false})));
+        assert_eq!(render(View::Maintenance, &json!({"on": true, "guests": 3})), "bakım kipi açık; 3 konuk kapatılıyor");
+        assert_eq!(render(View::Maintenance, &json!({"on": false, "resume": []})), "bakım kipi kapalı");
         assert_eq!(parsed("approval approve 7"), ("POST", "/approvals/7/approve".into(), None, View::Approved));
         assert_eq!(parsed("approval reject 7").1, "/approvals/7");
         assert!(parse(&args("approval approve yedi")).is_err());

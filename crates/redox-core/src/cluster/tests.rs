@@ -388,3 +388,28 @@ fn guest_filesystems_are_kept_sorted_bounded_and_dropped_with_the_guest() {
     c.observe_filesystems(103, Some((0..40).map(|i| fs(&format!("/m{i:02}"), 1, 2)).collect()));
     assert_eq!(c.filesystems_of(103).len(), observe::MAX_GUEST_FS);
 }
+
+#[test]
+fn maintenance_drains_in_reverse_boot_order_and_resumes_what_it_stopped() {
+    let mut c = cluster();
+    c.check_not_in_maintenance().unwrap();
+    let running: Vec<VmId> = c.guests.iter().filter(|g| g.status != GuestStatus::Stopped).map(|g| g.vmid).collect();
+    assert!(running.len() >= 2, "demo kümede çalışan konuklar var");
+    let (first, last) = (running[0], running[1]);
+    c.guest_mut(first).unwrap().hw.boot_order = 1;
+    c.guest_mut(last).unwrap().hw.boot_order = 2;
+    let plan = c.maintenance_drain_plan();
+    assert_eq!(plan.len(), running.len());
+    let at = |vmid| plan.iter().position(|v| *v == vmid).unwrap();
+    assert!(at(last) < at(first) && at(first) == plan.len() - 1, "önce açılan en son kapanır: {plan:?}");
+
+    c.maintenance = true;
+    assert!(c.check_not_in_maintenance().unwrap_err().to_string().contains("bakım kipinde"));
+    // Kapatılanlar hatırlanır; bu arada silinen ya da elle açılan konuk geri başlatılmaz.
+    c.maintenance_resume = vec![last, first, 999];
+    for vmid in [first, last] {
+        c.guest_mut(vmid).unwrap().status = GuestStatus::Stopped;
+    }
+    assert_eq!(c.maintenance_finish(), [first, last], "açılış sırasıyla");
+    assert!(!c.maintenance && c.maintenance_resume.is_empty());
+}

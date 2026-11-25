@@ -60,6 +60,9 @@ impl AppState {
     /// Eylemi doğrular ve görevi başlatır. Gecikme sıfırsa (testler) görev dönmeden
     /// önce biter; değilse arka planda, küme kilidi tutulmadan tamamlanır.
     pub fn run_action(&self, vmid: VmId, action: Action, user: &str) -> Result<TaskId, Error> {
+        if action == Action::Start {
+            self.lock().check_not_in_maintenance()?;
+        }
         let task = self.mutate(|c| c.begin_action(vmid, action, user, now()))?;
         if self.0.task_delay.is_zero() {
             self.finish(task, vmid, action);

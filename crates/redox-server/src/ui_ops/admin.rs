@@ -47,6 +47,25 @@ pub async fn pool_delete(State(st): State<AppState>, Path(name): Path<String>) -
     }
 }
 
+/// Bakım kipi (`op`: `on`, `drain`, `off`).
+pub async fn maintenance_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(op): Path<String>) -> Redirect {
+    match op.as_str() {
+        "on" => {
+            st.maintenance_on(false, &me.user);
+            flash("/", "notice", "Bakım kipi açıldı: konuk başlatılmaz, zamanlanmış işler durdu.")
+        }
+        "drain" => {
+            let n = st.maintenance_on(true, &me.user);
+            flash("/", "notice", &format!("Bakım kipi açıldı; {n} konuk sırayla kapatılıyor. Bakım bitince yeniden başlatılırlar."))
+        }
+        "off" => {
+            let n = st.maintenance_off(&me.user);
+            flash("/", "notice", &format!("Bakım bitti; {n} konuk yeniden başlatılıyor."))
+        }
+        _ => flash("/", "error", &format!("Bilinmeyen işlem: {op}")),
+    }
+}
+
 /// Dört göz ilkesi: bekleyen isteği onaylar ya da reddeder (`op`: `approve` / `reject`).
 pub async fn approval_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((id, op)): Path<(u64, String)>) -> Redirect {
     let result = match op.as_str() {

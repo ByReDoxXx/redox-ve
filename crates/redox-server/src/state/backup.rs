@@ -407,6 +407,9 @@ impl AppState {
     /// süren bir sınama yoksa sırası gelen bir yedeği sınamaya başlar. Başlattığı yedeğin adını döndürür.
     pub fn auto_test_tick(&self, minute_of_day: u16) -> Option<String> {
         const WINDOW_MIN: u16 = 240;
+        if self.in_maintenance() {
+            return None;
+        }
         let (every, start) = *self.0.auto_test.lock().unwrap_or_else(|e| e.into_inner());
         if every == 0 || minute_of_day < start || minute_of_day >= start.saturating_add(WINDOW_MIN) {
             return None;

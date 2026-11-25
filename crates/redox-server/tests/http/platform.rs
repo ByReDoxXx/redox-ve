@@ -134,3 +134,33 @@ async fn four_eyes_also_covers_disks_jobs_and_users() {
     let c = state.snapshot();
     assert!(c.job("gece").is_err() && c.guest(103).unwrap().hw.disks.is_empty());
 }
+
+#[tokio::test]
+async fn maintenance_mode_stops_guests_blocks_starts_and_resumes_them() {
+    let (app, state) = setup();
+    let running = |st: &AppState| st.snapshot().guests.iter().filter(|g| g.status == GuestStatus::Running).map(|g| g.vmid).collect::<Vec<_>>();
+    let before = running(&state);
+    assert!(!before.is_empty());
+    let node = state.snapshot().nodes[0].id.clone();
+    assert!(page(&app, &format!("/nodes/{node}")).await.contains(r#"action="/maintenance/drain""#));
+
+    assert!(post_ok(&app, "/maintenance/drain", "").await.contains("notice="));
+    let c = state.snapshot();
+    assert!(c.maintenance && running(&state).is_empty(), "çalışan konuklar kapatıldı");
+    assert!(before.iter().all(|vmid| c.maintenance_resume.contains(vmid)), "kapatılanlar hatırlanır (duraklatılmış olanlar dahil)");
+    let remembered = c.maintenance_resume.len() as u64;
+    let home = page(&app, "/").await;
+    assert!(home.contains("Bakım kipi açık") && home.contains(r#"action="/maintenance/off""#));
+    // Bakımda: elle başlatma reddedilir, zamanlayıcılar bir şey yapmaz.
+    assert!(matches!(state.run_action(before[0], Action::Start, "admin"), Err(redox_core::Error::InvalidSpec(m)) if m.contains("bakım kipinde")));
+    assert_eq!((state.autostart(&|_| {}), state.ha_tick(), state.scheduler_tick("2026-01-01", 0)), (0, 0, 0));
+    let (_, status) = api(&app, request(Method::GET, "/api/v1/maintenance").body(Body::empty()).unwrap()).await;
+    assert_eq!(status["on"], true);
+
+    // Bakım biter: kapatılanlar yeniden başlar.
+    let (_, done) = api(&app, post_json("/api/v1/maintenance", &serde_json::json!({ "on": false }))).await;
+    assert_eq!(done["guests"].as_u64(), Some(remembered));
+    let after = running(&state);
+    assert!(before.iter().all(|vmid| after.contains(vmid)) && after.len() as u64 == remembered, "{after:?}");
+    assert!(!state.snapshot().maintenance && !page(&app, "/").await.contains("Bakım kipi açık"));
+}

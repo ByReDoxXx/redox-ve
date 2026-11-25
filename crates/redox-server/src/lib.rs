@@ -94,6 +94,7 @@ pub fn app(state: AppState) -> Router {
         .route("/backups/{id}/file", get(ui_ops::backup_file))
         .route("/guests/{vmid}/balloon", post(ui_ops::balloon_set))
         .route("/approvals/{id}/{op}", post(ui_ops::approval_action))
+        .route("/maintenance/{op}", post(ui_ops::maintenance_action))
         .route("/guests/{vmid}/move", post(ui_ops::storage_move))
         .route("/guests/{vmid}/detach", post(ui_ops::guest_detach))
         .route("/backups/jobs/{name}/{op}", post(ui_ops::job_action))
