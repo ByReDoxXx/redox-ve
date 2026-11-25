@@ -176,6 +176,30 @@ pub async fn account_token_revoke(State(st): State<AppState>, Extension(me): Ext
     done("/account", st.auth().edit(|u| u.revoke_token(&me.user, &label)).map(|()| tfmt(format!("{label} token'ı iptal edildi."))))
 }
 
+fn download(name: &str, body: String) -> Response {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\"")),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// Bütün konukların kaynak ölçümü, CSV olarak (oturumu açık herkes okuyabilir: sayfalarda da görünen veridir).
+pub async fn usage_csv(State(st): State<AppState>) -> Response {
+    download("redox-usage.csv", crate::csv::usage(&st.snapshot()))
+}
+
+/// Denetim günlüğü, CSV olarak (yalnızca yönetici). `q` sayfadaki süzgeçle aynıdır.
+pub async fn audit_csv(State(st): State<AppState>, Extension(me): Extension<Identity>, Query(q): Query<PageQuery>) -> Response {
+    if !me.can_write() {
+        return forbidden();
+    }
+    download("redox-audit.csv", crate::csv::audit(&st.auth().audit.recent(q.q.trim(), 5000)))
+}
+
 pub async fn audit(State(st): State<AppState>, Extension(me): Extension<Identity>, headers: HeaderMap, Query(q): Query<PageQuery>) -> Response {
     if !me.can_write() {
         return forbidden();

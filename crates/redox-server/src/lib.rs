@@ -40,6 +40,7 @@ pub mod view_ops;
 
 use std::net::SocketAddr;
 
+pub mod csv;
 pub mod i18n;
 
 use axum::extract::{ConnectInfo, Request, State};
@@ -124,6 +125,8 @@ pub fn app(state: AppState) -> Router {
         .route("/cmd", post(ui::command))
         .route("/theme", get(ui::theme))
         .route("/lang", get(ui::lang))
+        .route("/usage.csv", get(ui_admin::usage_csv))
+        .route("/audit.csv", get(ui_admin::audit_csv))
         .route("/assets/{file}", get(ui::asset))
         .route("/assets/fonts/{file}", get(ui_admin::font))
         .route("/metrics", get(ui_admin::metrics))

@@ -209,7 +209,7 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
                                 dt { (tx("Disk okuma / yazma")) } dd class="mono" { (u.disk_read_bytes >> 20) " MB / " (u.disk_write_bytes >> 20) " MB" }
                                 dt { (tx("Ağ alınan / gönderilen")) } dd class="mono" { (u.net_rx_bytes >> 20) " MB / " (u.net_tx_bytes >> 20) " MB" @if g.bridge == redox_core::NAT { " " span class="muted" { (tx("(NAT'taki kart sayılmaz)")) } } }
                             }
-                            footer { (tx("Birikimli sayaçlardır: konuk kapanıp açılsa da sürer. Dışa aktarım: ")) span class="mono" { "redox usage" } (tx(" ya da ")) span class="mono" { "GET /api/v1/usage" } "." }
+                            footer { (tx("Birikimli sayaçlardır: konuk kapanıp açılsa da sürer. Dışa aktarım: ")) span class="mono" { "redox usage" } (tx(" ya da ")) span class="mono" { "GET /api/v1/usage" } ". " a href="/usage.csv" { (tx("CSV indir")) } }
                         }
                     }
                     div class="card" {

@@ -206,6 +206,7 @@ pub fn audit_page(p: &Page, entries: &[AuditEntry], query: &str) -> String {
                     form class="find end" method="get" action="/audit" role="search" {
                         input type="search" name="q" value=(query) placeholder=(tx("kullanıcı, adres ya da eylem")) aria-label=(tx("Kayıtları süz"));
                     }
+                    a class="btn sm" href={ "/audit.csv" @if !query.is_empty() { "?q=" (crate::view::enc(query)) } } { (tx("CSV indir")) }
                 }
                 @if entries.is_empty() {
                     p class="empty" {

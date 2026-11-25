@@ -20,7 +20,7 @@ use crate::view::{self, enc, Current, FieldErrors, NewGuestForm, Page};
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct PageQuery {
-    q: String,
+    pub(crate) q: String,
     notice: Option<String>,
     error: Option<String>,
     tab: String,

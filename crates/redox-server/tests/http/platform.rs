@@ -214,3 +214,23 @@ async fn the_interface_and_messages_follow_the_chosen_language() {
     let (_, _, back) = send(&app, request(Method::GET, "/").header(COOKIE, "lang=tr").body(Body::empty()).unwrap()).await;
     assert!(back.contains("Genel Bakış"), "çerez varsayılanı ezer");
 }
+
+#[tokio::test]
+async fn usage_and_the_audit_log_are_exported_as_csv() {
+    let (app, state) = setup_real();
+    state.mutate(|c| c.record_usage(102, Some((3 << 20, 0)), 1_700_000_000));
+    let (status, headers, body) = send(&app, request(Method::GET, "/usage.csv").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers[CONTENT_TYPE].to_str().unwrap().starts_with("text/csv") && headers["content-disposition"].to_str().unwrap().contains("redox-usage.csv"));
+    assert!(body.starts_with("vmid,name,kind,pool,since,") && body.lines().count() == state.snapshot().guests.len() + 1, "{body}");
+    let (status, _, api_body) = send(&app, request(Method::GET, "/api/v1/usage.csv").body(Body::empty()).unwrap()).await;
+    assert_eq!((status, api_body), (StatusCode::OK, body));
+    assert!(page(&app, "/guests/102").await.contains(r#"href="/usage.csv""#));
+
+    // Denetim günlüğü: önce bir iz bırakılır, sonra indirilir; sayfadaki bağlantı süzgeci taşır.
+    let _ = post_ok(&app, "/guests/103/snapshots", "name=once").await;
+    let (status, _, log) = send(&app, request(Method::GET, "/audit.csv").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(log.starts_with("time,user,address,action,ok") && log.contains("POST /guests/103/snapshots"), "{log}");
+    assert!(page(&app, "/audit?q=snapshots").await.contains(r#"href="/audit.csv?q=snapshots""#));
+}

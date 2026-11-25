@@ -37,6 +37,7 @@ pub fn routes() -> Router<AppState> {
         .route("/guests/{vmid}/usage", get(usage).delete(usage_reset))
         .route("/guests/{vmid}/filesystems", get(filesystems))
         .route("/usage", get(usage_all))
+        .route("/usage.csv", get(usage_csv))
         .route("/guests/{vmid}/move", post(storage_move))
         .route("/guests/{vmid}/disks/{id}", delete_route(disk_remove))
         .route("/guests/{vmid}/exec", post(exec))
@@ -50,6 +51,7 @@ pub fn routes() -> Router<AppState> {
         .route("/guests/{vmid}/detach", post(guest_detach))
         .route("/backups/{id}/test", post(backup_test))
         .route("/backups/archive", get(backup_archive))
+        .route("/backups/forecast", get(backup_forecast))
         .route("/approvals", get(approvals))
         .route("/maintenance", get(maintenance).post(maintenance_set))
         .route("/replicas", get(replicas).post(replica_put))
@@ -458,6 +460,14 @@ async fn backup_files(
 }
 
 /// Yedeği geçici bir konuk olarak açıp sınar; sonuç yedeğin kaydına ve görev günlüğüne yazılır.
+/// Yedek alanının doluluk tahmini; yeterli yedek yoksa `null`.
+async fn backup_forecast(State(st): State<AppState>) -> Json<serde_json::Value> {
+    Json(match st.snapshot().backup_forecast(crate::state::now()) {
+        Some((storage, f)) => json!({ "storage": storage, "mb_per_day": f.mb_per_day, "days_left": f.days_left }),
+        None => serde_json::Value::Null,
+    })
+}
+
 /// Arşiv: yerelde silinmiş ama kopya hedefinde saklanan yedekler.
 async fn backup_archive(State(st): State<AppState>) -> Json<Vec<Backup>> {
     Json(st.snapshot().archive)
@@ -626,6 +636,11 @@ async fn filesystems(State(st): State<AppState>, Path(vmid): Path<VmId>) -> Resu
 async fn usage(State(st): State<AppState>, Path(vmid): Path<VmId>) -> Result<Json<serde_json::Value>, ApiError> {
     let c = st.snapshot();
     Ok(Json(usage_json(&c, c.guest(vmid)?)))
+}
+
+/// Bütün konukların tüketimi, CSV olarak.
+async fn usage_csv(State(st): State<AppState>) -> Response {
+    ([(axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8")], crate::csv::usage(&st.snapshot())).into_response()
 }
 
 /// Bütün konukların tüketimi (faturalama için dışa aktarım).
