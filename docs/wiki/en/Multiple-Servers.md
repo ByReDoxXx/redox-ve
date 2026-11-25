@@ -34,7 +34,11 @@ redox replica remove <peer> <id>
 
 A copy of the peer's virtual machine or container is refreshed on this server regularly; the source keeps running. The copy is a
 stopped guest named `<name>-kopya`. If the source server dies **you** start the copy here; you lose what was written
-since the last run. A running copy is never overwritten. Every run copies the whole disk (not incremental).
+since the last run. A running copy is never overwritten. **Incremental:** for virtual machines, after the first run only the 4 MiB blocks that changed are downloaded; the
+rest is taken from the old copy, and every downloaded block is verified by its SHA-256 hash. The *Replication* card
+shows how many blocks the last run downloaded. The source server still reads the whole disk on every run (to hash
+it); the saving is on the network. If the incremental transfer fails for any reason, that disk is downloaded in full
+automatically. Containers are copied in full on every run.
 
 ## Maintenance mode
 

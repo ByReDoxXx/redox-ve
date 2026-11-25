@@ -387,6 +387,29 @@ impl AppState {
         })
     }
 
+    /// Yedekteki diskin ham içeriğinin önbellek dosyası: artımlı çoğaltmada bloklar buradan okunur. İlk
+    /// istekte üretilir, yedek silinince kaldırılır.
+    pub fn backup_raw_cache(&self, id: &str, disk: u8) -> Result<std::path::PathBuf, Error> {
+        let backup = self.lock().backup(id)?.clone();
+        if disk != 0 && !backup.disks.iter().any(|d| d.id == disk) {
+            return Err(Error::InvalidSpec(format!("bu yedekte {disk} numaralı ek disk yok")));
+        }
+        let cache = self.raw_cache_path(id, disk).ok_or_else(|| Error::InvalidSpec("bu sürücü yedek dosyası tutmuyor (gerçek sürücü gerekir)".to_string()))?;
+        if !cache.is_file() {
+            let building = cache.with_extension("hazirlaniyor");
+            self.driver().backup_raw(id, disk, &building).and_then(|()| std::fs::rename(&building, &cache).map_err(|e| format!("{} yerine konamadı: {e}", cache.display()))).map_err(|e| {
+                let _ = std::fs::remove_file(&building);
+                Error::Driver(e)
+            })?;
+        }
+        Ok(cache)
+    }
+
+    fn raw_cache_path(&self, id: &str, disk: u8) -> Option<std::path::PathBuf> {
+        let base = self.driver().backup_file(id)?;
+        Some(base.parent()?.join(format!(".{id}.disk{disk}.ham")))
+    }
+
     /// Yedekteki olağan dışı değişim uyarısını kapatır; kimin kapattığı görev günlüğüne yazılır.
     pub fn backup_ack(&self, id: &str, user: &str) -> Result<(), Error> {
         self.mutate(|c| {
@@ -435,6 +458,12 @@ impl AppState {
         let backup = self.lock().backup(id)?.clone();
         let others = self.offsite_others(id);
         let outcome = self.driver().delete_backup(id);
+        // Artımlı çoğaltma için üretilmiş ham önbellekler yedekle birlikte gider.
+        for disk in std::iter::once(0).chain(backup.disks.iter().map(|d| d.id)) {
+            if let Some(cache) = self.raw_cache_path(id, disk) {
+                let _ = std::fs::remove_file(cache);
+            }
+        }
         self.mutate(|c| {
             let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
             if outcome.is_ok() {

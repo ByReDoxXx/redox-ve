@@ -185,6 +185,33 @@ pub(super) async fn a_running_vm_is_replicated_from_a_peer_without_touching_it()
     assert_eq!(c.guests.len(), 1, "eski kopya silinir: {:?}", c.guests.iter().map(|g| g.vmid).collect::<Vec<_>>());
     assert_eq!(std::fs::read_to_string(cfg.disk_path(second)).unwrap(), "ikinci-surum");
 
+    assert_eq!(c.replicas[0].delta, Some((1, 1)), "küçük disk tek bloktur ve değişmiştir");
+
+    // Artımlı: üç blokluk diskin yalnızca ortadaki bloğu değişir; yalnızca o blok indirilir.
+    let block = redox_server::delta::BLOCK as usize;
+    let mut content = vec![0x41u8; 2 * block + 4096];
+    std::fs::write(peer_cfg.disk_path(source), &content).unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    {
+        let hub = hub.clone();
+        tokio::task::spawn_blocking(move || hub.replica_run("ankara", source)).await.unwrap().unwrap();
+    }
+    assert_eq!(hub.snapshot().replicas[0].delta, Some((3, 3)), "içerik tümüyle değişti: üç blok da iner");
+    content[block + 100] = 0x42;
+    std::fs::write(peer_cfg.disk_path(source), &content).unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    {
+        let hub = hub.clone();
+        tokio::task::spawn_blocking(move || hub.replica_run("ankara", source)).await.unwrap().unwrap();
+    }
+    let c = hub.snapshot();
+    let second = c.replicas[0].standby.unwrap();
+    assert_eq!(c.replicas[0].delta, Some((1, 3)), "yalnızca değişen blok indirildi");
+    assert_eq!(std::fs::read(cfg.disk_path(second)).unwrap(), content, "kopya kaynağın aynısı");
+    assert_eq!(c.guests.len(), 1);
+    assert!(std::fs::read_dir(peer_cfg.backups_dir()).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".ham")), "kaynakta ham önbellek kalmaz");
+    assert!(std::fs::read_dir(cfg.cloud_dir()).unwrap().next().is_none(), "hedefte geçici dosya kalmaz");
+
     // Devralma: kopya başlatılır; çalışan kopyanın üzerine yazılmaz.
     hub.run_action(second, Action::Start, "admin").unwrap();
     let refused = {

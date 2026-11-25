@@ -551,7 +551,10 @@ pub fn render(view: View, v: &Value) -> String {
             rows(&|r| {
                 let state = match (r["error"].as_str(), r["last_ok"].as_u64()) {
                     (Some(e), _) => format!("HATA: {e}"),
-                    (None, Some(_)) => format!("yedek kopya: {}", n(r, "standby")),
+                    (None, Some(_)) => match r["delta"].as_array().filter(|d| d.len() == 2) {
+                        Some(d) => format!("yedek kopya: {}  (son tur: {}/{} blok indirildi)", n(r, "standby"), d[0], d[1]),
+                        None => format!("yedek kopya: {}", n(r, "standby")),
+                    },
                     (None, None) => "henüz çoğaltılmadı".to_string(),
                 };
                 format!("{:<14} {:<6} her {:>5} dk   {state}", s(r, "peer"), n(r, "source"), n(r, "every_min"))

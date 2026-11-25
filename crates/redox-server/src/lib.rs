@@ -41,6 +41,7 @@ pub mod view_ops;
 use std::net::SocketAddr;
 
 pub mod csv;
+pub mod delta;
 pub mod i18n;
 
 use axum::extract::{ConnectInfo, Request, State};

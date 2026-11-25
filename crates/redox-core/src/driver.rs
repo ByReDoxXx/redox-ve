@@ -176,6 +176,21 @@ pub trait Hypervisor: Send + Sync {
         None
     }
 
+    /// Yedekteki bir diskin ham içeriğini `dest` dosyasına yazar (artımlı çoğaltma blokları bundan okunur).
+    fn backup_raw(&self, _id: &str, _disk: u8, _dest: &std::path::Path) -> Result<(), String> {
+        Err("bu sürücü yedeğin ham içeriğini veremiyor".to_string())
+    }
+
+    /// Kapalı konuğun bir diskinin ham içeriğini `dest` dosyasına yazar.
+    fn disk_raw(&self, _guest: &Guest, _disk: u8, _dest: &std::path::Path) -> Result<(), String> {
+        Err("bu sürücü diskin ham içeriğini veremiyor".to_string())
+    }
+
+    /// Ham içeriği, içe aktarılabilir bir disk imajına çevirir (biçim tahmine bırakılmaz).
+    fn raw_to_image(&self, _raw: &std::path::Path, _dest: &std::path::Path) -> Result<(), String> {
+        Err("bu sürücü ham içerikten imaj üretemiyor".to_string())
+    }
+
     /// Çalışan konuğun köprüdeki kartlarından açılıştan beri (aldığı, gönderdiği) bayt; ölçülemiyorsa `None`.
     fn net_counters(&self, _guest: &Guest) -> Option<(u64, u64)> {
         None

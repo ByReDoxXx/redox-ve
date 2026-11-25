@@ -916,6 +916,26 @@ impl Hypervisor for QemuDriver {
         }
     }
 
+    fn backup_raw(&self, id: &str, disk: u8, dest: &Path) -> Result<(), String> {
+        if !valid_backup_id(id) {
+            return Err(format!("geçersiz yedek kimliği: {id}"));
+        }
+        if self.store.has(id) {
+            return self.unpack(id, disk, dest);
+        }
+        let source = self.backup_part(id, disk)?;
+        self.img(&["convert".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-O".as_ref(), "raw".as_ref(), source.as_os_str(), dest.as_os_str()], "yedeğin ham içeriği çıkarılamadı")
+    }
+
+    fn disk_raw(&self, guest: &Guest, disk: u8, dest: &Path) -> Result<(), String> {
+        let source = self.guest_disk(guest, disk);
+        self.img(&["convert".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-O".as_ref(), "raw".as_ref(), source.as_os_str(), dest.as_os_str()], "diskin ham içeriği çıkarılamadı")
+    }
+
+    fn raw_to_image(&self, raw: &Path, dest: &Path) -> Result<(), String> {
+        self.raw_to_qcow2(raw, dest, false, "ham içerikten imaj üretilemedi")
+    }
+
     fn net_counters(&self, guest: &Guest) -> Option<(u64, u64)> {
         tap_counters(&self.cfg.sys_net, &self.guest_taps(guest.vmid))
     }

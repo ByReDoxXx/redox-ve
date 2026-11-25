@@ -64,6 +64,8 @@ pub fn routes() -> Router<AppState> {
         .route("/backups/{id}/push", post(backup_push))
         .route("/backups/{id}/verify", post(backup_verify))
         .route("/backups/{id}/download", get(crate::ui_ops::backup_download))
+        .route("/backups/{id}/blocks", get(crate::ui_ops::backup_blocks))
+        .route("/backups/{id}/block", get(crate::ui_ops::backup_block))
         .route("/backups/{id}/machine", get(backup_machine))
         .route("/backups/{id}/files", get(backup_files))
         .route("/backups/{id}/file", get(crate::ui_ops::backup_file))

@@ -148,10 +148,27 @@ impl AppState {
             }
             let _ = std::fs::remove_file(&machine_path);
         };
+        // Çoğaltmada önceki yedek kopya duruyorsa yalnızca değişen bloklar indirilir; olmazsa tam kopyaya dönülür.
+        let base = if replica { self.replica_base(peer_name, vmid) } else { None };
+        if replica {
+            self.mutate(|c| c.note_replica_delta(peer_name, vmid, 0, 0, true));
+        }
+        let fetch = |disk: u8, dest: &Path| -> Result<(), String> {
+            if let Some(old) = base.as_ref().filter(|old| disk == 0 || old.hw.disks.iter().any(|d| d.id == disk)) {
+                match self.fetch_delta(peer, &backup, disk, old, dest) {
+                    Ok((fetched, total)) => {
+                        self.mutate(|c| c.note_replica_delta(peer_name, vmid, fetched, total, false));
+                        return Ok(());
+                    }
+                    Err(e) => eprintln!("uyarı: {peer_name}/{vmid} disk {disk} artımlı aktarılamadı, tamamı indirilecek: {e}"),
+                }
+            }
+            peer.download_backup_disk(&backup, disk, dest).map(|_| ())
+        };
         let downloaded = (|| {
-            peer.download_backup(&backup, image_path)?;
+            fetch(0, image_path)?;
             for disk in &remote.hw.disks {
-                peer.download_backup_disk(&backup, disk.id, &extra_path(disk.id)).map_err(|e| format!("ek disk {} indirilemedi: {e}", disk.id))?;
+                fetch(disk.id, &extra_path(disk.id)).map_err(|e| format!("ek disk {} indirilemedi: {e}", disk.id))?;
             }
             if wants_machine { peer.download_machine(&backup, &machine_path) } else { Ok(false) }
         })();
@@ -251,6 +268,28 @@ impl AppState {
             }
         }
         Ok(id)
+    }
+
+    /// Çoğaltmanın önceki yedek kopyası; artımlı aktarımın temeli olabilmesi için kapalı bir sanal makine olmalıdır.
+    fn replica_base(&self, peer_name: &str, source: VmId) -> Option<Guest> {
+        let c = self.lock();
+        let standby = c.replicas.iter().find(|r| r.peer == peer_name && r.source == source)?.standby?;
+        c.guest(standby).ok().filter(|g| g.kind == redox_core::GuestKind::Vm && g.status == redox_core::GuestStatus::Stopped && g.lock.is_none()).cloned()
+    }
+
+    /// Yedekteki diski, eski kopyanın aynı diskinden yola çıkarak `dest` imajına getirir: eski disk ham olarak
+    /// dökülür, kaynakla özeti tutmayan bloklar indirilir, sonuç imaja çevrilir. (indirilen, toplam) blok döner.
+    fn fetch_delta(&self, peer: &crate::peers::Peer, backup: &str, disk: u8, old: &Guest, dest: &Path) -> Result<(u64, u64), String> {
+        let work = dest.with_extension(format!("ham{disk}"));
+        let done = (|| {
+            self.driver().disk_raw(old, disk, &work)?;
+            let (size, hashes) = peer.backup_blocks(backup, disk)?;
+            let counts = crate::delta::patch(&work, size, &hashes, &|index| peer.download_block(backup, disk, index))?;
+            self.driver().raw_to_image(&work, dest)?;
+            Ok(counts)
+        })();
+        let _ = std::fs::remove_file(&work);
+        done
     }
 
     /// Eş sunucudaki konteyneri yedeği üzerinden buraya kopyalar: aynı dağıtımın şablonundan boş bir konteyner

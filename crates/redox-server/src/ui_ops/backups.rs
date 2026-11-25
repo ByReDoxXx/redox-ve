@@ -272,6 +272,47 @@ pub struct DownloadQuery {
     disk: u8,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct BlockQuery {
+    disk: u8,
+    index: u64,
+}
+
+/// Artımlı çoğaltma: yedekteki diskin blok özetleri (yalnızca yönetici).
+pub async fn backup_blocks(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>, Query(query): Query<BlockQuery>) -> Response {
+    if !me.can_write() {
+        return (StatusCode::FORBIDDEN, tx("Yedek indirmek için yönetici yetkisi gerekir.")).into_response();
+    }
+    let listed = tokio::task::spawn_blocking(move || {
+        let cache = st.backup_raw_cache(&id, query.disk).map_err(|e| e.to_string())?;
+        crate::delta::block_hashes(&cache)
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    match listed {
+        Ok((size, hashes)) => axum::Json(serde_json::json!({ "size": size, "block": crate::delta::BLOCK, "hashes": hashes })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, crate::i18n::tfmt(e)).into_response(),
+    }
+}
+
+/// Artımlı çoğaltma: yedekteki diskin bir bloğu (yalnızca yönetici).
+pub async fn backup_block(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>, Query(query): Query<BlockQuery>) -> Response {
+    if !me.can_write() {
+        return (StatusCode::FORBIDDEN, tx("Yedek indirmek için yönetici yetkisi gerekir.")).into_response();
+    }
+    let read = tokio::task::spawn_blocking(move || {
+        let cache = st.backup_raw_cache(&id, query.disk).map_err(|e| e.to_string())?;
+        crate::delta::block(&cache, query.index)
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    match read {
+        Ok(data) => ([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], data).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, crate::i18n::tfmt(e)).into_response(),
+    }
+}
+
 pub async fn backup_download(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>, Query(query): Query<DownloadQuery>) -> Response {
     use std::io::Read;
     let disk = query.disk;

@@ -164,6 +164,18 @@ impl Hypervisor for HostDriver {
         self.of(guest).ok()?.io_counters(guest)
     }
 
+    fn backup_raw(&self, id: &str, disk: u8, dest: &std::path::Path) -> Result<(), String> {
+        if id.starts_with("ct-") { Err("konteyner yedeği blok blok aktarılmaz".to_string()) } else { self.vm.backup_raw(id, disk, dest) }
+    }
+
+    fn disk_raw(&self, guest: &Guest, disk: u8, dest: &std::path::Path) -> Result<(), String> {
+        self.of(guest)?.disk_raw(guest, disk, dest)
+    }
+
+    fn raw_to_image(&self, raw: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+        self.vm.raw_to_image(raw, dest)
+    }
+
     fn net_counters(&self, guest: &Guest) -> Option<(u64, u64)> {
         self.of(guest).ok()?.net_counters(guest)
     }

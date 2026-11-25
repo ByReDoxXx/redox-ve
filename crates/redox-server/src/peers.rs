@@ -253,6 +253,23 @@ impl Peer {
     }
 
     /// Yedek dosyasını indirir: önce geçici ada, bitince asıl ada. İndirilen bayt sayısını döndürür.
+    /// Yedekteki diskin ham boyutu ve blok özetleri (artımlı çoğaltma).
+    pub fn backup_blocks(&self, id: &str, disk: u8) -> Result<(u64, Vec<String>), String> {
+        let v = self.request("GET", &format!("/api/v1/backups/{id}/blocks?disk={disk}"), Duration::from_secs(3600)).call().map_err(peer_error)?.into_json::<serde_json::Value>().map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())?;
+        let size = v["size"].as_u64().ok_or("eş sunucu disk boyutunu bildirmedi")?;
+        let hashes = v["hashes"].as_array().ok_or("eş sunucu blok özetlerini bildirmedi")?.iter().filter_map(|h| h.as_str().map(str::to_string)).collect();
+        Ok((size, hashes))
+    }
+
+    /// Yedekteki diskin bir bloğu.
+    pub fn download_block(&self, id: &str, disk: u8, index: u64) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let response = self.request("GET", &format!("/api/v1/backups/{id}/block?disk={disk}&index={index}"), Duration::from_secs(300)).call().map_err(peer_error)?;
+        let mut data = Vec::new();
+        response.into_reader().take(crate::delta::BLOCK + 1).read_to_end(&mut data).map_err(|e| format!("blok indirilemedi: {e}"))?;
+        Ok(data)
+    }
+
     pub fn download_backup(&self, id: &str, dest: &std::path::Path) -> Result<u64, String> {
         self.download_backup_disk(id, 0, dest)
     }

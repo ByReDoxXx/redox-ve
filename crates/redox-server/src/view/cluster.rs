@@ -249,7 +249,7 @@ fn replicas_card(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
     html! {
         @if !peers.is_empty() || !list.is_empty() {
             div class="card" {
-                header { h2 { (tx("Çoğaltma")) } (tip("Eş sunucudaki bir konuğun kopyasını burada düzenli tazeler. O sunucu ölürse kopyayı buradan başlatırsınız.")) span class="note" { (list.len()) " / " (redox_core::replicas::MAX_REPLICAS) } }
+                header { h2 { (tx("Çoğaltma")) } (tip("Eş sunucudaki bir konuğun kopyasını burada düzenli tazeler; her turda yalnızca değişen bloklar indirilir. O sunucu ölürse kopyayı buradan başlatırsınız.")) span class="note" { (list.len()) " / " (redox_core::replicas::MAX_REPLICAS) } }
                 @if list.is_empty() {
                     p class="empty" { (tx("Çoğaltma yok. Eş sunucudaki bir sanal makinenin kopyası burada düzenli tazelenir; o sunucu ölürse kopyayı buradan başlatırsınız.")) }
                 } @else {
@@ -264,6 +264,7 @@ fn replicas_card(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
                                     None => span class="dim" { "-" },
                                 }
                                 @if r.running { " " span class="pill idle" { (tx("sürüyor")) } }
+                                @if let Some((fetched, total)) = r.delta.filter(|d| d.1 > 0) { " " span class="tag" title=(tx("Son turda ağdan indirilen blok / toplam blok (4 MiB). Değişmeyen bloklar eski kopyadan alınır.")) { (fetched) " / " (total) (tx(" blok")) } }
                                 @if let Some(e) = &r.error { " " span class="pill err" title=(e) { (icon("alert")) "hata" } }
                             }
                             td class="mono muted" { @match r.last_ok { Some(ts) => (datetime(ts)), None => "-" } }

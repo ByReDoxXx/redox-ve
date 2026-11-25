@@ -34,7 +34,10 @@ redox replica remove <eş> <kimlik>
 
 Eşteki sanal makinenin ya da konteynerin kopyası bu sunucuda düzenli tazelenir; kaynak çalışmaya devam eder. Kopya `<ad>-kopya` adıyla
 kapalı durur. Kaynak sunucu ölürse kopyayı buradan **siz** başlatırsınız; kayıp, son turdan beri yazılanlardır.
-Çalışan bir kopyanın üzerine yazılmaz. Her tur diskin tamamını kopyalar (artımlı değildir).
+Çalışan bir kopyanın üzerine yazılmaz. **Artımlı:** sanal makinelerde ilk turdan sonra yalnızca değişen 4 MiB'lik bloklar indirilir; değişmeyenler eski
+kopyadan alınır ve indirilen her blok SHA-256 özetiyle doğrulanır. *Çoğaltma* kartı son turda kaç bloğun indiğini
+gösterir. Kaynak sunucu yine de her turda diskin tamamını okur (özet çıkarmak için); kazanç ağdadır. Artımlı aktarım
+bir nedenle başarısız olursa o disk kendiliğinden tam olarak indirilir. Konteynerler her turda tam kopyalanır.
 
 ## Bakım kipi
 

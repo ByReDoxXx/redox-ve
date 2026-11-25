@@ -30,6 +30,9 @@ pub struct Replica {
     /// Son denemenin hatası; başarılıysa `None`.
     #[serde(default)]
     pub error: Option<String>,
+    /// Son turda ağdan indirilen ve toplam blok sayısı (artımlı çoğaltma); tam kopyada `None`.
+    #[serde(default)]
+    pub delta: Option<(u64, u64)>,
     /// Şu an bir tur sürüyor mu? Dosyaya yazılmaz: sunucu yeniden başlayınca yarım kalan tur unutulur.
     #[serde(skip)]
     pub running: bool,
@@ -50,7 +53,7 @@ impl Cluster {
             Some(r) => r.every_min = every_min,
             None if full => return Err(Error::InvalidSpec(format!("en fazla {MAX_REPLICAS} çoğaltma tanımlanabilir"))),
             None => {
-                self.replicas.push(Replica { peer: peer.to_string(), source, every_min, standby: None, last_ok: None, last_try: None, error: None, running: false });
+                self.replicas.push(Replica { peer: peer.to_string(), source, every_min, standby: None, last_ok: None, last_try: None, error: None, delta: None, running: false });
                 self.replicas.sort_by(|a, b| (&a.peer, a.source).cmp(&(&b.peer, b.source)));
             }
         }
@@ -85,6 +88,14 @@ impl Cluster {
             due.push(r.clone());
         }
         due
+    }
+
+    /// Sürmekte olan turda bir diskin artımlı aktarım sayılarını ekler; `reset` turun başında sayaçları sıfırlar.
+    pub fn note_replica_delta(&mut self, peer: &str, source: VmId, fetched: u64, total: u64, reset: bool) {
+        if let Some(r) = self.replica_mut(peer, source) {
+            let (f, t) = if reset { (0, 0) } else { r.delta.unwrap_or((0, 0)) };
+            r.delta = if reset && total == 0 { None } else { Some((f + fetched, t + total)) };
+        }
     }
 
     /// Turun sonucunu işler. Başarılıysa yeni kopya yedek kopya olur ve **eski kopyanın kimliği** döner
