@@ -365,7 +365,7 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         div class="field" {
                             label for="pci" { (tx("PCI aygıtları")) }
                             input id="pci" form="hw" name="pci" type="text" value=(f.pci) placeholder="0000:01:00.0" autocomplete="off" spellcheck="false" disabled[off];
-                            span class="hint" tabindex="0" role="note" { (tx("lspci -D çıktısındaki adres. Sunucuda IOMMU açık ve aygıt vfio-pci sürücüsüne bağlı olmalıdır.")) }
+                            span class="hint" tabindex="0" role="note" { (tx("lspci -D çıktısındaki adres. Sunucuda IOMMU açık ve aygıt vfio-pci sürücüsüne bağlı olmalıdır. Paylaşılan ekran kartı (vGPU) için adres yerine aracılı aygıtın kimliğini (mdev UUID) yazın; aynı kart böylece birkaç konuğa bölünür.")) }
                         }
                     }
                 }

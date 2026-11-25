@@ -321,11 +321,12 @@ fn passthrough_devices_are_attached() {
     let mut g = guest(None);
     assert!(!args(&cfg(), &g).join(" ").contains("usb-host"), "aktarılan aygıt yokken yalnızca işaretçi aygıtı vardır");
     g.hw.usb = vec!["046d:c52b".into(), "0951:1666".into(), "bozuk,x=1".into()];
-    g.hw.pci = vec!["0000:01:00.0".into(), "0000:01:00.0,x-vga=on".into()];
+    g.hw.pci = vec!["0000:01:00.0".into(), "0000:01:00.0,x-vga=on".into(), "83b8f4f2-509f-382f-3c1e-e6bfe0fa1001".into()];
     let a = args(&cfg(), &g).join(" ");
     assert_eq!(a.matches("-device qemu-xhci,id=xhci").count(), 1, "tek denetleyici");
     assert!(a.contains("-device usb-host,bus=xhci.0,vendorid=0x046d,productid=0xc52b") && a.contains("vendorid=0x0951,productid=0x1666"), "{a}");
     assert!(a.contains("-device vfio-pci,host=0000:01:00.0"), "{a}");
+    assert!(a.contains("-device vfio-pci,sysfsdev=/sys/bus/mdev/devices/83b8f4f2-509f-382f-3c1e-e6bfe0fa1001"), "{a}");
     assert!(!a.contains("x-vga") && !a.contains("x=1"), "geçersiz kimlik argümana girmez");
 }
 

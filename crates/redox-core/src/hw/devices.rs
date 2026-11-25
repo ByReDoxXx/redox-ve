@@ -16,6 +16,17 @@ pub fn valid_usb_id(id: &str) -> bool {
     hex_fields(id, &[':'], &[4, 4])
 }
 
+/// Aracılı aygıt (mdev) kimliği: paylaşılan ekran kartının (vGPU) bu konuğa ayrılmış dilimi.
+/// `/sys/bus/mdev/devices/` altındaki UUID, küçük harfle.
+pub fn valid_mdev_uuid(id: &str) -> bool {
+    hex_fields(id, &['-'], &[8, 4, 4, 4, 12])
+}
+
+/// Aktarılabilir aygıt: PCI adresi ya da aracılı aygıt kimliği.
+pub fn valid_passthrough(id: &str) -> bool {
+    valid_pci_addr(id) || valid_mdev_uuid(id)
+}
+
 /// PCI adresi: `0000:01:00.0` (alan:veri yolu:aygıt.işlev).
 pub fn valid_pci_addr(addr: &str) -> bool {
     match addr.rsplit_once('.') {

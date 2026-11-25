@@ -183,6 +183,10 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     for addr in g.hw.pci.iter().filter(|p| redox_core::hw::valid_pci_addr(p)) {
         push(&["-device", &format!("vfio-pci,host={addr}")]);
     }
+    // Aracılı aygıt (paylaşılan ekran kartının dilimi): aynı kart birkaç konuğa bölünür.
+    for uuid in g.hw.pci.iter().filter(|p| redox_core::hw::valid_mdev_uuid(p)) {
+        push(&["-device", &format!("vfio-pci,sysfsdev=/sys/bus/mdev/devices/{uuid}")]);
+    }
     // Ek ağ kartları: her biri kendi ağına, kimlikten türetilen ayrı bir adresle.
     for (i, spec) in g.hw.nics.iter().enumerate() {
         let Some((network, vlan)) = redox_core::hw::parse_nic(spec) else { continue };

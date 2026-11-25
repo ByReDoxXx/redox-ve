@@ -267,7 +267,7 @@ impl Hardware {
         if let Some(bad) = self.usb.iter().find(|u| !valid_usb_id(u)) {
             return Err(format!("geçersiz USB kimliği \"{bad}\"; lsusb çıktısındaki gibi yazın, örn. 046d:c52b"));
         }
-        if let Some(bad) = self.pci.iter().find(|p| !valid_pci_addr(p)) {
+        if let Some(bad) = self.pci.iter().find(|p| !valid_passthrough(p)) {
             return Err(format!("geçersiz PCI adresi \"{bad}\"; lspci -D çıktısındaki gibi yazın, örn. 0000:01:00.0"));
         }
         if self.secure_boot && self.firmware != Firmware::Uefi {

@@ -259,6 +259,12 @@ fn passthrough_ids_are_strict() {
     for bad in ["", "01:00.0", "0000:01:00", "0000:01:00.8", "0000:01:00.0,x-vga=on", "0000:1:00.0", "0000.01.00.0"] {
         assert!(!valid_pci_addr(bad), "{bad}");
     }
+    // Paylaşılan ekran kartı dilimi (mdev) de aynı alana yazılır.
+    assert!(valid_mdev_uuid("83b8f4f2-509f-382f-3c1e-e6bfe0fa1001") && valid_passthrough("83b8f4f2-509f-382f-3c1e-e6bfe0fa1001"));
+    for bad in ["83B8F4F2-509f-382f-3c1e-e6bfe0fa1001", "83b8f4f2-509f-382f-3c1e", "83b8f4f2-509f-382f-3c1e-e6bfe0fa1001,x=1", "../../etc"] {
+        assert!(!valid_passthrough(bad), "{bad}");
+    }
+    assert!(Hardware { pci: vec!["83b8f4f2-509f-382f-3c1e-e6bfe0fa1001".into()], ..Default::default() }.validate(GuestKind::Vm).is_ok());
     let hw = Hardware { usb: vec!["046d:c52b".into()], pci: vec!["0000:01:00.0".into()], ..Default::default() };
     assert!(hw.validate(GuestKind::Vm).is_ok());
     assert!(hw.validate(GuestKind::Ct).unwrap_err().contains("yalnızca sanal makinelerde"));
