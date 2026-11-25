@@ -13,6 +13,14 @@ use redox_server::qemu::{QemuConfig, QemuDriver};
 use redox_server::state::{load_state, now, recover};
 use redox_server::{app, cli, AppState};
 
+/// Komut satırı çıktısı: `REDOX_LANG=en` ya da `--lang en` ile İngilizce.
+macro_rules! say {
+    ($($arg:tt)*) => { println!("{}", redox_server::i18n::cli_text(&format!($($arg)*))) };
+}
+macro_rules! complain {
+    ($($arg:tt)*) => { eprintln!("{}", redox_server::i18n::cli_text(&format!($($arg)*))) };
+}
+
 const DEFAULT_USERS: &str = "redox-users.json";
 const REFRESH: Duration = Duration::from_secs(5);
 
@@ -231,12 +239,12 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
                 match built {
                     Ok(d) => {
                         if d.config().idmap.is_none() {
-                            eprintln!("UYARI: hizmet kök olarak çalışıyor; konteynerler yetkili (kimlik eşlemesiz) olur.");
+                            complain!("UYARI: hizmet kök olarak çalışıyor; konteynerler yetkili (kimlik eşlemesiz) olur.");
                         }
                         Some(d)
                     }
                     Err(e) => {
-                        eprintln!("Konteyner desteği kapalı: {e}");
+                        complain!("Konteyner desteği kapalı: {e}");
                         None
                     }
                 }
@@ -249,8 +257,8 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
                 driver = driver.with_firewall("nft");
             }
             if !driver.qemu().config().kvm {
-                eprintln!("UYARI: /dev/kvm kullanılamıyor; konuklar yazılım öykünmesiyle (TCG) çok yavaş çalışır.");
-                eprintln!("       Hizmet kullanıcısını kvm grubuna ekleyin: sudo usermod -aG kvm <kullanıcı>");
+                complain!("UYARI: /dev/kvm kullanılamıyor; konuklar yazılım öykünmesiyle (TCG) çok yavaş çalışır.");
+                complain!("       Hizmet kullanıcısını kvm grubuna ekleyin: sudo usermod -aG kvm <kullanıcı>");
             }
             // Gerçek konuk kayıtları kaybolmamalı: durum dosyası zorunlu.
             let state_file = opts.state_file.clone().unwrap_or_else(|| opts.data_dir.join("state.json"));
@@ -289,7 +297,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     let (driver, mut cluster, state_file, images) = prepare(&opts)?;
     let recovered = recover(&mut cluster, now());
     if recovered > 0 {
-        eprintln!("{recovered} yarım kalmış görev başarısız olarak kapatıldı.");
+        complain!("{recovered} yarım kalmış görev başarısız olarak kapatıldı.");
     }
     let state = AppState::new(cluster, driver, opts.task_delay, state_file.clone(), auth);
     state.load_metrics();
@@ -297,50 +305,51 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("{addr} adresi dinlenemedi: {e}"))?;
-    println!("RedoX VE http://{addr} adresinde çalışıyor (sürücü: {}).", state.driver_name());
-    println!("Kullanıcılar: {}", opts.users.display());
+    say!("RedoX VE http://{addr} adresinde çalışıyor (sürücü: {}).", state.driver_name());
+    say!("Kullanıcılar: {}", opts.users.display());
     match &state_file {
-        Some(p) => println!("Durum {} dosyasında saklanıyor.", p.display()),
-        None => println!("Durum yalnızca bellekte; kalıcı olması için --state DOSYA verin."),
+        Some(p) => say!("Durum {} dosyasında saklanıyor.", p.display()),
+        None => say!("Durum yalnızca bellekte; kalıcı olması için --state DOSYA verin."),
     }
     if let Some(url) = &opts.alert_webhook {
         state.alerts().set_webhook(url)?;
-        println!("Uyarılar webhook'a gönderilecek.");
+        say!("Uyarılar webhook'a gönderilecek.");
     }
     if let Some(code) = &opts.lang {
         let lang = redox_server::i18n::Lang::parse(code).ok_or_else(|| format!("--lang tr ya da en olmalı: {code}"))?;
         state.set_default_lang(lang);
+        redox_server::i18n::set_background(lang);
     }
     if let Some(rate) = opts.api_rate.filter(|r| *r > 0) {
         state.set_api_rate(rate.min(u32::MAX as u64) as u32);
-        println!("API hız sınırı: kullanıcı başına dakikada {rate} istek.");
+        say!("API hız sınırı: kullanıcı başına dakikada {rate} istek.");
     }
     if let Some(url) = &opts.alert_ntfy {
         let channel = redox_server::alerts::Channel::ntfy(url)?;
-        println!("Uyarılar gönderilecek: {}", channel.describe());
+        say!("Uyarılar gönderilecek: {}", channel.describe());
         state.alerts().add_channel(channel);
     }
     if let Some(path) = &opts.alert_telegram {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
         let channel = redox_server::alerts::Channel::telegram(&text)?;
-        println!("Uyarılar gönderilecek: {}", channel.describe());
+        say!("Uyarılar gönderilecek: {}", channel.describe());
         state.alerts().add_channel(channel);
     }
     if state.driver().firewall() {
         match state.sync_firewall() {
-            Ok(()) => println!("Konuk güvenlik duvarı açık (nftables, bridge ailesi, tablo: redox)."),
-            Err(e) => eprintln!("UYARI: {e}\n       Hizmetin CAP_NET_ADMIN yetkisi var mı? (AmbientCapabilities=CAP_NET_ADMIN)"),
+            Ok(()) => say!("Konuk güvenlik duvarı açık (nftables, bridge ailesi, tablo: redox)."),
+            Err(e) => complain!("UYARI: {e}\n       Hizmetin CAP_NET_ADMIN yetkisi var mı? (AmbientCapabilities=CAP_NET_ADMIN)"),
         }
     }
     if let Some(path) = &opts.oidc {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
         let config = redox_server::oidc::Config::parse(&text)?;
-        println!("Tek oturum açma açık: {} (eşleşen alan: {}).", config.issuer, config.claim);
+        say!("Tek oturum açma açık: {} (eşleşen alan: {}).", config.issuer, config.claim);
         state.set_oidc(config);
     }
     if opts.four_eyes {
         state.set_four_eyes(true);
-        println!("Dört göz ilkesi açık: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.");
+        say!("Dört göz ilkesi açık: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.");
     }
     if let Some(days) = opts.backup_age_days {
         state.set_backup_age_days(days.min(3650) as u32);
@@ -351,14 +360,14 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
             return Err("--backup-report için e-posta ayarı gerekir (--alert-email DOSYA)".to_string());
         }
         state.set_backup_report(minute);
-        println!("Yedek raporu her gün {time} saatinde e-postayla gönderilecek.");
+        say!("Yedek raporu her gün {time} saatinde e-postayla gönderilecek.");
     }
     if let Some(text) = &opts.backup_test_every {
         let (days, time) = text.split_once('@').unwrap_or((text, "03:00"));
         let days: u32 = days.parse().ok().filter(|d| (1..=365).contains(d)).ok_or_else(|| format!("--backup-test-every GÜN[@SS:DD] biçiminde olmalı (örn. 7@03:00): {text}"))?;
         let minute = redox_core::parse_time(time).ok_or_else(|| format!("--backup-test-every GÜN[@SS:DD] biçiminde olmalı (örn. 7@03:00): {text}"))?;
         state.set_auto_test(days, minute);
-        println!("Her sanal makinenin en yeni yedeği {days} günde bir, {time} saatinden başlayarak açılıp sınanacak.");
+        say!("Her sanal makinenin en yeni yedeği {days} günde bir, {time} saatinden başlayarak açılıp sınanacak.");
     }
     if let Some(secs) = opts.backup_test_secs {
         state.set_boot_test_wait(Duration::from_secs(secs.clamp(5, 3600)));
@@ -366,7 +375,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     // Dosya düzeyinde geri yükleme: guestfish kuruluysa açılır; açıkça verilen yol bulunamazsa hata.
     let guestfish = opts.guestfish_bin.clone().unwrap_or_else(|| "guestfish".to_string());
     if redox_server::guestfs::detect(&guestfish) {
-        println!("Yedeklerin içindeki dosyalar okunabilir (guestfish: {guestfish}).");
+        say!("Yedeklerin içindeki dosyalar okunabilir (guestfish: {guestfish}).");
         state.set_guestfish(Some(guestfish));
     } else if opts.guestfish_bin.is_some() {
         return Err(format!("{guestfish} çalıştırılamadı; --guestfish-bin yolunu denetleyin (sudo apt install libguestfs-tools)"));
@@ -374,7 +383,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     if let Some(path) = &opts.offsite {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
         let config = redox_server::offsite::Config::parse(&text)?;
-        println!("Yedekler sunucu dışına da kopyalanacak: {}", config.describe());
+        say!("Yedekler sunucu dışına da kopyalanacak: {}", config.describe());
         state.set_offsite(config);
     }
     if !opts.offsite_copies.is_empty() && opts.offsite.is_none() {
@@ -383,13 +392,13 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     for path in &opts.offsite_copies {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
         let config = redox_server::offsite::Config::parse(&text)?;
-        println!("Yedeklerin ek kopyası: {}", config.describe());
+        say!("Yedeklerin ek kopyası: {}", config.describe());
         state.add_offsite_copy(config);
     }
     if let Some(path) = &opts.peers {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
         let peers = redox_server::peers::parse_file(&text)?;
-        println!("Birleşik görünüm: {} eş sunucu ({}).", peers.len(), peers.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "));
+        say!("Birleşik görünüm: {} eş sunucu ({}).", peers.len(), peers.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "));
         state.peers().configure(peers);
         // Eşler: 15 saniyede bir düğüm ve konuk listelerini oku.
         let st = state.clone();
@@ -404,7 +413,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     if let Some(path) = &opts.alert_email {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
         let config = redox_server::mail::Config::parse(&text)?;
-        println!("Uyarılar e-postayla gönderilecek: {}", config.describe());
+        say!("Uyarılar e-postayla gönderilecek: {}", config.describe());
         state.alerts().set_email(config);
     }
     // Uyarılar: 15 saniyede bir değişen koşulları ve olayları değerlendir.
@@ -418,20 +427,20 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                 st.dynamic_memory_tick();
                 st.archive_tick();
                 if let Err(e) = st.guards_tick() {
-                    eprintln!("ağ kartı korumaları yüklenemedi: {e}");
+                    complain!("ağ kartı korumaları yüklenemedi: {e}");
                 }
                 let events = st.alerts_tick();
                 for e in &events {
-                    println!("uyarı: {}", e.text(&st.snapshot().name));
+                    say!("uyarı: {}", e.text(&st.snapshot().name));
                 }
                 if let Err(e) = st.alerts().deliver(&st.snapshot().name, &events) {
-                    eprintln!("{e}");
+                    complain!("{e}");
                 }
                 if let Err(e) = st.alerts().deliver_channels(&st.snapshot().name, &events) {
-                    eprintln!("{e}");
+                    complain!("{e}");
                 }
                 if let Err(e) = st.alerts().deliver_email(&st.snapshot().name, &events) {
-                    eprintln!("uyarı e-postası gönderilemedi: {e}");
+                    complain!("uyarı e-postası gönderilemedi: {e}");
                 }
             })
             .await;
@@ -451,7 +460,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                 st.guest_fs_tick();
                 st.replica_tick();
                 if let Some(Err(e)) = st.report_tick(&today, minute) {
-                    eprintln!("yedek raporu gönderilemedi: {e}");
+                    complain!("yedek raporu gönderilemedi: {e}");
                 }
                 st.scheduler_tick(&today, minute)
             })
@@ -460,15 +469,15 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         }
     });
     if let Some(images) = images {
-        println!("Veri dizini: {} (disk imajları images/, kurulum kalıpları iso/)", opts.data_dir.display());
+        say!("Veri dizini: {} (disk imajları images/, kurulum kalıpları iso/)", opts.data_dir.display());
         if opts.incremental_backups {
-            println!("Artımlı yedek açık: yeni sanal makine yedekleri parça deposuna yazılır (backups/chunks/).");
+            say!("Artımlı yedek açık: yeni sanal makine yedekleri parça deposuna yazılır (backups/chunks/).");
         }
         // Konukların, düğümün ve diskin gerçek durumunu düzenli olarak oku.
         // Sunucu yeniden açıldıysa (hizmetin yeniden başlaması değil) "açılışta başlat" işaretli konuklar sırayla başlatılır.
         let mut boot = !opts.no_autostart && host::booted_since_last_run(&opts.data_dir.join("boot-id"), host::boot_id().as_deref());
         for (id, dir) in &opts.storages {
-            println!("Ek depolama: {id} → {}", dir.display());
+            say!("Ek depolama: {id} → {}", dir.display());
         }
         let extras = opts.storages.clone();
         let (st, reader) = (state.clone(), Arc::new(HostReader::default()));
@@ -489,7 +498,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                     tokio::spawn(async move {
                         let started = tokio::task::spawn_blocking(move || st.autostart(&|d| std::thread::sleep(d))).await.unwrap_or(0);
                         if started > 0 {
-                            println!("Sunucu açılışı: {started} konuk başlatıldı.");
+                            say!("Sunucu açılışı: {started} konuk başlatıldı.");
                         }
                     });
                 }
@@ -498,9 +507,9 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         });
     }
     if opts.behind_tls_proxy {
-        println!("TLS vekili arkasında: çerezler Secure, HSTS açık, X-Forwarded-For'a güveniliyor.");
+        say!("TLS vekili arkasında: çerezler Secure, HSTS açık, X-Forwarded-For'a güveniliyor.");
     } else if !addr.ip().is_loopback() {
-        eprintln!("UYARI: şifresiz HTTP ağa açık; parolalar ve oturumlar dinlenebilir.");
+        complain!("UYARI: şifresiz HTTP ağa açık; parolalar ve oturumlar dinlenebilir.");
     }
 
     let closing = state.clone();
@@ -549,11 +558,11 @@ fn manage_users(args: &[String]) -> Result<(), String> {
     match rest.as_slice() {
         ["user", "list"] => {
             if file.users.is_empty() {
-                println!("{} içinde kullanıcı yok.", path.display());
+                say!("{} içinde kullanıcı yok.", path.display());
             }
             for u in &file.users {
                 let tokens: Vec<&str> = u.tokens.iter().map(|t| t.name.as_str()).collect();
-                println!("{:<20} {:<9} token: {}", u.name, u.role.label(), if tokens.is_empty() { "-".to_string() } else { tokens.join(", ") });
+                say!("{:<20} {:<9} token: {}", u.name, u.role.label(), if tokens.is_empty() { "-".to_string() } else { tokens.join(", ") });
             }
             return Ok(());
         }
@@ -569,30 +578,35 @@ fn manage_users(args: &[String]) -> Result<(), String> {
         ["token", "create", user, label, "--read-only"] => {
             let plain = file.create_token_as(user, label, true)?;
             file.save(&path)?;
-            println!("{plain}");
-            eprintln!("Salt okunur token. Bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
+            say!("{plain}");
+            complain!("Salt okunur token. Bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
             return Ok(());
         }
         ["token", "create", user, label] => {
             let plain = file.create_token(user, label)?;
             file.save(&path)?;
-            println!("{plain}");
-            eprintln!("Bu token bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
+            say!("{plain}");
+            complain!("Bu token bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
             return Ok(());
         }
         ["token", "revoke", user, label] => file.revoke_token(user, label)?,
         _ => return Err(format!("anlaşılmayan komut: {}\n\n{}", rest.join(" "), cli::USAGE)),
     }
     file.save(&path)?;
-    println!("Tamam: {} güncellendi.", path.display());
+    say!("Tamam: {} güncellendi.", path.display());
     Ok(())
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Komut satırının dili: REDOX_LANG ortam değişkeni; `serve --lang en` sunucu çıktılarını da İngilizce yapar.
+    let asked = args.iter().position(|a| a == "--lang").and_then(|i| args.get(i + 1)).cloned().or_else(|| std::env::var("REDOX_LANG").ok());
+    if let Some(lang) = asked.as_deref().and_then(redox_server::i18n::Lang::parse) {
+        redox_server::i18n::set_cli(lang);
+    }
     let result = match args.first().map(String::as_str) {
         None | Some("help" | "-h" | "--help") => {
-            print!("{}", cli::USAGE);
+            print!("{}", cli::usage());
             Ok(())
         }
         Some("serve") => serve_options(&args[1..]).and_then(|opts| {
@@ -606,13 +620,14 @@ fn main() -> ExitCode {
         Some(_) => cli::run(&args).map(|out| {
             use std::io::Write;
             // Çıktı `head` gibi erken kapanan bir boruya gidiyorsa hata vermeden biter.
-            let _ = writeln!(std::io::stdout(), "{out}");
+            let _ = writeln!(std::io::stdout(), "{}", redox_server::i18n::cli_text(&out));
         }),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("{message}");
+            // Hata iletisine eklenen yardım metni de komut satırının dilinde gösterilir.
+            complain!("{}", message.replace(cli::USAGE, cli::usage()));
             ExitCode::FAILURE
         }
     }

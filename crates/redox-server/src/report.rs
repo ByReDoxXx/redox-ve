@@ -90,7 +90,10 @@ pub fn compose(c: &Cluster, now: u64, age_days: u32) -> Report {
     if !suspicious.is_empty() {
         parts.push(format!("{} şüpheli yedek", suspicious.len()));
     }
-    Report { subject: format!("[{}] yedek raporu: {}", c.name, parts.join(", ")), body, taken: taken.len(), failed: failed.len(), unprotected: unprotected.len() }
+    // Rapor, istek içinde isteğin, e-postada sunucunun varsayılan dilindedir.
+    let parts: Vec<String> = parts.into_iter().map(crate::i18n::auto).collect();
+    let body = crate::i18n::auto(body);
+    Report { subject: crate::i18n::auto(format!("[{}] yedek raporu: {}", c.name, parts.join(", "))), body, taken: taken.len(), failed: failed.len(), unprotected: unprotected.len() }
 }
 
 #[cfg(test)]

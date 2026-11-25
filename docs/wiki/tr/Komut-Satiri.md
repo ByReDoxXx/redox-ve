@@ -40,4 +40,4 @@ redox usage
 disk-iops net-mbps vlan cpu balloon nested nic-guard firewall rpo test-port test-cmd backup-time backup-keep backup-pre
 backup-post` ve diğerleri; tam liste `redox help` çıktısındadır.
 
-> Komut satırının çıktıları ve yardım metni Türkçedir; İngilizce desteği şimdilik web arayüzü ve API iletileriyle sınırlıdır.
+İngilizce çıktı için `REDOX_LANG=en` ortam değişkenini verin ([Dil](Dil.md)).

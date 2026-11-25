@@ -56,8 +56,8 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Bakım kipi: sunucu güncellemesinden önce konukları kapatır, sonra yeniden başlatır.
 - Konuk içi disk doluluğu (ajanla) ve uyarısı; uyarılar web kancası, e-posta, ntfy ve Telegram ile gider.
 - Salt okunur API token'ları ve isteğe bağlı API hız sınırı.
-- Türkçe ve İngilizce arayüz: üst çubukta dil düğmesi, sunucu varsayılanı için `--lang en`, API hata iletileri
-  `Accept-Language` başlığına göre.
+- Baştan sona Türkçe ve İngilizce: üst çubukta dil düğmesi, sunucu varsayılanı için `--lang en`, API hata iletileri
+  `Accept-Language` başlığına göre, komut satırı `REDOX_LANG=en` ile.
 
 **Depolama ve yedek**
 
@@ -420,7 +420,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 495, Windows'ta 427 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 496, Windows'ta 428 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 

@@ -11,17 +11,20 @@ The RedoX VE interface is available in Turkish and English.
   Turkish).
 - **API:** error messages are English with the `Accept-Language: en` header; the `code` field does not depend on the
   language.
+- **Command line:** `REDOX_LANG=en redox vm list`. The help text, output and error messages are English.
+  `redox serve --lang en` also makes the server's own startup messages, alert notifications and the backup report
+  e-mail English.
 
 ## Coverage
 
-Translated to English: all pages, forms, notices, form errors, alerts and API error messages.
+Translated to English: all pages, forms, notices, form errors, alerts, API error messages, the command line, and the
+error messages of the drivers (QEMU, LXC, off-site target, chunk store, e-mail, single sign-on).
 
-Still Turkish:
+Not translated:
 
-- The output and help text of the command line (`redox`).
-- Error details that come from inside the drivers (QEMU, LXC, off-site target, chunk store). They may appear in Turkish
-  at the end of a task message.
-- Command names in the task log are language-neutral anyway (`vm start 103`).
+- Command names in the task log are language-neutral (`vm start 103`).
+- Output of external programs (error lines from QEMU, `qemu-img`, `nft`) is shown as it is.
+- The `-kopya` suffix of a standby copy's name and the `tasindi-` / `kopya-` tags are data, not text.
 
 A text without a translation does not break the page: its Turkish version is shown.
 

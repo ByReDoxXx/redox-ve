@@ -5,6 +5,17 @@ use serde_json::{json, Map, Value};
 
 pub const DEFAULT_ADDR: &str = "127.0.0.1:8006";
 
+/// İngilizce yardım metni (`REDOX_LANG=en`).
+pub const USAGE_EN: &str = include_str!("usage_en.txt");
+
+/// Komut satırının diline göre yardım metni.
+pub fn usage() -> &'static str {
+    match crate::i18n::cli_lang() {
+        crate::i18n::Lang::En => USAGE_EN,
+        crate::i18n::Lang::Tr => USAGE,
+    }
+}
+
 pub const USAGE: &str = "\
 redox — RedoX VE
 

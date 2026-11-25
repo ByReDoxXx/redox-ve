@@ -94,7 +94,12 @@ pub enum Event {
 }
 
 impl Event {
+    /// Bildirim metni; istek dışında (bildirim kanalları) sunucunun varsayılan dilindedir.
     pub fn text(&self, cluster: &str) -> String {
+        crate::i18n::auto(self.text_tr(cluster))
+    }
+
+    fn text_tr(&self, cluster: &str) -> String {
         match self {
             Event::Raised(a) => {
                 let level = if a.severity == Severity::Critical { "KRİTİK" } else { "UYARI" };

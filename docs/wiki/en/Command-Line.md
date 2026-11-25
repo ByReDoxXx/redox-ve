@@ -9,6 +9,7 @@ The same `redox` file runs the server and is the client. For the client:
 ```bash
 export REDOX_URL=https://redox.example.com
 export REDOX_TOKEN=redox_...
+export REDOX_LANG=en
 redox help
 ```
 
@@ -40,4 +41,4 @@ redox usage
 net-mbps vlan cpu balloon nested nic-guard firewall rpo test-port test-cmd backup-time backup-keep backup-pre backup-post`
 and more; `redox help` prints the full list.
 
-> The command line's output and help text are in Turkish; English support currently covers the web interface and API messages.
+For English output set `REDOX_LANG=en` ([Language](Language.md)). The examples below assume it:

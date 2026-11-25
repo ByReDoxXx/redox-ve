@@ -1,0 +1,97 @@
+redox — RedoX VE
+
+Server:
+  redox serve [--addr 127.0.0.1:8006] [--users FILE] [--state FILE] [--lang tr|en]
+              [--driver sim|qemu] [--data-dir DIR] [--qemu-bin PATH] [--ovmf-dir DIR] [--swtpm-bin PATH]
+              [--shutdown-timeout-secs 60] [--no-lxc] [--no-autostart] [--storage NAME=DIR]...
+              [--behind-tls-proxy] [--allow-plain-http] [--task-delay-ms 1500]
+              [--alert-webhook URL] [--alert-email FILE] [--alert-ntfy URL] [--alert-telegram FILE]
+              [--peers FILE] [--offsite FILE] [--offsite-copy FILE]... [--oidc FILE] [--guestfish-bin PATH]
+              [--backup-test-secs 60] [--backup-test-every DAYS[@HH:MM]] [--backup-report HH:MM] [--backup-age-days 7]
+              [--backup-mbps 0] [--firewall] [--four-eyes] [--api-rate N]
+              [--incremental-backups [--changed-block-tracking]]
+
+Users (edits the user file directly; --users FILE or REDOX_USERS):
+  redox user add <name> [--role admin|operator|viewer]
+  redox user role <name> admin|operator|viewer
+  redox user scope <name> [tag,tag]       (guest tags an operator may act on; empty means all)
+  redox user sso <name> <identity>        (e-mail or identity matched at single sign-on; empty removes it)
+  redox user passwd <name>
+  redox user remove <name>
+  redox user totp-reset <name>    (turns two-step verification off)
+  redox user list
+  redox token create <user> <label> [--read-only]
+  redox token revoke <user> <label>
+
+Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an API token, REDOX_LANG=en for English output):
+  redox cluster status
+  redox node list | node status <node>
+  redox vm|ct list | show <id>
+  redox vm|ct start|stop|reboot|pause|resume <id>
+  redox vm|ct set <id> key=value ...
+        keys: name cores memory os iso bridge onboot restart boot-order boot-delay tags forwards backup-time backup-keep
+                    schedules=start@08:00@1-5,stop@20:00   (action@HH:MM@days; days 1 Monday … 7 Sunday, every day if omitted)
+                    disk-mbps disk-iops net-mbps   (rate limits; 0 is unlimited. The network limit only applies to bridged cards)
+                    vlan=20   (VLAN tag of the first card; for extra cards nics=vmbr1:20)
+                    shares=shared,data:ro   (shared folders; :ro is read-only)
+                    backup-pre='/usr/local/bin/pre.sh' backup-post='/usr/local/bin/post.sh'
+                                           (run in the guest before and after a backup of a running guest; needs the guest agent)
+                    nic-guard=true   (NIC protection: MAC spoofing, DHCP server and router advertisements are blocked)
+                    test-port=22 test-cmd=/usr/local/bin/health.sh   (TCP port to check and command to run in the guest during a boot test)
+                    rpo=24   (backup age target in hours: the guest counts as unprotected if its last backup is older; 0 is the general setting)
+                    nested=true   (nested virtualization: VT-x / AMD-V is exposed to the guest)
+                    cpu=Haswell   (CPU model; cpu=host is the server's own CPU)   balloon=true   (memory balloon device)
+                    ci-user=ali ci-key='ssh-ed25519 AAAA…' ci-ip=10.0.0.5/24 ci-gw=10.0.0.1 ci-dns=1.1.1.1,9.9.9.9
+                                           (cloud-init; an empty ci-key= turns it off, an empty ci-ip= means DHCP)
+                    nics=vmbr1,nat usb=046d:c52b pci=0000:01:00.0 firmware=bios|uefi|uefi-secure tpm firewall fw-rules   (e.g. firewall=true fw-rules='tcp/22,tcp/443 from 10.0.0.0/8')
+        example: redox vm set 103 cores=4 memory=8192 tags=prod,web backup-time=03:30
+  redox vm|ct clone <id> <new-name>
+  redox vm clone <id> <name> --linked    (linked clone of a template: the disk is not copied)
+  redox vm disk add <id> <GB> | disk remove <id> <number> | vm nic add <id> <nat|bridge>   (also on a running VM)
+  redox vm resize <id> <GB>
+  redox vm move <id> <storage>           (moves the disks of a stopped VM to another storage)
+  redox vm balloon <id> <MB>             (memory target; also while running, 0: all memory)
+  redox vm balloon <id> auto <MB>        (dynamic memory: the target follows usage between <MB> and all memory; 0 turns it off)
+  redox vm suspend <id> | discard-suspend <id>   (suspends; start resumes where it left off)
+  redox vm template <id> on|off          (converts to a template / back)
+  redox vm df <id>                       (disk usage inside the guest; needs qemu-guest-agent in the guest)
+  redox usage | vm usage <id> [reset]    (cumulative consumption: core-hours, GB-hours, disk and network I/O; reset clears the counters)
+  redox ct exec <id> <command ...>
+  redox vm|ct destroy <id>
+  redox snapshot list <id> | create|rollback|delete <id> <name>
+  redox snapshot create <id> <name> --production   (checkpoint of a running guest without memory, file systems frozen)
+  redox backup list | create <id> | restore <backup> | delete <backup>
+  redox backup report                     (backup report of the last 24 hours and unprotected guests)
+  redox backup restore-new <backup> <name>   (opens a new virtual machine from the backup; the original is not touched)
+  redox backup ls <backup> [path]         (lists files inside the backup; needs guestfish on the server)
+        to download a file: curl -H 'Authorization: Bearer TOKEN' -o file 'REDOX_URL/api/v1/backups/BACKUP/file?path=/etc/hostname'
+  redox backup instant <backup> <name>    (instant recovery: the guest starts on top of the backup without waiting for a copy)
+  redox vm detach <id>                    (detaches an instantly recovered guest from its backup; also while running)
+  redox backup test <backup>              (boots the backup as an isolated temporary guest; result: redox task list)
+  redox backup lock <backup> <days>       (makes the backup undeletable for that many days; a lock can only be extended)
+  redox backup push <backup>      (sends it off-site again)
+  redox backup verify <backup>    (corruption check; result: redox task list)
+  redox backup ack <backup>               (dismisses the unusual-change warning: you looked, nothing is wrong)
+  redox backup archive | recover <backup>   (backups deleted locally but kept on a copy target; recover puts one back on the list)
+  redox pool list | remove <name>              (resource pools: a total quota for a group of guests)
+  redox pool add <name> [cores=32] [memory=65536] [disk=500] [guests=10]   (memory in MB, disk in GB; omitted means unlimited)
+        to put a guest into a pool: redox vm set 103 pool=web   (an empty pool= takes it out)
+  redox job list | run <name> | remove <name>  (backup jobs: several guests, one schedule, one after another)
+  redox job add <name> time=03:00 [days=1-5] [tags=web,db] [keep=7] [weekly=4] [monthly=12] [yearly=1] [lock=14]
+        weekly/monthly/yearly: weekly, monthly and yearly backups kept in addition to the last N; lock: days the backups cannot be deleted
+        until=06:00: end of the backup window (no new guest is started after it); verify=true: every backup is verified
+        without tags all guests; without days every day; writing the same name again updates the job
+  redox replica list | add <peer> <id> [minutes] | run <peer> <id> | remove <peer> <id>
+        (refreshes a standby copy of a peer server's virtual machine here; every 60 minutes by default)
+  redox maintenance status | on [--drain] | off   (maintenance mode: no guest is started, scheduled work is paused;
+        --drain stops the running guests in order, off starts them again)
+  redox approval list | approve <n> | reject <n>   (four-eyes principle: pending delete requests; you cannot approve your own)
+  redox storage list
+  redox media list | delete <file>             (installation media and disk images)
+  redox media catalog | get <key>              (ready cloud images: Debian, Ubuntu, AlmaLinux, Rocky; get downloads one)
+  redox media fetch <https-address> [sha256]   (the server downloads the file itself)
+        OVA export: curl -H 'Authorization: Bearer TOKEN' -o vm.ova REDOX_URL/api/v1/guests/ID/export
+        to upload: curl -T debian.iso -H 'Authorization: Bearer TOKEN' REDOX_URL/api/v1/media/debian.iso
+  redox peer list                 (peer servers in the combined view)
+  redox peer import <peer> <id>   (copies a stopped virtual machine from the peer to this server)
+  redox task list

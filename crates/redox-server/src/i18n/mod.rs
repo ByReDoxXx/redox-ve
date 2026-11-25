@@ -157,6 +157,53 @@ fn english(text: &str, depth: u8) -> String {
     text.to_string()
 }
 
+/// Çok satırlı metni satır satır çevirir (komut satırı çıktıları, raporlar). Satır başındaki ve sonundaki
+/// boşluklar ile sütun hizası korunur: yakalanan değişkenler boşluklarıyla birlikte yerine konur.
+pub fn lines_to_english(text: &str) -> String {
+    // Çok satırlı metin bütün olarak bir kalıba uydurulmaz: ilk satırın kalıbı gerisini yutardı.
+    if !text.contains('\n') {
+        return to_english(text);
+    }
+    if let Some(known) = EXACT.get(text) {
+        return (*known).to_string();
+    }
+    text.split('\n').map(to_english).collect::<Vec<_>>().join("\n")
+}
+
+/// İstek dışında üretilen metinlerin (uyarı bildirimleri, e-postalar) dili: sunucunun varsayılanı.
+static BACKGROUND_ENGLISH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Komut satırının dili (`REDOX_LANG=en` ya da `--lang en`).
+static CLI_ENGLISH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_background(lang: Lang) {
+    BACKGROUND_ENGLISH.store(lang == Lang::En, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn set_cli(lang: Lang) {
+    CLI_ENGLISH.store(lang == Lang::En, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn cli_lang() -> Lang {
+    if CLI_ENGLISH.load(std::sync::atomic::Ordering::Relaxed) { Lang::En } else { Lang::Tr }
+}
+
+/// İstek içinde isteğin diline, istek dışında sunucunun varsayılan diline çevirir (uyarılar, raporlar).
+pub fn auto(text: String) -> String {
+    let english = match CURRENT.try_with(|lang| *lang) {
+        Ok(lang) => lang == Lang::En,
+        Err(_) => BACKGROUND_ENGLISH.load(std::sync::atomic::Ordering::Relaxed),
+    };
+    if english { lines_to_english(&text) } else { text }
+}
+
+/// Komut satırı çıktısını komut satırının diline çevirir.
+pub fn cli_text(text: &str) -> String {
+    match cli_lang() {
+        Lang::Tr => text.to_string(),
+        Lang::En => lines_to_english(text),
+    }
+}
+
 /// Değişkenli (üretilmiş) iletiyi geçerli dile çevirir.
 pub fn tfmt(text: String) -> String {
     match current() {
@@ -200,6 +247,20 @@ mod tests {
         assert_eq!(capture(&["a ", " b ", " c"], "a 1 b 2 c"), Some(vec!["1", "2"]));
         assert_eq!(capture(&["a ", " c"], "x 1 c"), None);
         assert_eq!(capture(&["uzun önek ", ""], "kısa"), None);
+    }
+
+    #[test]
+    fn multi_line_output_is_translated_line_by_line_and_keeps_its_columns() {
+        let out = "küme      istanbul\ndüğümler  3/3 çevrimiçi, çoğunluk var\ncpu       12% (48 çekirdek)\nbilinmeyen satır";
+        assert_eq!(lines_to_english(out), "cluster   istanbul\nnodes     3/3 online, quorate\ncpu       12% (48 cores)\nbilinmeyen satır");
+        // Sütunlar: değişkenler dolgu boşluklarıyla birlikte taşınır.
+        let row = format!("{:<14} {:<6} her {:>5} dk   {}", "ankara", 500, 60, "henüz çoğaltılmadı");
+        assert_eq!(lines_to_english(&row), format!("{:<14} {:<6} every {:>5} min   {}", "ankara", 500, 60, "not replicated yet"));
+        // Sürücü hatası, onu saran iletiyle birlikte çevrilir.
+        assert_eq!(to_english("sürücü hatası: QEMU başlatılamadı: disk imajı bulunamadı: /x/y.qcow2"), "driver error: could not start QEMU: disk image not found: /x/y.qcow2");
+        // İstek dışında dil, sunucunun varsayılanıdır.
+        assert_eq!(auto("yedek yok".to_string()), "yedek yok");
+        sync_scope(Lang::En, || assert_eq!(auto("yedek yok".to_string()), "no backups"));
     }
 
     #[test]
