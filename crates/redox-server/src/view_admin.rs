@@ -19,7 +19,7 @@ fn token_list(action_base: &str, user: &User) -> Markup {
         @if user.tokens.is_empty() { span class="dim" { "-" } }
         @for t in &user.tokens {
             form method="post" action={ (action_base) "/tokens/" (t.name) "/revoke" } {
-                span class="tag" { (t.name) }
+                span class="tag" { (t.name) @if t.read_only { " · salt okunur" } }
                 button class="btn sm danger" type="submit" aria-label={ (t.name) " token'ını iptal et" } { "İptal" }
             }
         }

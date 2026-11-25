@@ -181,3 +181,19 @@ pub(super) async fn behind_tls_proxy_hardens_cookies_and_uses_forwarded_ip() {
 }
 
 // ---------- Gerçek sürücü kipi ----------
+
+#[tokio::test]
+async fn api_requests_are_rate_limited_per_user_when_enabled() {
+    let (app, state) = setup();
+    state.set_api_rate(2);
+    let get = || request(Method::GET, "/api/v1/cluster").body(Body::empty()).unwrap();
+    assert_eq!(api(&app, get()).await.0, StatusCode::OK);
+    assert_eq!(api(&app, get()).await.0, StatusCode::OK);
+    let (status, headers, body) = send(&app, get()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(headers.contains_key("retry-after") && body.contains("rate_limited"), "{body}");
+    // Sayfalar sınırın dışındadır.
+    assert!(page(&app, "/").await.contains("<html"));
+    state.set_api_rate(0);
+    assert_eq!(api(&app, get()).await.0, StatusCode::OK);
+}

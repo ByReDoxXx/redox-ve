@@ -224,6 +224,18 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
     };
     // Reddedilen girişimler de günlüğe düşsün diye kimlik önce işlenir.
     req.extensions_mut().insert(me.clone());
+    if is_api {
+        if let Err(wait) = st.api_allowed(&me.user, state::now()) {
+            return Err(Box::new(
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(axum::http::header::RETRY_AFTER, wait.to_string())],
+                    Json(json!({ "error": format!("çok fazla istek; {wait} saniye sonra yeniden deneyin"), "code": "rate_limited" })),
+                )
+                    .into_response(),
+            ));
+        }
+    }
     // Salt okunur hesap yalnızca çıkış yapabilir ve kendi hesabını yönetebilir.
     // Operatör yalnızca kapsamındaki konuklarda güç, konsol, anlık görüntü ve yedek işlemi yapabilir.
     let operated = me.role == auth::Role::Operator && operator_target(&path).and_then(|vmid| st.guest_tags(vmid)).is_some_and(|tags| me.can_operate(&tags));

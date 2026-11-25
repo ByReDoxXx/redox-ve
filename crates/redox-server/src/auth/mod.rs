@@ -69,6 +69,9 @@ pub struct ApiToken {
     pub name: String,
     /// Token'ın kendisi saklanmaz; yalnızca SHA-256 özeti.
     pub sha256: String,
+    /// Salt okunur token: sahibi yönetici olsa da yalnızca okuma yapabilir (izleme araçları için).
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -373,7 +376,9 @@ impl Auth {
         for u in &users.users {
             for t in &u.tokens {
                 if bool::from(t.sha256.as_bytes().ct_eq(digest.as_bytes())) {
-                    found = Some(Identity { user: u.name.clone(), role: u.role, scope: u.scope.clone() });
+                    // Salt okunur token, sahibinin rolünü izleyiciye indirir.
+                    let role = if t.read_only { Role::Viewer } else { u.role };
+                    found = Some(Identity { user: u.name.clone(), role, scope: u.scope.clone() });
                 }
             }
         }

@@ -38,6 +38,7 @@ struct ServeOptions {
     backup_mbps: u64,
     alert_webhook: Option<String>,
     alert_ntfy: Option<String>,
+    api_rate: Option<u64>,
     alert_telegram: Option<PathBuf>,
     alert_email: Option<PathBuf>,
     peers: Option<PathBuf>,
@@ -79,6 +80,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         backup_mbps: 0,
         alert_webhook: None,
         alert_ntfy: None,
+        api_rate: None,
         alert_telegram: None,
         alert_email: None,
         peers: None,
@@ -113,6 +115,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--backup-mbps" => opts.backup_mbps = number(value()?)?,
             "--alert-webhook" => opts.alert_webhook = Some(value()?.clone()),
             "--alert-ntfy" => opts.alert_ntfy = Some(value()?.clone()),
+            "--api-rate" => opts.api_rate = Some(number(value()?)?),
             "--alert-telegram" => opts.alert_telegram = Some(PathBuf::from(value()?)),
             "--alert-email" => opts.alert_email = Some(PathBuf::from(value()?)),
             "--peers" => opts.peers = Some(PathBuf::from(value()?)),
@@ -300,6 +303,10 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     if let Some(url) = &opts.alert_webhook {
         state.alerts().set_webhook(url)?;
         println!("Uyarılar webhook'a gönderilecek.");
+    }
+    if let Some(rate) = opts.api_rate.filter(|r| *r > 0) {
+        state.set_api_rate(rate.min(u32::MAX as u64) as u32);
+        println!("API hız sınırı: kullanıcı başına dakikada {rate} istek.");
     }
     if let Some(url) = &opts.alert_ntfy {
         let channel = redox_server::alerts::Channel::ntfy(url)?;
@@ -551,6 +558,13 @@ fn manage_users(args: &[String]) -> Result<(), String> {
         ["user", "passwd", name] => file.set_password(name, &read_new_password()?, Cost::Production)?,
         ["user", "remove", name] => file.remove_user(name)?,
         ["user", "totp-reset", name] => file.disable_totp(name)?,
+        ["token", "create", user, label, "--read-only"] => {
+            let plain = file.create_token_as(user, label, true)?;
+            file.save(&path)?;
+            println!("{plain}");
+            eprintln!("Salt okunur token. Bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
+            return Ok(());
+        }
         ["token", "create", user, label] => {
             let plain = file.create_token(user, label)?;
             file.save(&path)?;

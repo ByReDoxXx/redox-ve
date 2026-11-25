@@ -279,3 +279,15 @@ fn refresh_is_a_no_op_for_the_simulator() {
     assert_eq!(state.snapshot(), before);
     assert!(state.history().is_empty());
 }
+
+#[test]
+fn api_rate_limit_counts_per_user_and_minute() {
+    let st = AppState::new(Cluster::demo(now()), Box::new(SimDriver::default()), Duration::ZERO, None, auth());
+    let t = 1_700_000_040 + 40; // dakikanın 40. saniyesi
+    assert!((0..1000).all(|_| st.api_allowed("ayse", t).is_ok()), "kapalıyken sınır yok");
+    st.set_api_rate(3);
+    assert!((0..3).all(|_| st.api_allowed("ayse", t).is_ok()));
+    assert_eq!(st.api_allowed("ayse", t + 5), Err(15), "dakika dolana kadar beklenir");
+    assert!(st.api_allowed("mehmet", t).is_ok(), "başka kullanıcı etkilenmez");
+    assert!(st.api_allowed("ayse", t + 20).is_ok(), "yeni dakikada sayaç sıfırlanır");
+}

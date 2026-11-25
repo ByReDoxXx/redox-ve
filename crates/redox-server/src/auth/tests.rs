@@ -319,3 +319,17 @@ fn edits_are_written_to_the_user_file() {
     assert!(dir.join("audit.log").is_file(), "denetim günlüğü kullanıcı dosyasının yanına yazılır");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn read_only_tokens_act_as_viewers_whatever_the_owner_is() {
+    let mut file = users();
+    let full = file.create_token("admin", "tam").unwrap();
+    let limited = file.create_token_as("admin", "izleme", true).unwrap();
+    let a = Auth::new(file, None, false, Cost::Test);
+    assert_eq!(a.bearer(&full).unwrap().role, Role::Admin);
+    let me = a.bearer(&limited).unwrap();
+    assert_eq!((me.user.as_str(), me.role, me.can_write()), ("admin", Role::Viewer, false));
+    // Eski kullanıcı dosyalarındaki token'lar (alan yok) tam yetkilidir.
+    let old: ApiToken = serde_json::from_str(r#"{"name":"eski","sha256":"00"}"#).unwrap();
+    assert!(!old.read_only);
+}

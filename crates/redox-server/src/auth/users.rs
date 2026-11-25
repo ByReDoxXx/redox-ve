@@ -140,8 +140,16 @@ impl UserFile {
 
     /// Yeni API token'ı üretir. Düz metni yalnızca bu çağrı döndürür.
     pub fn create_token(&mut self, user: &str, label: &str) -> Result<String, String> {
+        self.create_token_as(user, label, false)
+    }
+
+    /// `read_only`: token yalnızca okuma yapabilir.
+    pub fn create_token_as(&mut self, user: &str, label: &str, read_only: bool) -> Result<String, String> {
         let plain = format!("redox_{}", random_token());
         self.add_token(user, label, &plain)?;
+        if let Some(token) = self.find_mut(user)?.tokens.iter_mut().find(|t| t.name == label) {
+            token.read_only = read_only;
+        }
         Ok(plain)
     }
 
@@ -153,7 +161,7 @@ impl UserFile {
         if user.tokens.iter().any(|t| t.name == label) {
             return Err(format!("\"{label}\" etiketli bir token zaten var"));
         }
-        user.tokens.push(ApiToken { name: label.to_string(), sha256: sha256_hex(plain) });
+        user.tokens.push(ApiToken { name: label.to_string(), sha256: sha256_hex(plain), read_only: false });
         Ok(())
     }
 

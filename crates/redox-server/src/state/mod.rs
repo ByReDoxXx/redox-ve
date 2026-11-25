@@ -9,6 +9,7 @@ use crate::auth::{write_private, Auth};
 use crate::host::HostSample;
 
 mod approvals;
+mod ratelimit;
 mod backup;
 mod guest;
 mod hardware;
@@ -185,6 +186,8 @@ struct Inner {
     backup_age_days: Mutex<u32>,
     /// Dört göz ilkesi: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.
     four_eyes: std::sync::atomic::AtomicBool,
+    /// API hız sınırı: (dakikadaki istek sınırı; 0 kapalı, kullanıcı → (dakika, o dakikadaki istek sayısı)).
+    api_rate: Mutex<(u32, HashMap<String, (u64, u32)>)>,
     /// Günlük yedek raporunun saati (gece yarısından dakika) ve son gönderildiği gün.
     report: Mutex<(Option<u16>, Option<String>)>,
     /// Gerçek sürücüden toplanan ölçüm geçmişi (anahtar: `node:cpu`, `guest:100:mem` …).
@@ -218,6 +221,7 @@ impl AppState {
             auto_test: Mutex::new((0, 180)),
             backup_age_days: Mutex::new(7),
             four_eyes: std::sync::atomic::AtomicBool::new(false),
+            api_rate: Mutex::new((0, HashMap::new())),
             report: Mutex::new((None, None)),
             history: Mutex::new(HashMap::new()),
             long: Mutex::new(Default::default()),
