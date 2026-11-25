@@ -13,6 +13,9 @@ pub const MAX_REPLICAS: usize = 32;
 /// Çoğaltma aralığının sınırları (dakika): 15 dakika ile bir hafta.
 pub const MIN_REPLICA_MIN: u32 = 15;
 pub const MAX_REPLICA_MIN: u32 = 7 * 24 * 60;
+/// Kendiliğinden devralma bekleme süresinin sınırları (dakika).
+pub const MIN_FAILOVER_MIN: u32 = 5;
+pub const MAX_FAILOVER_MIN: u32 = 24 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Replica {
@@ -33,6 +36,18 @@ pub struct Replica {
     /// Son turda ağdan indirilen ve toplam blok sayısı (artımlı çoğaltma); tam kopyada `None`.
     #[serde(default)]
     pub delta: Option<(u64, u64)>,
+    /// Kendiliğinden devralma: kaynak sunucuya bu kadar dakika ulaşılamazsa yedek kopya başlatılır; `None` kapalı.
+    #[serde(default)]
+    pub failover_min: Option<u32>,
+    /// Kaynak sunucuya ne zamandır ulaşılamıyor.
+    #[serde(default)]
+    pub down_since: Option<u64>,
+    /// Yedek kopya kendiliğinden ne zaman başlatıldı; sonraki başarılı çoğaltma turuna dek bir daha devralınmaz.
+    #[serde(default)]
+    pub failed_over: Option<u64>,
+    /// Devralmanın neden yapılmadığı (hakem engeli, kopya yok…).
+    #[serde(default)]
+    pub failover_note: Option<String>,
     /// Şu an bir tur sürüyor mu? Dosyaya yazılmaz: sunucu yeniden başlayınca yarım kalan tur unutulur.
     #[serde(skip)]
     pub running: bool,
@@ -53,11 +68,62 @@ impl Cluster {
             Some(r) => r.every_min = every_min,
             None if full => return Err(Error::InvalidSpec(format!("en fazla {MAX_REPLICAS} çoğaltma tanımlanabilir"))),
             None => {
-                self.replicas.push(Replica { peer: peer.to_string(), source, every_min, standby: None, last_ok: None, last_try: None, error: None, delta: None, running: false });
+                self.replicas.push(Replica { peer: peer.to_string(), source, every_min, standby: None, last_ok: None, last_try: None, error: None, delta: None, failover_min: None, down_since: None, failed_over: None, failover_note: None, running: false });
                 self.replicas.sort_by(|a, b| (&a.peer, a.source).cmp(&(&b.peer, b.source)));
             }
         }
         Ok(())
+    }
+
+    /// Kendiliğinden devralmayı açar (`Some(dakika)`) ya da kapatır.
+    pub fn set_replica_failover(&mut self, peer: &str, source: VmId, minutes: Option<u32>) -> Result<(), Error> {
+        if minutes.is_some_and(|m| !(MIN_FAILOVER_MIN..=MAX_FAILOVER_MIN).contains(&m)) {
+            return Err(Error::InvalidSpec(format!("devralma süresi {MIN_FAILOVER_MIN} ile {MAX_FAILOVER_MIN} dakika arasında olmalı")));
+        }
+        let r = self.replica_mut(peer, source).ok_or_else(|| Error::InvalidSpec(format!("{peer}/{source} için tanımlı bir çoğaltma yok")))?;
+        r.failover_min = minutes;
+        r.down_since = None;
+        r.failover_note = None;
+        Ok(())
+    }
+
+    /// Kaynak sunucusuna yeterince uzun süredir ulaşılamayan ve yedek kopyası başlatılabilecek çoğaltmalar:
+    /// (eş, kaynak konuk, yedek kopya). `online`: eş sunucuya şu an ulaşılıyor mu. Karar burada bitmez:
+    /// çağıran hakem sunuculara danışır ve sonucu `note_failover` ile bildirir.
+    pub fn failover_due(&mut self, now: u64, online: &dyn Fn(&str) -> bool) -> Vec<(String, VmId, VmId)> {
+        let idle: Vec<VmId> = self.guests.iter().filter(|g| g.status == GuestStatus::Stopped && g.lock.is_none()).map(|g| g.vmid).collect();
+        let mut due = Vec::new();
+        for r in self.replicas.iter_mut() {
+            let Some(minutes) = r.failover_min else { continue };
+            if online(&r.peer) {
+                r.down_since = None;
+                r.failover_note = None;
+                continue;
+            }
+            let since = *r.down_since.get_or_insert(now);
+            if r.failed_over.is_some() || r.running || now.saturating_sub(since) < u64::from(minutes) * 60 {
+                continue;
+            }
+            match r.standby {
+                Some(id) if idle.contains(&id) => due.push((r.peer.clone(), r.source, id)),
+                Some(_) => {}
+                None => r.failover_note = Some("yedek kopya henüz yok: devralınamadı".to_string()),
+            }
+        }
+        due
+    }
+
+    /// Devralma denemesinin sonucunu işler; durum değiştiyse (günlüğe yazılmaya değerse) `true`.
+    pub fn note_failover(&mut self, peer: &str, source: VmId, outcome: &Result<(), String>, now: u64) -> bool {
+        let Some(r) = self.replica_mut(peer, source) else { return false };
+        match outcome {
+            Ok(()) => {
+                r.failed_over = Some(now);
+                r.failover_note = None;
+                true
+            }
+            Err(e) => r.failover_note.replace(e.clone()).as_ref() != Some(e),
+        }
     }
 
     /// Çoğaltmayı kaldırır; buradaki yedek kopya olağan bir konuk olarak kalır.
@@ -107,6 +173,8 @@ impl Cluster {
             Ok(new) => {
                 r.error = None;
                 r.last_ok = Some(now);
+                // Kaynak geri geldi ve yeni bir kopya alındı: devralma yeniden kurulur.
+                r.failed_over = None;
                 r.standby.replace(*new).filter(|old| old != new)
             }
             Err(e) => {
@@ -157,5 +225,38 @@ mod tests {
         assert!(!loaded.replicas[0].running);
         assert_eq!(c.remove_replica("ankara", 500).unwrap().source, 500);
         assert!(c.remove_replica("ankara", 500).is_err());
+    }
+
+    #[test]
+    fn failover_waits_for_the_peer_to_stay_down_and_happens_once() {
+        let mut c = Cluster::demo(NOW);
+        c.put_replica("ankara", 500, 60).unwrap();
+        assert!(c.set_replica_failover("ankara", 500, Some(MIN_FAILOVER_MIN - 1)).is_err() && c.set_replica_failover("yok", 1, Some(10)).is_err());
+        let (up, down) = (|_: &str| true, |_: &str| false);
+        // Kapalıyken eş ölse de hiçbir şey olmaz.
+        assert!(c.failover_due(NOW, &down).is_empty() && c.replicas[0].down_since.is_none());
+        c.set_replica_failover("ankara", 500, Some(10)).unwrap();
+        // Kopya yokken süre dolsa da devralınmaz; nedeni yazılır.
+        assert!(c.failover_due(NOW, &down).is_empty());
+        assert!(c.failover_due(NOW + 600, &down).is_empty());
+        assert!(c.replicas[0].failover_note.as_deref().unwrap().contains("henüz yok"));
+        // Eş geri gelince sayaç ve not sıfırlanır.
+        assert!(c.failover_due(NOW + 700, &up).is_empty());
+        assert_eq!((c.replicas[0].down_since, c.replicas[0].failover_note.clone()), (None, None));
+
+        let standby = c.guests.iter().find(|g| g.status == GuestStatus::Stopped).unwrap().vmid;
+        c.replicas[0].standby = Some(standby);
+        assert!(c.failover_due(NOW + 1000, &down).is_empty(), "kesinti yeni başladı");
+        assert!(c.failover_due(NOW + 1000 + 599, &down).is_empty(), "süre dolmadı");
+        assert_eq!(c.failover_due(NOW + 1000 + 600, &down), [("ankara".to_string(), 500, standby)]);
+        // Hakem engeli: not bir kez "değişti" sayılır, aynı neden yinelenince sayılmaz.
+        let blocked = Err("hakem engeli".to_string());
+        assert!(c.note_failover("ankara", 500, &blocked, NOW) && !c.note_failover("ankara", 500, &blocked, NOW));
+        assert_eq!(c.failover_due(NOW + 2000, &down).len(), 1, "engel kalkana dek yeniden denenir");
+        assert!(c.note_failover("ankara", 500, &Ok(()), NOW + 2000));
+        assert!(c.failover_due(NOW + 3000, &down).is_empty(), "bir kez devralınır");
+        // Başarılı bir çoğaltma turu devralmayı yeniden kurar.
+        c.finish_replica("ankara", 500, &Ok(standby), NOW + 4000);
+        assert_eq!(c.replicas[0].failed_over, None);
     }
 }

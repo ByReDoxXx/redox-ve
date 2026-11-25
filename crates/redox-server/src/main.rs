@@ -469,6 +469,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                 st.auto_test_tick(minute);
                 st.guest_fs_tick();
                 st.replica_tick();
+                st.failover_tick();
                 if let Some(Err(e)) = st.report_tick(&today, minute) {
                     complain!("yedek raporu gönderilemedi: {e}");
                 }

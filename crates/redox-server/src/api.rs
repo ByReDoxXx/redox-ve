@@ -57,6 +57,7 @@ pub fn routes() -> Router<AppState> {
         .route("/replicas", get(replicas).post(replica_put))
         .route("/replicas/{peer}/{vmid}", delete_route(replica_delete))
         .route("/replicas/{peer}/{vmid}/run", post(replica_run))
+        .route("/replicas/{peer}/{vmid}/failover", post(replica_failover))
         .route("/approvals/{id}/approve", post(approval_approve))
         .route("/approvals/{id}", delete_route(approval_reject))
         .route("/backups/{id}/recover", post(backup_recover))
@@ -591,6 +592,18 @@ async fn replica_put(State(st): State<AppState>, Extension(me): Extension<Identi
 
 async fn replica_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((peer, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
     st.replica_remove(&peer, vmid, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize)]
+struct FailoverBody {
+    /// Kaynağa bu kadar dakika ulaşılamazsa yedek kopya başlatılır; `null` kapatır.
+    #[serde(default)]
+    minutes: Option<u32>,
+}
+
+async fn replica_failover(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((peer, vmid)): Path<(String, VmId)>, Json(body): Json<FailoverBody>) -> Result<StatusCode, ApiError> {
+    st.replica_failover_set(&peer, vmid, body.minutes, &me.user)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

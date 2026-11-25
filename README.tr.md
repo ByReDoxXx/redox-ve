@@ -57,6 +57,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Konuk içi disk doluluğu (ajanla) ve uyarısı; uyarılar web kancası, e-posta, ntfy ve Telegram ile gider.
 - Salt okunur API token'ları ve isteğe bağlı API hız sınırı.
 - Yerel yedek şifrelemesi (`--backup-passphrase-file`): artımlı yedek parçaları diskte şifreli durur.
+- Hakemli kendiliğinden devralma: kaynak sunucu ölünce ve üçüncü bir sunucu onaylayınca yedek kopya başlatılır.
 - Artımlı çoğaltma: ilk turdan sonra ağdan yalnızca değişen 4 MiB'lik bloklar geçer; her blok özetiyle doğrulanır.
 - Konteynerler sunucular arasında kopyalanır ve çoğaltılır; yedek alanının ne zaman dolacağı tahmin edilir; kaynak
   ölçümü ve denetim günlüğü CSV olarak indirilir; imaj kataloğunda virtio-win sürücü kalıbı vardır.
@@ -424,7 +425,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 505, Windows'ta 435 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 507, Windows'ta 436 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
@@ -449,7 +450,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 - Ortak küme durumu yoktur. Birkaç sunucu birlikte görüntülenebilir, ama her biri kendi konuklarını yönetir.
 - Çalışan sanal makineyi taşımak belleğini korur, ancak disk ve bellek kopyalanırken konuk duraklar.
   Kesintisiz bir canlı taşıma değildir.
-- Sunucular arasında kendiliğinden devralma yoktur. Çöken konuk yalnızca aynı sunucuda yeniden başlatılır.
+- Kendiliğinden devralma yalnızca çoğaltılan konuklar içindir ve bir hakem sunucu ister; kaynağı zorla kapatma (fencing) ve ortak durumlu küme yoktur. Gerçek bir kesintide denenmedi.
 - LVM ya da ZFS depolama havuzları yoktur.
 - Çalışan sanal makineye işlemci ve bellek eklenemez (balon belleği yalnızca düşürür ve geri verir).
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.

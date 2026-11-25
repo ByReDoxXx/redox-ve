@@ -227,3 +227,90 @@ pub(super) async fn a_running_vm_is_replicated_from_a_peer_without_touching_it()
     let _ = std::fs::remove_dir_all(dir);
     let _ = std::fs::remove_dir_all(peer_dir);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+pub(super) async fn a_standby_copy_takes_over_only_when_a_witness_agrees_the_source_is_dead() {
+    if !python_available() {
+        return;
+    }
+    let admin = || {
+        let mut users = UserFile::default();
+        users.add_user("admin", "dogru-at-pil-zimba-1", redox_server::auth::Role::Admin, Cost::Test).unwrap();
+        users.add_token("admin", "t", "es-sunucu-yonetici-tokeni").unwrap();
+        Auth::new(users, None, false, Cost::Test)
+    };
+    async fn serve(state: AppState) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = redox_server::app(state);
+        (port, tokio::spawn(async move { axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap() }))
+    }
+    // Kaynak sunucu (ankara).
+    let (peer_cfg, peer_dir) = config();
+    let peer_cluster = local_cluster(&peer_cfg);
+    let node = peer_cluster.nodes[0].id.clone();
+    let peer = AppState::new(peer_cluster, Box::new(QemuDriver::new(peer_cfg.clone()).unwrap()), Duration::ZERO, None, admin());
+    let source = peer.create_guest(&spec("uretim", &node), "admin").unwrap();
+    let (port, source_server) = serve(peer.clone()).await;
+    // Hakem sunucu (izmir): kaynağı kendi eşi olarak izler.
+    let witness = AppState::new(redox_core::Cluster::demo(1_700_000_000), Box::new(redox_core::SimDriver::default()), Duration::ZERO, None, admin());
+    witness.peers().configure(redox_server::peers::parse_file(&format!("kaynak http://127.0.0.1:{port} es-sunucu-yonetici-tokeni\n")).unwrap());
+    let (witness_port, _witness_server) = serve(witness.clone()).await;
+    // Bu sunucu.
+    let (cfg, dir) = config();
+    let hub = AppState::new(local_cluster(&cfg), Box::new(QemuDriver::new(cfg.clone()).unwrap()), Duration::ZERO, None, Auth::new(UserFile::default(), None, false, Cost::Test));
+    let both = format!("ankara http://127.0.0.1:{port} es-sunucu-yonetici-tokeni\nizmir http://127.0.0.1:{witness_port} es-sunucu-yonetici-tokeni\n");
+    let alone = format!("ankara http://127.0.0.1:{port} es-sunucu-yonetici-tokeni\n");
+    hub.peers().configure(redox_server::peers::parse_file(&alone).unwrap());
+    hub.replica_put("ankara", source, 60, "admin").unwrap();
+    assert!(matches!(hub.replica_failover_set("ankara", source, Some(5), "admin"), Err(Error::InvalidSpec(m)) if m.contains("hakem")), "hakemsiz açılmaz");
+    hub.peers().configure(redox_server::peers::parse_file(&both).unwrap());
+    hub.replica_failover_set("ankara", source, Some(5), "admin").unwrap();
+    // `step`: eşleri yoklar ve devralma döngüsünü verilen saatte çalıştırır.
+    async fn step(hub: &AppState, witness: Option<&AppState>, at: u64) -> usize {
+        let (hub, witness) = (hub.clone(), witness.cloned());
+        tokio::task::spawn_blocking(move || {
+            if let Some(w) = witness {
+                w.peers().poll(at);
+            }
+            hub.peers().poll(at);
+            hub.failover_tick_at(at)
+        })
+        .await
+        .unwrap()
+    }
+    {
+        let hub = hub.clone();
+        assert_eq!(tokio::task::spawn_blocking(move || hub.replica_tick()).await.unwrap(), 1);
+    }
+    let standby = hub.snapshot().replicas[0].standby.expect("yedek kopya");
+    let t0 = redox_server::state::now();
+    assert_eq!(step(&hub, Some(&witness), t0 + 3600).await, 0, "kaynak ayakta: hiçbir şey olmaz");
+    assert_eq!(hub.snapshot().replicas[0].down_since, None);
+
+    // Kaynak ölür. Süre dolmadan devralınmaz.
+    source_server.abort();
+    let _ = source_server.await;
+    assert_eq!(step(&hub, None, t0 + 4000).await, 0);
+    assert_eq!(hub.snapshot().replicas[0].down_since, Some(t0 + 4000));
+    assert_eq!(step(&hub, None, t0 + 4000 + 299).await, 0);
+    // Süre doldu ama hakem kaynağı hâlâ çalışır görüyor (kendi yoklaması eski): devralınmaz.
+    assert_eq!(step(&hub, None, t0 + 4300).await, 0);
+    let c = hub.snapshot();
+    assert!(c.replicas[0].failover_note.as_deref().unwrap().contains("çalışır görüyor"), "{:?}", c.replicas[0].failover_note);
+    assert_eq!(c.guest(standby).unwrap().status, GuestStatus::Stopped);
+    // Hakeme ulaşılamıyorsa (bu sunucu yalnız kalmışsa) da devralınmaz.
+    hub.peers().configure(redox_server::peers::parse_file(&alone).unwrap());
+    assert_eq!(step(&hub, None, t0 + 4400).await, 0);
+    assert!(hub.snapshot().replicas[0].failover_note.as_deref().unwrap().contains("hiçbir hakem"));
+    hub.peers().configure(redox_server::peers::parse_file(&both).unwrap());
+    // Hakem de kaynağın öldüğünü görünce yedek kopya başlatılır; yalnızca bir kez.
+    assert_eq!(step(&hub, Some(&witness), t0 + 4500).await, 1);
+    let c = hub.snapshot();
+    assert_eq!((c.guest(standby).unwrap().status, c.replicas[0].failed_over, c.replicas[0].failover_note.clone()), (GuestStatus::Running, Some(t0 + 4500), None));
+    assert!(c.tasks.iter().any(|t| t.command == format!("vm failover ankara/{source}") && t.status == TaskStatus::Ok));
+    assert_eq!(step(&hub, Some(&witness), t0 + 9000).await, 0);
+    hub.run_action(standby, Action::Stop, "admin").unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+    std::fs::remove_dir_all(peer_dir).unwrap();
+}

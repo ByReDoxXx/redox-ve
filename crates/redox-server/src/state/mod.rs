@@ -9,6 +9,7 @@ use crate::auth::{write_private, Auth};
 use crate::host::HostSample;
 
 mod approvals;
+mod failover;
 mod maintenance;
 mod ratelimit;
 mod backup;

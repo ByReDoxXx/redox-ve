@@ -21,7 +21,7 @@ tanıtırsınız (`--peers DOSYA`, her satır `AD ADRES TOKEN`); *Küme* sayfas�
   kısa süre dondurulur); kopya kapalı gelir. Bu sunucuda LXC kurulu olmalıdır. **Sahte LXC araçlarıyla sınandı; gerçek
   LXC ile denenmedi.**
 
-Kesintisiz canlı taşıma ve kendiliğinden devralma yoktur.
+Kesintisiz canlı taşıma yoktur. Kendiliğinden devralma için aşağıya bakın.
 
 ## Çoğaltma (yedek kopya)
 
@@ -51,3 +51,32 @@ redox maintenance off          # kapatılanları açılış sırasıyla yeniden 
 
 Kipteyken hiçbir konuk başlatılmaz; zamanlanmış yedekler, güç işlemleri ve çoğaltma durur. Kip durum dosyasında
 saklanır: sunucu yeniden başlasa da konuklar kendiliğinden açılmaz. Konukları başka sunucuya taşımaz.
+
+## Kendiliğinden devralma (hakemli)
+
+Çoğaltılan bir konuk için, kaynak sunucu ölünce yedek kopyanın kendiliğinden başlatılmasını isteyebilirsiniz:
+
+```
+redox replica failover ankara 103 10     # ankara'ya 10 dakika ulaşılamazsa
+redox replica failover ankara 103 off
+```
+
+Arayüzde *Çoğaltma* kartındaki **Devralma** sütunundan da ayarlanır (0 kapatır; 5 ile 1440 dakika arası).
+
+Bu sunucu, "kaynak öldü" ile "benim ağım koptu" durumlarını tek başına ayıramaz. Bu yüzden başlatmadan önce bir
+**hakeme**, yani `--peers` dosyasında tanımlı başka bir RedoX sunucusuna sorar:
+
+- Hiçbir hakeme ulaşılamıyorsa devralınmaz (kopan büyük olasılıkla bu sunucudur).
+- Ulaşılan bir hakem kaynağı çalışır görüyorsa devralınmaz (kopan yalnızca aradaki bağlantıdır). Bunun için hakemin
+  `--peers` dosyasında kaynak sunucu, aynı adresle ya da aynı adla tanımlı olmalıdır; hakem kaynağı hiç tanımıyorsa
+  oyu yalnızca "ağ ayakta" anlamına gelir.
+- Engel kalkana dek dakikada bir yeniden denenir; neden kartta **engellendi** etiketinin üstünde görünür.
+
+Bir çoğaltma yalnızca bir kez devralınır. Kaynak geri gelince **yedek kopyayı ve kaynağı aynı anda çalışır
+bırakmayın**: birini kapatın. Kopya kapatılıp bir çoğaltma turu başarıyla bitince devralma yeniden kurulur. Bakım
+kipinde devralma yapılmaz.
+
+**Sınırlar:** hakem de kaynak da bu sunucudan aynı anda kopmuş ama kaynak aslında çalışıyorsa hiçbir yöntem bunu
+göremez; kaynağı zorla kapatma (fencing) yoktur. Konuğun adresi kopyaya kendiliğinden taşınmaz: kopya aynı ağdaysa aynı
+adresle açılır, değilse DNS'i ya da yönlendirmeyi siz değiştirirsiniz. Sahte QEMU ve üç sunuculu testle sınandı;
+gerçek bir kesintide denenmedi.

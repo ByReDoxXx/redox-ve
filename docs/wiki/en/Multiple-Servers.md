@@ -21,7 +21,7 @@ Buttons next to a peer's guest on the *Cluster* page:
   briefly during the backup); the copy arrives stopped. LXC must be installed on this server. **Tested with fake LXC
   tools; not tried with real LXC.**
 
-There is no zero-downtime live migration and no automatic failover.
+There is no zero-downtime live migration. For automatic failover see below.
 
 ## Replication (standby copy)
 
@@ -52,3 +52,32 @@ redox maintenance off          # starts them again in boot order
 
 While it is on no guest is started, and scheduled backups, power actions and replication are paused. The mode is kept in
 the state file: guests stay down across a reboot. It does not move guests to another server.
+
+## Automatic failover (with a witness)
+
+For a replicated guest you can ask for the standby copy to be started automatically when the source server dies:
+
+```
+redox replica failover ankara 103 10     # if ankara is unreachable for 10 minutes
+redox replica failover ankara 103 off
+```
+
+It can also be set in the **Failover** column of the *Replication* card (0 turns it off; 5 to 1440 minutes).
+
+This server alone cannot tell "the source died" from "my own network is down". So before starting anything it asks a
+**witness**: another RedoX server listed in the `--peers` file.
+
+- If no witness can be reached, nothing is started (this server is probably the isolated one).
+- If a reachable witness sees the source running, nothing is started (only the link in between is down). For this
+  the witness must have the source in its own `--peers` file under the same address or the same name; a witness that
+  does not know the source only proves that the network is up.
+- It retries every minute until the obstacle is gone; the reason is shown on the **blocked** label in the card.
+
+A replica fails over only once. When the source comes back, **do not leave the standby copy and the source running
+at the same time**: stop one of them. Once the copy is stopped and a replication run succeeds, failover is armed
+again. Nothing fails over in maintenance mode.
+
+**Limits:** if both the witness and this server lose the source at the same time while the source is in fact
+running, no method can see that; there is no fencing (forcibly powering off the source). The guest's address does not
+move by itself: on the same network the copy comes up with the same address, otherwise you change DNS or routing.
+Tested with fake QEMU and a three-server test; not tried in a real outage.

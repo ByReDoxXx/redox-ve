@@ -254,7 +254,7 @@ fn replicas_card(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
                     p class="empty" { (tx("Çoğaltma yok. Eş sunucudaki bir sanal makinenin kopyası burada düzenli tazelenir; o sunucu ölürse kopyayı buradan başlatırsınız.")) }
                 } @else {
                     div class="tw" { table {
-                        thead { tr { th { (tx("Kaynak")) } th { (tx("Aralık")) } th { (tx("Yedek kopya")) } th { (tx("Son başarılı tur")) } th { span class="sr" { (tx("İşlem")) } } } }
+                        thead { tr { th { (tx("Kaynak")) } th { (tx("Aralık")) } th { (tx("Yedek kopya")) } th { (tx("Son başarılı tur")) } th { (tx("Devralma")) (tip("Kaynak sunucuya yazdığınız dakika boyunca ulaşılamazsa yedek kopya kendiliğinden başlatılır. Önce hakeme, yani tanımlı başka bir eş sunucuya sorulur: hakeme ulaşılamıyorsa ya da hakem kaynağı çalışır görüyorsa devralınmaz. 0 kapatır.")) } th { span class="sr" { (tx("İşlem")) } } } }
                         tbody { @for r in list { tr {
                             td class="mono" { (r.peer) " / " (r.source) }
                             td class="mono" { (r.every_min) " dk" }
@@ -268,9 +268,17 @@ fn replicas_card(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
                                 @if let Some(e) = &r.error { " " span class="pill err" title=(e) { (icon("alert")) "hata" } }
                             }
                             td class="mono muted" { @match r.last_ok { Some(ts) => (datetime(ts)), None => "-" } }
+                            td {
+                                @match r.failover_min { Some(m) => span class="mono" { (m) " dk" }, None => span class="dim" { (tx("kapalı")) } }
+                                @if let Some(ts) = r.failed_over { " " span class="pill err" title=(datetime(ts)) { (tx("devralındı")) } }
+                                @else if let Some(note) = &r.failover_note { " " span class="pill err" title=(crate::i18n::tfmt(note.clone())) { (icon("alert")) (tx("engellendi")) } }
+                                @else if r.failover_min.is_some() && r.down_since.is_some() { " " span class="pill idle" { (tx("kaynak yanıt vermiyor")) } }
+                            }
                             td class="act" { @if p.admin {
                                 form class="inline" method="post" action="/cluster/replica" {
                                     input type="hidden" name="peer" value=(r.peer); input type="hidden" name="vmid" value=(r.source);
+                                    input name="failover_min" type="text" inputmode="numeric" size="3" aria-label=(tx("Devralma süresi (dk)")) value=(r.failover_min.unwrap_or(0));
+                                    button class="btn sm" type="submit" name="op" value="failover" { (tx("Devralma")) }
                                     button class="btn sm" type="submit" name="op" value="run" disabled[r.running] { (tx("Şimdi")) }
                                     button class="btn sm danger" type="submit" name="op" value="remove" { (tx("Kaldır")) }
                                 }
@@ -289,7 +297,7 @@ fn replicas_card(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
                         button class="btn sm" type="submit" name="op" value="add" { (icon("plus")) (tx("Çoğalt")) }
                     }
                 }
-                footer { (tx("Her tur konuğun diskinin tamamını kopyalar (kaynak çalışmaya devam eder); kayıp, son turdan beri yazılanlarla sınırlıdır. Yedek kopya kapalı durur; kaynak sunucu ölürse onu buradan başlatın. Çalışan bir kopyanın üzerine yazılmaz.")) }
+                footer { (tx("Kaynak çalışmaya devam eder; ilk turdan sonra yalnızca değişen bloklar indirilir. Kayıp, son turdan beri yazılanlarla sınırlıdır. Yedek kopya kapalı durur; kaynak sunucu ölürse onu buradan başlatın ya da kendiliğinden devralmayı açın. Çalışan bir kopyanın üzerine yazılmaz.")) }
             }
         }
     }

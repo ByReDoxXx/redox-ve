@@ -253,7 +253,8 @@ pub struct ReplicaForm {
     peer: String,
     vmid: String,
     every_min: String,
-    /// `add`, `run` ya da `remove`.
+    failover_min: String,
+    /// `add`, `run`, `failover` ya da `remove`.
     op: String,
 }
 
@@ -268,6 +269,13 @@ pub async fn replica_action(State(st): State<AppState>, Extension(me): Extension
             let (st, peer) = (st.clone(), peer.clone());
             tokio::task::spawn_blocking(move || st.replica_run(&peer, vmid)).await.unwrap_or_else(|e| Err(Error::Driver(e.to_string()))).map(|()| (tx("Çoğaltma başladı; sonuç görevlerde görünecek.")).to_string())
         }
+        "failover" => match f.failover_min.trim() {
+            "" | "0" => st.replica_failover_set(&peer, vmid, None, &me.user).map(|()| (tx("Kendiliğinden devralma kapatıldı.")).to_string()),
+            text => match text.parse::<u32>() {
+                Ok(minutes) => st.replica_failover_set(&peer, vmid, Some(minutes), &me.user).map(|()| tfmt(format!("{peer} sunucusuna {minutes} dakika ulaşılamazsa ve bir hakem onaylarsa yedek kopya kendiliğinden başlatılacak."))),
+                Err(_) => return flash("/cluster", "error", (tx("Devralma süresi dakika olarak bir tam sayı olmalı (0 kapatır)."))),
+            },
+        },
         "remove" => st.replica_remove(&peer, vmid, &me.user).map(|()| (tx("Çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor.")).to_string()),
         _ => match f.every_min.trim().parse::<u32>() {
             Ok(minutes) => st.replica_put(&peer, vmid, minutes, &me.user).map(|()| tfmt(format!("{peer} sunucusundaki {vmid}, {minutes} dakikada bir buraya çoğaltılacak."))),

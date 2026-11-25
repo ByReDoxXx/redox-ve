@@ -224,6 +224,13 @@ impl Peer {
         response.into_json().map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())
     }
 
+    /// Bu eşin kendi eşlerini nasıl gördüğü: (ad, adres, ulaşılıyor mu). Devralmada hakem oyu olarak kullanılır.
+    pub fn peers_seen(&self) -> Result<Vec<(String, String, bool)>, String> {
+        let listed = self.json("GET", "/api/v1/peers")?;
+        let text = |p: &serde_json::Value, key: &str| p[key].as_str().unwrap_or_default().to_string();
+        Ok(listed.as_array().ok_or("eş sunucunun yanıtı anlaşılamadı")?.iter().map(|p| (text(p, "name"), text(p, "url"), !p["checked"].is_null() && p["error"].is_null())).collect())
+    }
+
     pub fn guest(&self, vmid: redox_core::VmId) -> Result<Guest, String> {
         serde_json::from_value(self.json("GET", &format!("/api/v1/guests/{vmid}"))?).map_err(|_| "eş sunucudaki konuk kaydı okunamadı".to_string())
     }

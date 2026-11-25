@@ -66,6 +66,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox vm move <kimlik> <depolama>      (kapalı sanal makinenin disklerini başka depolama alanına taşır)
   redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
   redox replica list | add <eş> <kimlik> [dakika] | run <eş> <kimlik> | remove <eş> <kimlik>
+  redox replica failover <eş> <kimlik> <dakika|off>    # kaynak ölünce yedek kopyayı hakem onayıyla başlat
         (eş sunucudaki sanal makinenin buradaki yedek kopyasını düzenli tazeler; varsayılan 60 dakikada bir)
   redox maintenance status | on [--drain] | off   (bakım kipi: konuk başlatılmaz, zamanlanmış işler durur;
         --drain çalışan konukları sırayla kapatır, off onları yeniden başlatır)
@@ -355,6 +356,13 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             Some(json!({ "peer": peer, "vmid": vmid(id)?, "every_min": minutes.parse::<u32>().map_err(|_| format!("aralık dakika olarak bir sayı olmalı: {minutes}"))? })),
             View::Done("çoğaltma eklendi; ilk tur bir dakika içinde başlar"),
         ),
+        ["replica", "failover", peer, id, minutes] => {
+            let minutes = match *minutes {
+                "off" | "kapat" | "0" => None,
+                text => Some(text.parse::<u32>().map_err(|_| "devralma süresi dakika olarak bir tam sayı ya da off olmalı".to_string())?),
+            };
+            req("POST", format!("/replicas/{peer}/{}/failover", vmid(id)?), Some(json!({ "minutes": minutes })), View::Done("devralma ayarı kaydedildi"))
+        }
         ["replica", "run", peer, id] => req("POST", format!("/replicas/{peer}/{}/run", vmid(id)?), None, View::Done("çoğaltma başladı; sonuç: redox task list")),
         ["replica", "remove", peer, id] => req("DELETE", format!("/replicas/{peer}/{}", vmid(id)?), None, View::Done("çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor")),
         ["maintenance", "status"] => get("/maintenance", View::Maintenance),
@@ -557,7 +565,13 @@ pub fn render(view: View, v: &Value) -> String {
                     },
                     (None, None) => "henüz çoğaltılmadı".to_string(),
                 };
-                format!("{:<14} {:<6} her {:>5} dk   {state}", s(r, "peer"), n(r, "source"), n(r, "every_min"))
+                let failover = match (r["failed_over"].as_u64(), r["failover_min"].as_u64(), r["failover_note"].as_str()) {
+                    (Some(_), _, _) => "   DEVRALINDI".to_string(),
+                    (None, Some(m), Some(note)) => format!("   devralma: {m} dk (engellendi: {note})"),
+                    (None, Some(m), None) => format!("   devralma: {m} dk"),
+                    (None, None, _) => String::new(),
+                };
+                format!("{:<14} {:<6} her {:>5} dk   {state}{failover}", s(r, "peer"), n(r, "source"), n(r, "every_min"))
             }),
             "çoğaltma yok",
         ),
@@ -800,6 +814,8 @@ mod tests {
         assert_eq!(parsed("approval list"), ("GET", "/approvals".into(), None, View::Approvals));
         assert_eq!(parsed("replica add ankara 500 30").2, Some(json!({"peer": "ankara", "vmid": 500, "every_min": 30})));
         assert_eq!(parsed("replica run ankara 500").1, "/replicas/ankara/500/run");
+        assert_eq!(parsed("replica failover ankara 500 10").2, Some(json!({"minutes": 10})));
+        assert_eq!(parsed("replica failover ankara 500 off").2, Some(json!({"minutes": null})));
         assert_eq!(parsed("replica remove ankara 500"), ("DELETE", "/replicas/ankara/500".into(), None, View::Done("çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor")));
         assert_eq!(render(View::Replicas, &json!([{"peer": "ankara", "source": 500, "every_min": 60, "standby": 103, "last_ok": 5, "error": null}])), "ankara         500    her    60 dk   yedek kopya: 103");
         assert_eq!(parsed("maintenance on --drain"), ("POST", "/maintenance".into(), Some(json!({"on": true, "drain": true})), View::Maintenance));
