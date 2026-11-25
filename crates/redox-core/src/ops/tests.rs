@@ -941,3 +941,28 @@ fn shares_and_other_hardware_cannot_change_while_suspended() {
     c.clear_suspended(103);
     assert!(c.update_guest(103, &shares(""), "u", NOW).is_ok());
 }
+
+#[test]
+fn scheduled_boot_tests_pick_the_newest_backup_that_is_due() {
+    use crate::retention::DAY_SECS;
+    let mut c = cluster();
+    assert_eq!(c.next_backup_to_test(NOW, 7), None, "yedek yok");
+    let add = |c: &mut Cluster, id: &str, vmid, age_days: u64, tested_days_ago: Option<u64>| {
+        let tested = tested_days_ago.map(|d| BackupTest { at: NOW - d * DAY_SECS, ok: true, note: String::new() });
+        c.add_backup(Backup { id: id.into(), vmid, guest_name: "x".into(), created: NOW - age_days * DAY_SECS, size_mb: 5, auto: false, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested, copies: 0 });
+    };
+    // 100: en yeni yedeği 2 gün önce sınandı (sırası gelmedi); eski yedeği hiç sınanmadı ama en yenisi değil.
+    add(&mut c, "vm-100-eski", 100, 9, None);
+    add(&mut c, "vm-100-yeni", 100, 1, Some(2));
+    assert_eq!(c.next_backup_to_test(NOW, 7), None);
+    // 103: en yeni yedeği 8 gün önce sınandı; 101: hiç sınanmadı (önce o).
+    add(&mut c, "vm-103-1", 103, 3, Some(8));
+    assert_eq!(c.next_backup_to_test(NOW, 7).as_deref(), Some("vm-103-1"));
+    add(&mut c, "vm-101-1", 101, 3, None);
+    assert_eq!(c.next_backup_to_test(NOW, 7).as_deref(), Some("vm-101-1"));
+    // Konteyner yedekleri açılarak sınanmaz.
+    let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct).unwrap().vmid;
+    c.backups.retain(|b| b.vmid == 100);
+    add(&mut c, &format!("ct-{ct}-1"), ct, 1, None);
+    assert_eq!(c.next_backup_to_test(NOW, 7), None);
+}

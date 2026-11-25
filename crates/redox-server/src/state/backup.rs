@@ -397,6 +397,35 @@ impl AppState {
         })
     }
 
+    /// Yedekleri kendiliğinden açarak sınamayı ayarlar: her konuğun en yeni yedeği `every_days` günde bir,
+    /// `minute_of_day` saatinden başlayarak sırayla sınanır. 0 gün kapatır.
+    pub fn set_auto_test(&self, every_days: u32, minute_of_day: u16) {
+        *self.0.auto_test.lock().unwrap_or_else(|e| e.into_inner()) = (every_days, minute_of_day);
+    }
+
+    /// Zamanlanmış sınama turu (dakikada bir çağrılır): başlama saatinden sonraki dört saat içinde, o an
+    /// süren bir sınama yoksa sırası gelen bir yedeği sınamaya başlar. Başlattığı yedeğin adını döndürür.
+    pub fn auto_test_tick(&self, minute_of_day: u16) -> Option<String> {
+        const WINDOW_MIN: u16 = 240;
+        let (every, start) = *self.0.auto_test.lock().unwrap_or_else(|e| e.into_inner());
+        if every == 0 || minute_of_day < start || minute_of_day >= start.saturating_add(WINDOW_MIN) {
+            return None;
+        }
+        let c = self.snapshot();
+        // Sınama konukları yalıtılmış açılır; biri duruyorsa sınama sürüyordur (aynı anda tek sınama).
+        if c.guests.iter().any(|g| g.hw.isolated) {
+            return None;
+        }
+        let id = c.next_backup_to_test(now(), every)?;
+        match self.backup_test(&id, SCHEDULER) {
+            Ok(()) => Some(id),
+            Err(e) => {
+                eprintln!("zamanlanmış yedek sınaması başlatılamadı ({id}): {e}");
+                None
+            }
+        }
+    }
+
     pub fn backup_delete(&self, id: &str, user: &str) -> Result<(), Error> {
         // Kilitli yedek, süresi dolana kadar kimse tarafından silinemez (zamanlayıcının budaması dahil).
         self.lock().backup_deletable(id, now())?;

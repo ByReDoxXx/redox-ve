@@ -179,6 +179,8 @@ struct Inner {
     guestfish: Mutex<Option<String>>,
     /// Yedek sınamasında geçici konuğun çalışır halde bekletildiği süre.
     boot_test_wait: Mutex<Duration>,
+    /// Zamanlanmış yedek sınaması: (kaç günde bir, başlama saati gece yarısından dakika); 0 gün kapalı.
+    auto_test: Mutex<(u32, u16)>,
     /// Bu kadar gündür yedeği olmayan konuk "korumasız" sayılır; 0 kapalı.
     backup_age_days: Mutex<u32>,
     /// Dört göz ilkesi: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.
@@ -213,6 +215,7 @@ impl AppState {
             guestfish: Mutex::new(None),
             offsite_copies: Mutex::new(Vec::new()),
             boot_test_wait: Mutex::new(Duration::from_secs(60)),
+            auto_test: Mutex::new((0, 180)),
             backup_age_days: Mutex::new(7),
             four_eyes: std::sync::atomic::AtomicBool::new(false),
             report: Mutex::new((None, None)),

@@ -104,6 +104,20 @@ impl Cluster {
         b.suspicious.take().ok_or_else(|| Error::InvalidSpec(format!("{id} yedeğinde kapatılacak bir uyarı yok")))
     }
 
+    /// Zamanlanmış sınama için sıradaki yedek: her sanal makinenin **en yeni** yedeği, hiç sınanmadıysa ya da
+    /// son sınaması `every_days` günden eskiyse adaydır. Hiç sınanmamışlar önce, sonra sınaması en eski olan gelir.
+    /// Şablonların ve konteynerlerin yedekleri açılarak sınanmaz.
+    pub fn next_backup_to_test(&self, now: u64, every_days: u32) -> Option<String> {
+        let limit = now.saturating_sub(u64::from(every_days) * crate::retention::DAY_SECS);
+        self.guests
+            .iter()
+            .filter(|g| g.kind == GuestKind::Vm && !g.hw.template && !g.hw.isolated)
+            .filter_map(|g| self.backups.iter().filter(|b| b.vmid == g.vmid && b.id.starts_with("vm-")).max_by_key(|b| b.created))
+            .filter(|b| b.tested.as_ref().is_none_or(|t| t.at <= limit))
+            .min_by_key(|b| (b.tested.as_ref().map_or(0, |t| t.at), b.vmid))
+            .map(|b| b.id.clone())
+    }
+
     /// Sınama sonucunu yedeğe yazar; yedek o arada silinmişse sessizce geçer.
     pub fn set_backup_test(&mut self, id: &str, test: BackupTest) {
         if let Some(b) = self.backups.iter_mut().find(|b| b.id == id) {

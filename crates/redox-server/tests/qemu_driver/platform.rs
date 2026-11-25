@@ -195,3 +195,30 @@ passphrase = bir-hedef-parolasi
     assert!(state.snapshot().tasks.iter().any(|t| t.command == format!("backup archive-expire {backup}")));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn newest_backups_are_boot_tested_on_a_schedule() {
+    if !python_available() {
+        return;
+    }
+    let (cfg, dir) = config();
+    let cluster = local_cluster(&cfg);
+    let node = cluster.nodes[0].id.clone();
+    let state = AppState::new(cluster, Box::new(QemuDriver::new(cfg.clone()).unwrap()), Duration::ZERO, None, Auth::new(UserFile::default(), None, false, Cost::Test));
+    state.set_boot_test_wait(Duration::from_millis(200));
+    let id = state.create_guest(&spec("uretim", &node), "admin").unwrap();
+    let backup = state.backup_create(id, "admin").unwrap();
+    // Kapalıyken ve saat penceresinin dışında bir şey yapılmaz.
+    assert_eq!(state.auto_test_tick(200), None);
+    state.set_auto_test(7, 180);
+    assert_eq!(state.auto_test_tick(179), None);
+    assert_eq!(state.auto_test_tick(180 + 240), None);
+    // Pencerede: en yeni yedek sınanır, sonuç yedeğe yazılır; aynı yedek yedi gün dolmadan yeniden sınanmaz.
+    assert_eq!(state.auto_test_tick(185).as_deref(), Some(backup.as_str()));
+    let c = state.snapshot();
+    assert!(c.backup(&backup).unwrap().tested.as_ref().is_some_and(|t| t.ok));
+    assert!(c.tasks.iter().any(|t| t.command == format!("backup test {backup}") && t.user == redox_server::state::SCHEDULER));
+    assert_eq!(c.guests.len(), 1);
+    assert_eq!(state.auto_test_tick(186), None);
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -43,6 +43,7 @@ struct ServeOptions {
     oidc: Option<PathBuf>,
     guestfish_bin: Option<String>,
     backup_test_secs: Option<u64>,
+    backup_test_every: Option<String>,
     backup_report: Option<String>,
     offsite_copies: Vec<PathBuf>,
     backup_age_days: Option<u64>,
@@ -81,6 +82,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         oidc: None,
         guestfish_bin: None,
         backup_test_secs: None,
+        backup_test_every: None,
         backup_report: None,
         offsite_copies: Vec::new(),
         backup_age_days: None,
@@ -112,6 +114,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--oidc" => opts.oidc = Some(PathBuf::from(value()?)),
             "--guestfish-bin" => opts.guestfish_bin = Some(value()?.clone()),
             "--backup-test-secs" => opts.backup_test_secs = Some(number(value()?)?),
+            "--backup-test-every" => opts.backup_test_every = Some(value()?.clone()),
             "--backup-report" => opts.backup_report = Some(value()?.clone()),
             "--offsite-copy" => opts.offsite_copies.push(PathBuf::from(value()?)),
             "--backup-age-days" => opts.backup_age_days = Some(number(value()?)?),
@@ -319,6 +322,13 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         state.set_backup_report(minute);
         println!("Yedek raporu her gün {time} saatinde e-postayla gönderilecek.");
     }
+    if let Some(text) = &opts.backup_test_every {
+        let (days, time) = text.split_once('@').unwrap_or((text, "03:00"));
+        let days: u32 = days.parse().ok().filter(|d| (1..=365).contains(d)).ok_or_else(|| format!("--backup-test-every GÜN[@SS:DD] biçiminde olmalı (örn. 7@03:00): {text}"))?;
+        let minute = redox_core::parse_time(time).ok_or_else(|| format!("--backup-test-every GÜN[@SS:DD] biçiminde olmalı (örn. 7@03:00): {text}"))?;
+        state.set_auto_test(days, minute);
+        println!("Her sanal makinenin en yeni yedeği {days} günde bir, {time} saatinden başlayarak açılıp sınanacak.");
+    }
     if let Some(secs) = opts.backup_test_secs {
         state.set_boot_test_wait(Duration::from_secs(secs.clamp(5, 3600)));
     }
@@ -403,6 +413,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                 let (today, weekday, minute) = redox_server::state::local_now();
                 st.power_tick(&today, weekday, minute);
                 st.jobs_tick(&today, weekday, minute);
+                st.auto_test_tick(minute);
                 if let Some(Err(e)) = st.report_tick(&today, minute) {
                     eprintln!("yedek raporu gönderilemedi: {e}");
                 }
