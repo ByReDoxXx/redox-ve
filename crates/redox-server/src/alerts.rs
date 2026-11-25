@@ -129,8 +129,76 @@ struct Seen {
     pending: HashMap<String, u64>,
 }
 
+/// Web kancası ve e-posta dışındaki bildirim kanalları.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Channel {
+    /// ntfy konusu (https://ntfy.sh/konu ya da kendi sunucunuz): gövde düz metindir.
+    Ntfy(String),
+    /// Telegram botu. `api` sınamalar dışında https://api.telegram.org'dur.
+    Telegram { api: String, token: String, chat: String },
+}
+
+/// Bot anahtarı hata ayıklama çıktısına yazılmaz.
+impl std::fmt::Debug for Channel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.describe())
+    }
+}
+
+impl Channel {
+    pub fn ntfy(url: &str) -> Result<Channel, String> {
+        if !(url.starts_with("https://") || url.starts_with("http://")) || url.contains(char::is_whitespace) || !url.split_once("://").and_then(|(_, rest)| rest.split_once('/')).is_some_and(|(host, topic)| !host.is_empty() && !topic.trim_matches('/').is_empty()) {
+            return Err(format!("ntfy adresi konuyu da içermeli, örn. https://ntfy.sh/redox-uyarilari: {url}"));
+        }
+        Ok(Channel::Ntfy(url.to_string()))
+    }
+
+    /// Telegram ayar dosyası: `token = <bot anahtarı>` ve `chat = <sohbet kimliği>` satırları.
+    pub fn telegram(text: &str) -> Result<Channel, String> {
+        let mut map = std::collections::HashMap::new();
+        for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+            let (key, value) = line.split_once('=').ok_or("telegram dosyası: \"anahtar = değer\" bekleniyordu")?;
+            map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+        let mut need = |key: &str| map.remove(key).filter(|v| !v.is_empty()).ok_or_else(|| format!("telegram dosyası: \"{key}\" eksik"));
+        let (token, chat) = (need("token")?, need("chat")?);
+        let api = map.remove("api").unwrap_or_else(|| "https://api.telegram.org".to_string());
+        // Anahtar adresin parçası olur: yalnızca Telegram'ın kullandığı karakterler kabul edilir.
+        if !token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b':' || b == b'_' || b == b'-') {
+            return Err("telegram dosyası: bot anahtarı geçersiz karakter içeriyor".to_string());
+        }
+        if let Some(unknown) = map.keys().next() {
+            return Err(format!("telegram dosyası: bilinmeyen anahtar \"{unknown}\""));
+        }
+        Ok(Channel::Telegram { api: api.trim_end_matches('/').to_string(), token, chat })
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            Channel::Ntfy(url) => format!("ntfy ({url})"),
+            Channel::Telegram { chat, .. } => format!("Telegram (sohbet {chat})"),
+        }
+    }
+
+    fn send(&self, agent: &ureq::Agent, text: &str) -> Result<(), String> {
+        match self {
+            Channel::Ntfy(url) => agent.post(url).set("Title", "RedoX VE").send_string(text).map(|_| ()).map_err(|e| format!("ntfy bildirimi gönderilemedi: {e}")),
+            // Hata iletisinde adres (ve içindeki bot anahtarı) yer almaz.
+            Channel::Telegram { api, token, chat } => agent
+                .post(&format!("{api}/bot{token}/sendMessage"))
+                .send_json(json!({ "chat_id": chat, "text": text }))
+                .map(|_| ())
+                .map_err(|e| match e {
+                    ureq::Error::Status(code, _) => format!("Telegram bildirimi reddedildi (HTTP {code}); bot anahtarını ve sohbet kimliğini denetleyin"),
+                    ureq::Error::Transport(_) => "Telegram bildirimi gönderilemedi: sunucuya ulaşılamadı".to_string(),
+                }),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Alerts {
+    channels: Mutex<Vec<Channel>>,
     webhook: Mutex<Option<String>>,
     email: Mutex<Option<crate::mail::Config>>,
     seen: Mutex<Seen>,
@@ -147,6 +215,30 @@ impl Alerts {
         }
         *lock(&self.webhook) = Some(url.to_string());
         Ok(())
+    }
+
+    pub fn add_channel(&self, channel: Channel) {
+        lock(&self.channels).push(channel);
+    }
+
+    /// Olayları ek kanallara (ntfy, Telegram) gönderir. Bir kanal başarısız olsa da öbürleri denenir;
+    /// ilk hata döner.
+    pub fn deliver_channels(&self, cluster: &str, events: &[Event]) -> Result<usize, String> {
+        let channels = lock(&self.channels).clone();
+        if channels.is_empty() || events.is_empty() {
+            return Ok(0);
+        }
+        let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build();
+        let text: String = events.iter().map(|e| e.text(cluster)).collect::<Vec<_>>().join("\n");
+        let mut failure = None;
+        let mut sent = 0;
+        for channel in &channels {
+            match channel.send(&agent, &text) {
+                Ok(()) => sent += 1,
+                Err(e) => failure = failure.or(Some(e)),
+            }
+        }
+        failure.map_or(Ok(sent), Err)
     }
 
     pub fn set_email(&self, config: crate::mail::Config) {
@@ -377,6 +469,66 @@ mod tests {
         assert_eq!(alerts.deliver("ist", &[Event::GuestStopped { vmid: 1, name: "x".into() }]), Ok(0), "adres yoksa gönderim yapılmaz");
         alerts.set_webhook("https://hooks.example.com/abc").unwrap();
         assert_eq!(alerts.webhook().as_deref(), Some("https://hooks.example.com/abc"));
+    }
+
+    #[test]
+    fn channels_are_validated_and_hide_the_bot_token() {
+        assert!(Channel::ntfy("https://ntfy.sh/redox").is_ok());
+        assert!(Channel::ntfy("https://ntfy.sh/").is_err() && Channel::ntfy("https://ntfy.sh").is_err() && Channel::ntfy("ntfy.sh/x").is_err());
+        let tg = Channel::telegram("# bot\ntoken = 123456:ABC_def-1\nchat = -100200300\n").unwrap();
+        assert_eq!(format!("{tg:?}"), "Telegram (sohbet -100200300)", "anahtar çıktıya yazılmaz");
+        assert!(Channel::telegram("token = 1:a\n").unwrap_err().contains("\"chat\" eksik"));
+        assert!(Channel::telegram("token = 1:a/../x\nchat = 5\n").unwrap_err().contains("geçersiz karakter"));
+        assert!(Channel::telegram("token = 1:a\nchat = 5\nbaska = 1\n").unwrap_err().contains("bilinmeyen anahtar"));
+        let alerts = Alerts::default();
+        assert_eq!(alerts.deliver_channels("x", &[Event::GuestStopped { vmid: 1, name: "a".into() }]), Ok(0), "kanal yoksa gönderim yapılmaz");
+    }
+
+    #[test]
+    fn ntfy_gets_plain_text_and_telegram_gets_json() {
+        use std::io::{Read, Write};
+        // İki isteği sırayla karşılayan küçük sunucu.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut received = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = socket.read(&mut buf).unwrap_or(0);
+                    received.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&received).to_string();
+                    let length = text.to_lowercase().split("content-length:").nth(1).and_then(|l| l.lines().next()?.trim().parse::<usize>().ok());
+                    let body = text.split("\r\n\r\n").nth(1).map(str::len);
+                    if n == 0 || matches!((length, body), (Some(want), Some(have)) if have >= want) {
+                        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                        seen.push(text);
+                        break;
+                    }
+                }
+            }
+            seen
+        });
+        let alerts = Alerts::default();
+        alerts.add_channel(Channel::ntfy(&format!("http://127.0.0.1:{port}/redox-uyari")).unwrap());
+        alerts.add_channel(Channel::telegram(&format!("token = 42:gizli\nchat = 77\napi = http://127.0.0.1:{port}\n")).unwrap());
+        let events = [Event::GuestStopped { vmid: 103, name: "web".into() }, Event::GuestStopped { vmid: 104, name: "db".into() }];
+        assert_eq!(alerts.deliver_channels("ist", &events), Ok(2));
+        let seen = server.join().unwrap();
+        assert!(seen[0].starts_with("POST /redox-uyari HTTP/1.1") && seen[0].contains("103 (web)") && seen[0].contains("104 (db)"), "{}", seen[0]);
+        assert!(seen[1].starts_with("POST /bot42:gizli/sendMessage HTTP/1.1"), "{}", seen[1]);
+        let body: serde_json::Value = serde_json::from_str(seen[1].split("\r\n\r\n").nth(1).unwrap().trim()).unwrap();
+        assert_eq!(body["chat_id"], "77");
+        assert!(body["text"].as_str().unwrap().contains("BEKLENMEDİK KAPANMA"));
+
+        // Ulaşılamayan Telegram: hata iletisi bot anahtarını içermez.
+        let dead = Alerts::default();
+        dead.add_channel(Channel::telegram("token = 42:gizli\nchat = 77\napi = http://127.0.0.1:1\n").unwrap());
+        let err = dead.deliver_channels("ist", &events).unwrap_err();
+        assert!(err.contains("Telegram") && !err.contains("gizli"), "{err}");
     }
 
     #[test]

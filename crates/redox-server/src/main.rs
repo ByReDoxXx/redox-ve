@@ -37,6 +37,8 @@ struct ServeOptions {
     cbt: bool,
     backup_mbps: u64,
     alert_webhook: Option<String>,
+    alert_ntfy: Option<String>,
+    alert_telegram: Option<PathBuf>,
     alert_email: Option<PathBuf>,
     peers: Option<PathBuf>,
     offsite: Option<PathBuf>,
@@ -76,6 +78,8 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         cbt: false,
         backup_mbps: 0,
         alert_webhook: None,
+        alert_ntfy: None,
+        alert_telegram: None,
         alert_email: None,
         peers: None,
         offsite: None,
@@ -108,6 +112,8 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--changed-block-tracking" => opts.cbt = true,
             "--backup-mbps" => opts.backup_mbps = number(value()?)?,
             "--alert-webhook" => opts.alert_webhook = Some(value()?.clone()),
+            "--alert-ntfy" => opts.alert_ntfy = Some(value()?.clone()),
+            "--alert-telegram" => opts.alert_telegram = Some(PathBuf::from(value()?)),
             "--alert-email" => opts.alert_email = Some(PathBuf::from(value()?)),
             "--peers" => opts.peers = Some(PathBuf::from(value()?)),
             "--offsite" => opts.offsite = Some(PathBuf::from(value()?)),
@@ -295,6 +301,17 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         state.alerts().set_webhook(url)?;
         println!("Uyarılar webhook'a gönderilecek.");
     }
+    if let Some(url) = &opts.alert_ntfy {
+        let channel = redox_server::alerts::Channel::ntfy(url)?;
+        println!("Uyarılar gönderilecek: {}", channel.describe());
+        state.alerts().add_channel(channel);
+    }
+    if let Some(path) = &opts.alert_telegram {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
+        let channel = redox_server::alerts::Channel::telegram(&text)?;
+        println!("Uyarılar gönderilecek: {}", channel.describe());
+        state.alerts().add_channel(channel);
+    }
     if state.driver().firewall() {
         match state.sync_firewall() {
             Ok(()) => println!("Konuk güvenlik duvarı açık (nftables, bridge ailesi, tablo: redox)."),
@@ -394,6 +411,9 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                     println!("uyarı: {}", e.text(&st.snapshot().name));
                 }
                 if let Err(e) = st.alerts().deliver(&st.snapshot().name, &events) {
+                    eprintln!("{e}");
+                }
+                if let Err(e) = st.alerts().deliver_channels(&st.snapshot().name, &events) {
                     eprintln!("{e}");
                 }
                 if let Err(e) = st.alerts().deliver_email(&st.snapshot().name, &events) {
