@@ -1,0 +1,273 @@
+//! Sunucular arası taşıma, OVA dışa aktarma ve kurulum ortamları.
+
+use super::*;
+
+impl AppState {
+    /// Kapalı sanal makineyi dışa aktarma için hazırlar: konuğun kaydı, geçici dizin ve vmdk diskleri.
+    #[allow(clippy::type_complexity)]
+    pub fn export_ova(&self, vmid: VmId) -> Result<(Guest, std::path::PathBuf, Vec<(String, std::path::PathBuf, u64)>), Error> {
+        let guest = self.lock().guest(vmid)?.clone();
+        if guest.kind != redox_core::GuestKind::Vm {
+            return Err(Error::InvalidSpec("yalnızca sanal makineler OVA olarak dışa aktarılır".to_string()));
+        }
+        if let Some(task) = guest.lock {
+            return Err(Error::Locked { vmid, task });
+        }
+        if guest.status != redox_core::GuestStatus::Stopped {
+            return Err(Error::RequiresStopped { vmid, what: "dışa aktarmak".to_string() });
+        }
+        match self.driver().export_disks(&guest).map_err(Error::Driver)? {
+            Some((dir, disks)) => Ok((guest, dir, disks)),
+            None => Err(Error::InvalidSpec("bu sürücü disk dosyası tutmuyor (gerçek sürücü gerekir)".to_string())),
+        }
+    }
+
+    /// Kalıbı ya da imajı bir adresten arka planda indirir; sonuç görev günlüğüne yazılır.
+    /// Dosya adı verilmezse adresin son parçası kullanılır.
+    pub fn media_fetch(&self, url: &str, name: &str, sha256: &str, user: &str) -> Result<String, Error> {
+        let url = url.trim().to_string();
+        let name = match name.trim() {
+            "" => url.split(['?', '#']).next().unwrap_or_default().rsplit('/').next().unwrap_or_default().to_string(),
+            given => given.to_string(),
+        };
+        let (dest, _) = crate::media::target(self, &name)?;
+        if dest.exists() {
+            return Err(Error::InvalidSpec(format!("{name} zaten var; önce onu silin ya da başka bir ad verin")));
+        }
+        // İstek hemen reddedilebilsin diye adres önce burada denetlenir; indirirken (yönlendirmelerde) yeniden denetlenir.
+        crate::media::check_public_url(&url).map_err(Error::InvalidSpec)?;
+        let (me, user, sha256, label) = (self.clone(), user.to_string(), sha256.trim().to_string(), name.clone());
+        self.dispatch(move || {
+            let outcome = crate::media::fetch(&url, &dest, Some(&sha256), &crate::media::check_public_url).map(|_| ());
+            me.mutate(|c| {
+                let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+                c.log(&node, &user, format!("media fetch {label}"), &outcome, now(), None);
+            });
+        });
+        Ok(name)
+    }
+
+    /// Yüklenen kalıbın ya da imajın kaydını görev günlüğüne düşer.
+    pub fn media_uploaded(&self, name: &str, outcome: &Result<(), String>, user: &str) {
+        self.mutate(|c| {
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, format!("media upload {name}"), outcome, now(), None);
+        });
+    }
+
+    /// Kalıbı ya da imajı siler. Bir konuk kullanıyorsa (takılı kalıp) silinmez.
+    pub fn media_delete(&self, name: &str, user: &str) -> Result<(), Error> {
+        let (path, iso) = crate::media::target(self, name)?;
+        if iso {
+            let users: Vec<String> = self.lock().guests.iter().filter(|g| g.iso.as_deref() == Some(name)).map(|g| g.vmid.to_string()).collect();
+            if !users.is_empty() {
+                return Err(Error::InvalidSpec(format!("{name} şu konuklara takılı: {}. Önce kalıbı onlardan çıkarın.", users.join(", "))));
+            }
+        }
+        let outcome = match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Error::InvalidSpec(format!("{name} bulunamadı"))),
+            Err(e) => Err(format!("{name} silinemedi: {e}")),
+        };
+        self.mutate(|c| {
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, format!("media delete {name}"), &outcome, now(), None);
+        });
+        outcome.map_err(Error::Driver)
+    }
+
+    /// Eş sunucudaki kapalı sanal makineyi yedeği üzerinden bu sunucuya kopyalar (arka planda).
+    /// Kaynak konuğa dokunulmaz: çalıştığını doğruladıktan sonra eşte silmek size kalır.
+    pub fn import_from_peer(&self, peer_name: &str, vmid: VmId, user: &str) -> Result<(), Error> {
+        let peer = self.peers().peer(peer_name).ok_or_else(|| Error::InvalidSpec(format!("\"{peer_name}\" adında bir eş sunucu tanımlı değil")))?;
+        let image = format!("aktarim-{peer_name}-{vmid}.qcow2");
+        let Some(image_path) = self.driver().image_file(&image) else {
+            return Err(Error::InvalidSpec("bu sürücü disk imajı içe aktaramıyor (gerçek sürücü gerekir)".to_string()));
+        };
+        let (me, user, peer_name) = (self.clone(), user.to_string(), peer_name.to_string());
+        self.dispatch(move || {
+            let outcome = me.import_now(&peer, &peer_name, vmid, &image, &image_path, &user);
+            let _ = std::fs::remove_file(&image_path);
+            me.mutate(|c| {
+                let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+                let (result, new_id) = match &outcome {
+                    Ok(id) => (Ok(()), Some(*id)),
+                    Err(e) => (Err(e.clone()), None),
+                };
+                c.log(&node, &user, format!("vm import {peer_name}/{vmid}"), &result, now(), new_id);
+            });
+        });
+        Ok(())
+    }
+
+    pub(super) fn import_now(&self, peer: &crate::peers::Peer, peer_name: &str, vmid: VmId, image: &str, image_path: &Path, user: &str) -> Result<VmId, String> {
+        let remote = peer.guest(vmid)?;
+        if remote.kind != redox_core::GuestKind::Vm {
+            return Err("yalnızca sanal makineler taşınabilir (konteyner taşıma yok)".to_string());
+        }
+        // Çalışan (ya da zaten askıda olan) konuk bellek durumuyla birlikte taşınır: kaynakta askıya alınır,
+        // diski ve belleği kopyalanır, burada kaldığı yerden devam eder. Kesinti kopyalama süresi kadardır.
+        let live = remote.status != redox_core::GuestStatus::Stopped;
+        let carry_state = live || remote.hw.suspended;
+        if carry_state {
+            let (node_cores, node_mem) = self.snapshot().nodes.first().map(|n| (n.cores, n.mem_total_mb)).unwrap_or((0, 0));
+            if remote.cores > node_cores || remote.mem_total_mb > node_mem {
+                return Err(format!("çalışırken taşınan konuk aynı işlemci ve bellekle açılmalı ({} çekirdek, {} MB); bu sunucu yetmiyor. Kapatıp öyle taşıyın", remote.cores, remote.mem_total_mb));
+            }
+            if !remote.hw.usb.is_empty() || !remote.hw.pci.is_empty() {
+                return Err("sunucu aygıtı aktarılmış konuk çalışırken taşınamaz (bellek durumu o aygıtları bekler); kapatıp öyle taşıyın".to_string());
+            }
+            if remote.lock.is_some() {
+                return Err(format!("{vmid} üzerinde eş sunucuda bir işlem sürüyor; bitince yeniden deneyin"));
+            }
+        }
+        if live {
+            peer.suspend_and_wait(vmid, Duration::from_secs(1800))?;
+        }
+        let backup = peer.backup_and_wait(vmid, Duration::from_secs(6 * 3600))?;
+        if let Some(parent) = image_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{} oluşturulamadı: {e}", parent.display()))?;
+        }
+        // Asıl diskin yanına ek diskler ve makine durumu (UEFI değişkenleri, sanal TPM) da indirilir.
+        let extra_path = |disk: u8| image_path.with_extension(format!("disk{disk}"));
+        let machine_path = image_path.with_extension("machine");
+        let wants_machine = remote.hw.firmware == redox_core::hw::Firmware::Uefi || remote.hw.tpm;
+        let discard = || {
+            for disk in &remote.hw.disks {
+                let _ = std::fs::remove_file(extra_path(disk.id));
+            }
+            let _ = std::fs::remove_file(&machine_path);
+        };
+        let downloaded = (|| {
+            peer.download_backup(&backup, image_path)?;
+            for disk in &remote.hw.disks {
+                peer.download_backup_disk(&backup, disk.id, &extra_path(disk.id)).map_err(|e| format!("ek disk {} indirilemedi: {e}", disk.id))?;
+            }
+            if wants_machine { peer.download_machine(&backup, &machine_path) } else { Ok(false) }
+        })();
+        // Eşte bıraktığımız geçici yedek her durumda silinir.
+        let _ = peer.delete_backup(&backup);
+        let has_machine = downloaded.inspect_err(|_| discard())?;
+        if remote.hw.tpm && !has_machine {
+            discard();
+            return Err("konuğun sanal TPM durumu eş sunucudan alınamadı (eş eski bir sürüm olabilir); TPM durumu olmadan taşınan konuk şifreli disklerini açamaz".to_string());
+        }
+
+        let local = self.snapshot();
+        let node = local.nodes.first().ok_or("bu sunucuda düğüm yok")?;
+        let storage = local.storages.iter().find(|s| s.available_on(&node.id)).ok_or("bu sunucuda depolama yok")?;
+        // Sunucuya özgü ayarlar taşınmaz: köprü burada yoksa NAT'a düşülür, fiziksel aygıtlar bırakılır.
+        let known = self.driver().bridges();
+        let here = |bridge: &String| if known.contains(bridge) { bridge.clone() } else { redox_core::NAT.to_string() };
+        let mut hw = remote.hw.clone();
+        hw.image = Some(image.to_string());
+        hw.usb.clear();
+        hw.pci.clear();
+        // Etiketli ek kart, köprüsü burada varsa etiketiyle kalır; yoksa NAT'a düşer.
+        hw.nics = hw.nics.iter().map(|spec| match redox_core::hw::parse_nic(spec) {
+            Some((bridge, _)) if known.iter().any(|k| k == bridge) => spec.clone(),
+            _ => redox_core::NAT.to_string(),
+        }).collect();
+        if here(&remote.bridge) == redox_core::NAT {
+            hw.vlan = 0;
+        }
+        if !self.driver().firewall() {
+            hw.firewall = false;
+            hw.nic_guard = false;
+        }
+        hw.suspended = false;
+        // Ek diskler konuk oluşturulduktan sonra numaraları ve içerikleriyle eklenir.
+        hw.disks.clear();
+        hw.disk_seq = 0;
+        let spec = GuestSpec {
+            // Bellek durumuyla gelen konuk, kimliği boşsa aynı kimliği alır: ağ kartının adresi kimlikten türetilir.
+            vmid: Some(remote.vmid).filter(|id| carry_state && local.guest(*id).is_err()),
+            name: remote.name.clone(),
+            kind: remote.kind,
+            node: node.id.clone(),
+            cores: remote.cores.min(node.cores),
+            memory_mb: remote.mem_total_mb.min(node.mem_total_mb),
+            disk_gb: remote.disk_gb,
+            storage: storage.id.clone(),
+            os: remote.os.clone(),
+            bridge: here(&remote.bridge),
+            onboot: false,
+            iso: None,
+            hw,
+        };
+        let id = self.create_guest(&spec, user).map_err(|e| e.to_string()).inspect_err(|_| discard())?;
+        let extras = (|| {
+            for disk in &remote.hw.disks {
+                let guest = self.mutate(|c| {
+                    c.add_disk_exact(id, disk)?;
+                    c.guest(id).cloned()
+                })
+                .map_err(|e| e.to_string())?;
+                self.driver().import_disk(&guest, disk.id, &extra_path(disk.id)).map_err(|e| format!("ek disk {}: {e}", disk.id))?;
+            }
+            if has_machine {
+                let guest = self.snapshot().guest(id).cloned().map_err(|e| e.to_string())?;
+                self.driver().restore_machine(&guest, &machine_path).map_err(|e| format!("makine durumu (UEFI/TPM) uygulanamadı: {e}"))?;
+            }
+            Ok::<_, String>(())
+        })();
+        discard();
+        if let Err(e) = extras {
+            // Yarım kopya bırakılmaz.
+            let _ = self.delete_guest(id, user);
+            return Err(e);
+        }
+        // İmaj yalnızca taşıma içindi; kayıtta kalırsa silinmiş bir dosyayı gösterir.
+        self.mutate(|c| {
+            if let Ok(g) = c.guest_mut_for_import(id) {
+                g.hw.image = None;
+                g.tags = remote.tags.clone();
+                g.tags.push(format!("tasindi-{peer_name}"));
+                g.tags.retain(|t| redox_core::valid_tag(t));
+                g.tags.truncate(redox_core::MAX_TAGS);
+            }
+        });
+        if carry_state {
+            if let Err(e) = self.adopt_state(peer, vmid, id, image_path, live, user) {
+                // Burada yarım kalan kopya bırakılmaz; kaynak askıda durur ve orada başlatılırsa kaldığı yerden sürer.
+                let _ = self.delete_guest(id, user);
+                return Err(format!("{e}. Konuk eş sunucuda askıda duruyor: orada başlatırsanız kaldığı yerden devam eder"));
+            }
+        }
+        Ok(id)
+    }
+
+    /// Kaynaktaki bellek durumunu indirir, yeni konuğun askı kaydı yapar ve (çalışırken taşınıyorsa) konuğu sürdürür.
+    pub(super) fn adopt_state(&self, peer: &crate::peers::Peer, remote_id: VmId, id: VmId, scratch: &Path, resume: bool, user: &str) -> Result<(), String> {
+        let file = scratch.with_extension("bellek");
+        let (running, layout) = peer.download_state(remote_id, &file)?;
+        let guest = self.snapshot().guest(id).map_err(|e| e.to_string())?.clone();
+        let adopted = self.driver().adopt_suspend(&guest, &file, running, layout);
+        let _ = std::fs::remove_file(&file);
+        adopted?;
+        self.mutate(|c| c.after_suspend(id));
+        if !resume {
+            return Ok(());
+        }
+        self.run_action(id, Action::Start, user).map_err(|e| e.to_string())?;
+        // Başlatma görevi bitene kadar beklenir (bellek durumunun yüklenmesi uzun sürebilir).
+        for _ in 0..7200 {
+            let g = self.snapshot().guest(id).map_err(|e| e.to_string())?.clone();
+            if g.lock.is_none() {
+                return if g.status == redox_core::GuestStatus::Stopped {
+                    let why = self.snapshot().tasks.iter().find(|t| t.vmid == Some(id) && t.status == TaskStatus::Failed).and_then(|t| t.message.clone()).unwrap_or_default();
+                    Err(format!("konuk burada sürdürülemedi: {why}"))
+                } else {
+                    Ok(())
+                };
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        Err("konuk burada zamanında sürdürülemedi".to_string())
+    }
+
+    /// Birleşik görünümdeki eş sunucular.
+    pub fn peers(&self) -> &crate::peers::Peers {
+        &self.0.peers
+    }
+}
