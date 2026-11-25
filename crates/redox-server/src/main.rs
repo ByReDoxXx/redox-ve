@@ -61,6 +61,7 @@ struct ServeOptions {
     offsite_copies: Vec<PathBuf>,
     backup_age_days: Option<u64>,
     four_eyes: bool,
+    move_precopy: bool,
 }
 
 fn default_users_path() -> PathBuf {
@@ -105,6 +106,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         offsite_copies: Vec::new(),
         backup_age_days: None,
         four_eyes: false,
+        move_precopy: false,
     };
     let mut delay_given = false;
     let mut it = args.iter();
@@ -125,6 +127,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--incremental-backups" => opts.incremental_backups = true,
             "--changed-block-tracking" => opts.cbt = true,
             "--backup-mbps" => opts.backup_mbps = number(value()?)?,
+            "--move-precopy" => opts.move_precopy = true,
             "--backup-passphrase-file" => opts.backup_passphrase_file = Some(PathBuf::from(value()?)),
             "--alert-webhook" => opts.alert_webhook = Some(value()?.clone()),
             "--alert-ntfy" => opts.alert_ntfy = Some(value()?.clone()),
@@ -358,6 +361,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         say!("Tek oturum açma açık: {} (eşleşen alan: {}).", config.issuer, config.claim);
         state.set_oidc(config);
     }
+    state.set_move_precopy(opts.move_precopy);
     if opts.four_eyes {
         state.set_four_eyes(true);
         say!("Dört göz ilkesi açık: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.");

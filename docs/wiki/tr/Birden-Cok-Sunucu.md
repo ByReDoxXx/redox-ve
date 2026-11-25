@@ -80,3 +80,18 @@ kipinde devralma yapılmaz.
 göremez; kaynağı zorla kapatma (fencing) yoktur. Konuğun adresi kopyaya kendiliğinden taşınmaz: kopya aynı ağdaysa aynı
 adresle açılır, değilse DNS'i ya da yönlendirmeyi siz değiştirirsiniz. Sahte QEMU ve üç sunuculu testle sınandı;
 gerçek bir kesintide denenmedi.
+
+## Taşımada duraklamayı kısaltma (ön kopya)
+
+Çalışan bir sanal makine taşınırken kaynakta askıya alınır, diski ve belleği kopyalanır, burada kaldığı yerden sürer;
+konuk kopyalama boyunca duraklar. `redox serve … --move-precopy` ile (konuğu **alan** sunucuda) diskler önce konuk
+çalışırken indirilir; askıya alındıktan sonra yalnızca o arada değişen 4 MiB'lik bloklar ve bellek durumu gelir.
+Görevlerdeki `vm precopy eş/kimlik 3/250` satırı, duraklama sırasında 250 bloktan 3'ünün indirildiğini söyler.
+
+Ne zaman işe yarar: sunucular arasındaki ağ disklerden yavaşsa (örneğin 1 Gbit ağ, SSD diskler). Kaynak sunucu
+duraklama sırasında diski yine baştan sona okur (yedek ve özet için), bu yüzden çok hızlı ağda kazanç olmaz, hatta
+süre uzayabilir; seçenek bu nedenle varsayılan olarak kapalıdır. Kaynak sunucu yedeklerini şifreli saklıyorsa ön
+kopya yapılamaz ve taşıma olağan yoldan sürer.
+
+Bu, kesintisiz canlı taşıma **değildir**: konuk yine duraklar, yalnızca daha kısa. Bellek sayfalarını konuk çalışırken
+aktaran gerçek canlı taşıma yoktur. Sahte QEMU ile sınandı; gerçek QEMU ile süre ölçülmedi.

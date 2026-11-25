@@ -131,10 +131,15 @@ impl AppState {
                 return Err(format!("{vmid} üzerinde eş sunucuda bir işlem sürüyor; bitince yeniden deneyin"));
             }
         }
+        // Ön kopya (isteğe bağlı): diskler konuk çalışırken bir kez indirilir; askıya alındıktan sonra yalnızca
+        // o arada değişen bloklar gelir. Duraklama, diskin tamamı yerine değişen kısmın aktarımı kadar sürer.
+        let warm = if live && self.move_precopy() { self.precopy(peer, vmid, &remote, image_path) } else { Vec::new() };
+        let drop_warm = || warm.iter().for_each(|(_, raw)| drop(std::fs::remove_file(raw)));
         if live {
-            peer.suspend_and_wait(vmid, Duration::from_secs(1800))?;
+            peer.suspend_and_wait(vmid, Duration::from_secs(1800)).inspect_err(|_| drop_warm())?;
         }
-        let backup = peer.backup_and_wait(vmid, Duration::from_secs(6 * 3600))?;
+        let paused = std::cell::Cell::new((0u64, 0u64));
+        let backup = peer.backup_and_wait(vmid, Duration::from_secs(6 * 3600)).inspect_err(|_| drop_warm())?;
         if let Some(parent) = image_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{} oluşturulamadı: {e}", parent.display()))?;
         }
@@ -154,6 +159,15 @@ impl AppState {
             self.mutate(|c| c.note_replica_delta(peer_name, vmid, 0, 0, true));
         }
         let fetch = |disk: u8, dest: &Path| -> Result<(), String> {
+            if let Some((_, raw)) = warm.iter().find(|(id, _)| *id == disk) {
+                match self.patch_to_image(peer, &backup, disk, raw, dest) {
+                    Ok((fetched, total)) => {
+                        paused.set((paused.get().0 + fetched, paused.get().1 + total));
+                        return Ok(());
+                    }
+                    Err(e) => eprintln!("uyarı: {peer_name}/{vmid} disk {disk} ön kopyadan tamamlanamadı, tamamı indirilecek: {e}"),
+                }
+            }
             if let Some(old) = base.as_ref().filter(|old| disk == 0 || old.hw.disks.iter().any(|d| d.id == disk)) {
                 match self.fetch_delta(peer, &backup, disk, old, dest) {
                     Ok((fetched, total)) => {
@@ -174,6 +188,14 @@ impl AppState {
         })();
         // Eşte bıraktığımız geçici yedek her durumda silinir.
         let _ = peer.delete_backup(&backup);
+        drop_warm();
+        if !warm.is_empty() {
+            let (fetched, total) = paused.get();
+            self.mutate(|c| {
+                let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+                c.log(&node, user, format!("vm precopy {peer_name}/{vmid} {fetched}/{total}"), &Ok(()), now(), None);
+            });
+        }
         let has_machine = downloaded.inspect_err(|_| discard())?;
         if remote.hw.tpm && !has_machine {
             discard();
@@ -281,15 +303,51 @@ impl AppState {
     /// dökülür, kaynakla özeti tutmayan bloklar indirilir, sonuç imaja çevrilir. (indirilen, toplam) blok döner.
     fn fetch_delta(&self, peer: &crate::peers::Peer, backup: &str, disk: u8, old: &Guest, dest: &Path) -> Result<(u64, u64), String> {
         let work = dest.with_extension(format!("ham{disk}"));
-        let done = (|| {
-            self.driver().disk_raw(old, disk, &work)?;
-            let (size, hashes) = peer.backup_blocks(backup, disk)?;
-            let counts = crate::delta::patch(&work, size, &hashes, &|index| peer.download_block(backup, disk, index))?;
-            self.driver().raw_to_image(&work, dest)?;
-            Ok(counts)
-        })();
+        let done = self.driver().disk_raw(old, disk, &work).and_then(|()| self.patch_to_image(peer, backup, disk, &work, dest));
         let _ = std::fs::remove_file(&work);
         done
+    }
+
+    /// `raw` dosyasını yedekteki diskin içeriğine getirir (yalnızca farklı bloklar indirilir) ve `dest` imajına çevirir.
+    fn patch_to_image(&self, peer: &crate::peers::Peer, backup: &str, disk: u8, raw: &Path, dest: &Path) -> Result<(u64, u64), String> {
+        let (size, hashes) = peer.backup_blocks(backup, disk)?;
+        let counts = crate::delta::patch(raw, size, &hashes, &|index| peer.download_block(backup, disk, index))?;
+        self.driver().raw_to_image(raw, dest)?;
+        Ok(counts)
+    }
+
+    pub fn set_move_precopy(&self, on: bool) {
+        self.0.move_precopy.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn move_precopy(&self) -> bool {
+        self.0.move_precopy.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Ön kopya: konuk çalışırken eşte bir yedek alır ve disklerini ham dosyalara indirir. Başarılan disklerin
+    /// (numara, dosya) listesini döndürür; başarısız olan disk sonradan olağan yolla, tam indirilir.
+    fn precopy(&self, peer: &crate::peers::Peer, vmid: VmId, remote: &Guest, image_path: &Path) -> Vec<(u8, std::path::PathBuf)> {
+        if let Some(parent) = image_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let Ok(backup) = peer.backup_and_wait(vmid, Duration::from_secs(6 * 3600)) else { return Vec::new() };
+        let mut warm = Vec::new();
+        for disk in std::iter::once(0).chain(remote.hw.disks.iter().map(|d| d.id)) {
+            let raw = image_path.with_extension(format!("on{disk}"));
+            let filled = std::fs::File::create(&raw)
+                .map_err(|e| format!("{} oluşturulamadı: {e}", raw.display()))
+                .and_then(|_| peer.backup_blocks(&backup, disk))
+                .and_then(|(size, hashes)| crate::delta::patch(&raw, size, &hashes, &|index| peer.download_block(&backup, disk, index)));
+            match filled {
+                Ok(_) => warm.push((disk, raw)),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&raw);
+                    eprintln!("uyarı: {vmid} disk {disk} için ön kopya alınamadı: {e}");
+                }
+            }
+        }
+        let _ = peer.delete_backup(&backup);
+        warm
     }
 
     /// Eş sunucudaki konteyneri yedeği üzerinden buraya kopyalar: aynı dağıtımın şablonundan boş bir konteyner

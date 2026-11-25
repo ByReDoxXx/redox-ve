@@ -8,7 +8,7 @@ Server:
               [--alert-webhook URL] [--alert-email FILE] [--alert-ntfy URL] [--alert-telegram FILE]
               [--peers FILE] [--offsite FILE] [--offsite-copy FILE]... [--oidc FILE] [--guestfish-bin PATH]
               [--backup-test-secs 60] [--backup-test-every DAYS[@HH:MM]] [--backup-report HH:MM] [--backup-age-days 7]
-              [--backup-mbps 0] [--backup-passphrase-file FILE] [--firewall] [--four-eyes] [--api-rate N]
+              [--backup-mbps 0] [--backup-passphrase-file FILE] [--move-precopy] [--firewall] [--four-eyes] [--api-rate N]
               [--incremental-backups [--changed-block-tracking]]
 
 Users (edits the user file directly; --users FILE or REDOX_USERS):

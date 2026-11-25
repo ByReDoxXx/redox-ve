@@ -192,6 +192,8 @@ struct Inner {
     backup_age_days: Mutex<u32>,
     /// Dört göz ilkesi: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.
     four_eyes: std::sync::atomic::AtomicBool,
+    /// Çalışan konuk taşınırken diskler önce konuk çalışırken kopyalansın mı (duraklamayı kısaltır)?
+    move_precopy: std::sync::atomic::AtomicBool,
     /// Çerezi olmayan ziyaretçiye gösterilecek dil İngilizce mi? (`--lang en`)
     english: std::sync::atomic::AtomicBool,
     /// API hız sınırı: (dakikadaki istek sınırı; 0 kapalı, kullanıcı → (dakika, o dakikadaki istek sayısı)).
@@ -229,6 +231,7 @@ impl AppState {
             auto_test: Mutex::new((0, 180)),
             backup_age_days: Mutex::new(7),
             four_eyes: std::sync::atomic::AtomicBool::new(false),
+            move_precopy: std::sync::atomic::AtomicBool::new(false),
             english: std::sync::atomic::AtomicBool::new(false),
             api_rate: Mutex::new((0, HashMap::new())),
             report: Mutex::new((None, None)),

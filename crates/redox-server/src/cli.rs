@@ -24,7 +24,7 @@ Sunucu:
               [--driver sim|qemu] [--data-dir DİZİN] [--qemu-bin YOL] [--ovmf-dir DİZİN] [--swtpm-bin YOL]
               [--shutdown-timeout-secs 60] [--no-lxc] [--no-autostart] [--storage AD=DİZİN]...
               [--behind-tls-proxy] [--allow-plain-http] [--task-delay-ms 1500]
-              [--alert-webhook URL] [--alert-email DOSYA] [--peers DOSYA] [--offsite DOSYA] [--offsite-copy DOSYA]... [--oidc DOSYA] [--guestfish-bin YOL] [--backup-test-secs 60] [--backup-report SS:DD] [--backup-age-days 7] [--backup-mbps 0] [--firewall] [--incremental-backups [--changed-block-tracking] [--backup-passphrase-file DOSYA]]
+              [--alert-webhook URL] [--alert-email DOSYA] [--peers DOSYA] [--offsite DOSYA] [--offsite-copy DOSYA]... [--oidc DOSYA] [--guestfish-bin YOL] [--backup-test-secs 60] [--backup-report SS:DD] [--backup-age-days 7] [--backup-mbps 0] [--firewall] [--incremental-backups [--changed-block-tracking] [--backup-passphrase-file DOSYA]] [--move-precopy]
 
 Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da REDOX_USERS):
   redox user add <ad> [--role admin|operator|viewer]

@@ -81,3 +81,20 @@ again. Nothing fails over in maintenance mode.
 running, no method can see that; there is no fencing (forcibly powering off the source). The guest's address does not
 move by itself: on the same network the copy comes up with the same address, otherwise you change DNS or routing.
 Tested with fake QEMU and a three-server test; not tried in a real outage.
+
+## Shortening the pause of a move (pre-copy)
+
+When a running virtual machine is moved it is suspended on the source, its disk and memory are copied, and it
+continues here where it left off; the guest is paused for the whole copy. With `redox serve … --move-precopy` (on
+the server that **receives** the guest) the disks are downloaded first while the guest is still running; after it is
+suspended only the 4 MiB blocks that changed in the meantime and the memory state are transferred. The task line
+`vm precopy peer/id 3/250` says 3 of 250 blocks were downloaded during the pause.
+
+When it helps: when the network between the servers is slower than the disks (for example a 1 Gbit network with
+SSDs). The source server still reads the whole disk during the pause (for the backup and the hashes), so on a very
+fast network there is no gain and the pause may even get longer; that is why the option is off by default. If the
+source server stores its backups encrypted, pre-copy is not possible and the move continues the ordinary way.
+
+This is **not** zero-downtime live migration: the guest still pauses, only for less time. There is no true live
+migration that transfers memory pages while the guest runs. Tested with fake QEMU; the pause was not measured with
+real QEMU.

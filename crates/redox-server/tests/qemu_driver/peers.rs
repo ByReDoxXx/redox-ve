@@ -88,6 +88,24 @@ pub(super) async fn a_stopped_vm_is_copied_from_a_peer_server() {
     assert!(PathBuf::from(format!("{}.resumed", cfg.qmp_path(parked).display())).exists());
     hub.run_action(parked, Action::Stop, "admin").unwrap();
 
+    // Ön kopya: diskler konuk çalışırken iner; askıya alındıktan sonra yalnızca o arada değişen bloklar gelir.
+    let warm = peer.create_guest(&spec("onkopya", &node), "admin").unwrap();
+    peer.run_action(warm, Action::Start, "admin").unwrap();
+    let mut big = vec![0x51u8; 2 * redox_server::delta::BLOCK as usize + 777];
+    big[5] = 9;
+    std::fs::write(peer_cfg.disk_path(warm), &big).unwrap();
+    hub.set_move_precopy(true);
+    import("eski", warm).await.unwrap();
+    hub.set_move_precopy(false);
+    let c = hub.snapshot();
+    assert_eq!(c.guest(warm).unwrap().status, GuestStatus::Running, "{:?}", last(&hub).message);
+    assert!(std::fs::read(cfg.disk_path(warm)).unwrap() == big, "disk eksiksiz geldi");
+    assert!(c.tasks.iter().any(|t| t.command == format!("vm precopy eski/{warm} 0/3")), "duraklama sırasında hiç blok indirilmedi: {:?}", c.tasks.iter().map(|t| t.command.clone()).collect::<Vec<_>>());
+    assert!(PathBuf::from(format!("{}.resumed", cfg.qmp_path(warm).display())).exists());
+    assert!(std::fs::read_dir(cfg.cloud_dir()).unwrap().next().is_none(), "ön kopya dosyaları silinir");
+    assert!(peer.snapshot().backups.is_empty(), "eşte iki geçici yedek de silinir");
+    hub.run_action(warm, Action::Stop, "admin").unwrap();
+
     // Askıya alınamayan konuk: burada hiçbir şey oluşmaz, konuk eşte çalışmaya devam eder.
     let stubborn = peer.create_guest(&spec("askisiz", &node), "admin").unwrap();
     peer.run_action(stubborn, Action::Start, "admin").unwrap();
