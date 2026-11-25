@@ -53,6 +53,9 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Dinamik bellek (balon hedefi konuğun kullanımını izler) ve iç içe sanallaştırma.
 - Konuk başına kaynak ölçümü: faturalama ve planlama için birikimli çekirdek-saat, GB-saat ve disk G/Ç.
 - Köprüdeki kartlarda ağ kartı koruması: sahte MAC, sahte DHCP sunucusu ve yönlendirici duyurusu engellenir.
+- Bakım kipi: sunucu güncellemesinden önce konukları kapatır, sonra yeniden başlatır.
+- Konuk içi disk doluluğu (ajanla) ve uyarısı; uyarılar web kancası, e-posta, ntfy ve Telegram ile gider.
+- Salt okunur API token'ları ve isteğe bağlı API hız sınırı.
 
 **Depolama ve yedek**
 
@@ -67,7 +70,10 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Artımlı yedekte olağandan çok fazla veri değiştiğinde uyarı (fidye yazılımı belirtisi olabilir).
 - Konuk başına yedek yaşı hedefi (RPO) ve arşiv: kopya hedefleri, yerelde silinen yedekleri belirlenen gün kadar
   saklayabilir.
-- Dört göz ilkesi (isteğe bağlı): yedek ya da konuk silmek ikinci bir yöneticinin onayını ister.
+- Dört göz ilkesi (isteğe bağlı): yedek, konuk, disk, yedek işi ya da kullanıcı silmek ikinci bir yöneticinin
+  onayını ister.
+- Çoğaltma: eş sunucudaki sanal makinenin, aralıkla tazelenen ve devralmada elle başlatılan yedek kopyası.
+- En yeni yedeklerin zamanlanmış açarak sınanması ve hazır bulut imajı kataloğu.
 - Dosya düzeyinde geri yükleme: yedeğin içinde gezip tek dosya indirme (libguestfs ile).
 - Haftalık, aylık, yıllık saklama (GFS), kilitli (değiştirilemez) yedekler, yedek penceresi ve kopyalama hız sınırı.
 - Canlı yedekten önce ve sonra konuk ajanıyla konuğun içinde komut çalıştırma.
@@ -411,7 +417,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 469, Windows'ta 404 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 490, Windows'ta 422 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
@@ -421,11 +427,14 @@ sınırları, canlı konsol, çalışan bir sanal makinenin iki sunucu arasında
 modelleri, balon aygıtı, UEFI değişkenleriyle TPM durumunun yedeklenip geri yüklenmesi, disklerin depolar
 arasında taşınması, havuz kotaları, ek diskli, UEFI'li ve TPM'li bir konuğun iki sunucu arasında taşınması, yedekten
 yeni konuk, anında kurtarma, açarak sınama, kilit, iki dış hedefe kopya, üretim denetim noktası, iç içe
-sanallaştırma, kaynak ölçümü, sınama kapısı yönlendirmesi, kopya hedefi arşivi ve dört göz onay akışı.
+sanallaştırma, kaynak ölçümü, sınama kapısı yönlendirmesi, kopya hedefi arşivi, dört göz onay akışı, çalışan bir
+sanal makinenin iki sunucu arasında çoğaltılması, sunucu yeniden başlatılırken bakım kipi, salt okunur token ve
+API hız sınırı.
 
 Gerçek bir sunucuda henüz doğrulanmayanlar: systemd birimleri ve Caddy ayarı, köprü ağı, LXC
 konteynerleri, konuk güvenlik duvarı ve ağ kartı korumasının trafik altındaki davranışı, dinamik belleğin ve
-sınama denetimlerinin gerçek bir konuk işletim sistemiyle çalışması, gerçek bir S3 sağlayıcısı, gerçek bir SMTP ya da OpenID Connect
+sınama denetimlerinin ve konuk içi disk ölçümünün gerçek bir konuk işletim sistemiyle çalışması, gerçek bir
+köprüde ağ ölçümü, gerçek ntfy ve Telegram, gerçek bir S3 sağlayıcısı, gerçek bir SMTP ya da OpenID Connect
 sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlattığı yerde ayrıca belirtir.
 
 ## Sınırlar

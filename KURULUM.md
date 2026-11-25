@@ -48,7 +48,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # hepsi geçmeli (Linux'ta 469 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
+cargo test --workspace          # hepsi geçmeli (Linux'ta 490 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -467,9 +467,33 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   işletim sistemi kurulu gerçek bir konukta denenmedi.**
 - **Dört göz ilkesi:** hizmet satırına `--four-eyes` ekleyin. Yedek ve konuk silme hemen yapılmaz; **başka** bir
   yönetici onaylayınca yürür (`redox approval list | approve <no> | reject <no>` ya da her sayfanın üstündeki
-  bildirim). İstek sahibi kendi isteğini onaylayamaz, 24 saatte onaylanmayan istek düşer. En az iki yönetici
+  bildirim). Ek disk silme, yedek işi silme ve kullanıcı silme de aynı kurala bağlıdır. İstek sahibi kendi isteğini onaylayamaz, 24 saatte onaylanmayan istek düşer. En az iki yönetici
   hesabı gerekir. Zamanlayıcının saklama budaması bu kuralın dışındadır. Aynı kişinin iki hesabı varsa kural onu
   durdurmaz: amaç, ele geçirilen tek bir hesabın yedekleri silememesidir.
+- **Çoğaltma (yedek kopya):** *Küme* sayfasındaki **Çoğaltma** kartı ya da `redox replica add <eş> <kimlik> 60`.
+  Eş sunucudaki sanal makinenin kopyası bu sunucuda verdiğiniz aralıkla (15 dakika – 1 hafta) tazelenir; kaynak
+  çalışmaya devam eder, askıya alınmaz. Kopya `<ad>-kopya` adıyla kapalı durur; kaynak sunucu ölürse onu buradan
+  başlatırsınız (kayıp, son turdan beri yazılanlardır). Çalışan bir kopyanın üzerine yazılmaz. **Her tur diskin
+  tamamını kopyalar** (artımlı değildir) ve tur sırasında iki kopya kadar yer gerekir; aralığı buna göre seçin.
+  Devralma kendiliğinden değildir: kopyayı siz başlatırsınız.
+- **Bakım kipi:** düğüm sayfasındaki **Bakım** kartı ya da `redox maintenance on --drain`. Çalışan konuklar açılış
+  sırasının tersine kapatılır; kipteyken hiçbir konuk başlatılmaz, zamanlanmış yedekler, güç işlemleri, çoğaltma ve
+  kendiliğinden yeniden başlatma durur. Kip durum dosyasında saklanır: sunucu bu sırada yeniden başlasa da konuklar
+  açılmaz. `redox maintenance off` kapatılan konukları açılış sırasıyla yeniden başlatır. Konukları başka sunucuya
+  kendiliğinden taşımaz; taşımak istediklerinizi önce öbür sunucunun *Küme* sayfasından alın.
+- **Zamanlanmış yedek sınaması:** hizmet satırına `--backup-test-every 7@03:00`. Her sanal makinenin en yeni yedeği
+  7 günde bir, 03:00'ten başlayan dört saatlik pencerede sırayla (aynı anda tek sınama) açılıp sınanır; sonuç
+  yedeğin satırına ve günlük rapora yazılır.
+- **Konuk içi disk doluluğu:** konukta `qemu-guest-agent` varsa *Özet* sekmesinde ve `redox vm df 103` çıktısında
+  görünür; %80'i geçen disk uyarı, %90'ı geçen kritik uyarı üretir. Dakikada bir okunur. **Sahte ajanla sınandı;
+  gerçek bir konuk işletim sistemiyle denenmedi.**
+- **Ağ trafiği ölçümü:** kaynak ölçümüne köprüdeki kartların aldığı ve gönderdiği veri de eklenir. NAT'taki
+  kartlar sayılmaz (sunucuda arayüzleri yoktur). **Sayaçların okunması sınandı; gerçek bir köprüde denenmedi.**
+- **Hazır bulut imajları:** *Depolama* sayfasındaki liste ya da `redox media catalog` / `redox media get debian-12`.
+  Debian 12/13, Ubuntu 22.04/24.04, AlmaLinux 9 ve Rocky 9 dağıtımın kendi sunucusundan iner. İmajlar sürekli
+  güncellendiği için sabit bir özetle doğrulanmaz; bütünlük https bağlantısına dayanır.
+- **Olağan dışı değişim uyarısını kapatma:** yedeğin *Diğer* menüsünden **Uyarıyı kapat** ya da
+  `redox backup ack <yedek>`; kimin kapattığı görev günlüğüne yazılır.
 - **Aygıt aktarımı:** *Donanım* sekmesine `lsusb` kimliğini (`046d:c52b`) ya da `lspci -D` adresini (`0000:01:00.0`)
   yazın. USB için hizmet kullanıcısının aygıta erişimi (udev kuralı), PCI için BIOS'ta IOMMU, çekirdekte
   `intel_iommu=on` ve aygıtın `vfio-pci` sürücüsüne bağlanması gerekir. **Gerçek donanımla denenmedi.**
@@ -602,6 +626,18 @@ Yalnızca sahte bir SMTP sunucusuyla sınandı; gerçek bir sağlayıcıyla (TLS
 **Grafikler:** düğüm ve konuk sayfalarında son 10 dakika, 24 saat (dakikalık ortalama) ve 30 gün (saatlik ortalama)
 seçilebilir. Geçmiş `metrics.json` dosyasında tutulur ve yeniden başlatmada korunur; sunucunun kapalı olduğu süreler
 grafikte yer almaz.
+
+### Ek bildirim kanalları ve API sınırları
+
+- `--alert-ntfy https://ntfy.sh/konunuz` uyarıları bir ntfy konusuna düz metin olarak gönderir.
+- `--alert-telegram /etc/redox/telegram.conf` uyarıları bir Telegram botuyla gönderir. Dosya (izinleri 600):
+  `token = <bot anahtarı>` ve `chat = <sohbet kimliği>`. Anahtar günlüklere ve hata iletilerine yazılmaz.
+  **İkisi de sahte sunucuyla sınandı; gerçek ntfy ve Telegram ile denenmedi.** Slack ve Discord için
+  `--alert-webhook` yeterlidir.
+- `redox token create <kullanıcı> <etiket> --read-only` salt okunur bir token üretir: sahibi yönetici olsa da
+  yalnızca okuyabilir (izleme araçları için).
+- `--api-rate 600` API'yi kullanıcı başına dakikada 600 istekle sınırlar; aşan istek 429 ve `Retry-After` alır.
+  Sayfalar sınırın dışındadır. Varsayılan: sınır yok.
 
 ### 10.2 Birleşik görünüm (birden çok sunucu)
 

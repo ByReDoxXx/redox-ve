@@ -54,7 +54,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # all must pass (469 tests on Linux; with Node installed the live console client's 7 tests run too)
+cargo test --workspace          # all must pass (490 tests on Linux; with Node installed the live console client's 7 tests run too)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -377,8 +377,27 @@ What the driver offers, from the tabs of a guest page:
   guest that has an operating system.**
 - **Four-eyes principle:** add `--four-eyes` to the service line. Deleting a backup or a guest then waits for
   **another** administrator (`redox approval list | approve <n> | reject <n>`, or the notice at the top of every
-  page). The requester cannot approve their own request; requests expire after 24 hours. Needs at least two
+  page). Removing an extra disk, a backup job or a user follows the same rule. The requester cannot approve their own request; requests expire after 24 hours. Needs at least two
   administrator accounts. Retention pruning by the scheduler is exempt.
+- **Replication (standby copy):** the **Çoğaltma** card on the cluster page, or `redox replica add <peer> <id> 60`.
+  A copy of a peer's VM is refreshed on this server at the interval you give (15 minutes to 1 week); the source
+  keeps running and is not suspended. The copy is a stopped guest named `<name>-kopya`; if the source server dies
+  you start it here (you lose what was written since the last run). A running copy is never overwritten. **Every
+  run copies the whole disk** (not incremental) and needs room for two copies while it runs. Failover is manual.
+- **Maintenance mode:** the **Bakım** card on the node page, or `redox maintenance on --drain`. Running guests are
+  stopped in reverse boot order; while it is on no guest is started and scheduled backups, power actions,
+  replication and automatic restart are paused. The mode is stored in the state file, so guests stay down across a
+  server reboot. `redox maintenance off` starts the stopped guests again in boot order. It does not move guests to
+  another server.
+- **Scheduled boot tests:** add `--backup-test-every 7@03:00` to the service line. The newest backup of every VM is
+  boot-tested every 7 days, one at a time, in a four-hour window from 03:00.
+- **Disk usage inside guests:** with `qemu-guest-agent` in the guest, the summary tab and `redox vm df 103` show it;
+  a disk over 80% raises a warning, over 90% a critical alert. **Tested with a fake agent only.**
+- **Network metering:** resource metering also counts traffic of bridged cards. Cards on NAT are not counted.
+  **Counter reading is tested; not tried on a real bridge.**
+- **Ready cloud images:** the list on the storage page, or `redox media catalog` / `redox media get debian-12`
+  (Debian 12/13, Ubuntu 22.04/24.04, AlmaLinux 9, Rocky 9). They are rolling images, so integrity rests on https.
+- **Dismissing an unusual-change warning:** **Uyarıyı kapat** in the backup's menu, or `redox backup ack <backup>`.
 - **Guest agent:** install `qemu-guest-agent` in the guest. The summary tab then shows the operating system and
   the IP address, and file systems are frozen just before a live backup (`donduruldu` in the list).
 
@@ -490,6 +509,16 @@ Tested against a fake SMTP server only, not with a real provider.
 
 **Graphs:** node and guest pages offer the last 10 minutes, 24 hours and 30 days; history is kept in
 `metrics.json`.
+
+### More notification channels and API limits
+
+- `--alert-ntfy https://ntfy.sh/your-topic` sends alerts to an ntfy topic as plain text.
+- `--alert-telegram /etc/redox/telegram.conf` sends them through a Telegram bot. The file (mode 600) holds
+  `token = <bot token>` and `chat = <chat id>`. The token is never logged. **Both were tested against a fake
+  server only.** For Slack and Discord `--alert-webhook` is enough.
+- `redox token create <user> <label> --read-only` creates a read-only token, whatever the owner's role.
+- `--api-rate 600` limits the API to 600 requests per minute per user; beyond that requests get 429 with
+  `Retry-After`. Pages are not limited. Default: no limit.
 
 ### 10.2 Combined view (several servers)
 

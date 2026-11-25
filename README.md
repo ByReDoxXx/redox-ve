@@ -56,6 +56,9 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Dynamic memory (the balloon target follows what the guest uses) and nested virtualization.
 - Resource metering per guest: cumulative core-hours, GB-hours and disk I/O for billing and planning.
 - NIC protection on bridged cards: no MAC spoofing, no rogue DHCP server or router advertisements.
+- Maintenance mode: drain the guests before a host update and start them again afterwards.
+- Disk usage inside guests (through the agent) with alerts; alerts by webhook, e-mail, ntfy and Telegram.
+- Read-only API tokens and an optional API rate limit.
 
 **Storage and backup**
 
@@ -69,7 +72,10 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - A warning when an incremental backup changes far more data than usual (a possible sign of ransomware).
 - A backup age target (RPO) per guest, and an archive: copy targets can keep backups for a set number of days
   after they were deleted locally.
-- Four-eyes principle (optional): deleting a backup or a guest needs a second administrator's approval.
+- Four-eyes principle (optional): deleting a backup, a guest, a disk, a backup job or a user needs a second
+  administrator's approval.
+- Replication: a standby copy of a peer server's VM, refreshed on an interval and started by hand on failover.
+- Scheduled boot tests of the newest backups, and a catalog of ready cloud images.
 - File-level restore: browse a backup and download single files (with libguestfs).
 - Weekly, monthly and yearly retention (GFS), locked (immutable) backups, backup windows and a copy speed limit.
 - Commands inside the guest before and after a live backup, through the guest agent.
@@ -409,7 +415,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-469 tests pass on Linux and 404 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+490 tests pass on Linux and 422 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
@@ -419,11 +425,14 @@ VLAN and rate limits, the live console, moving a running VM between two servers,
 the balloon device, backup and restore of UEFI variables and TPM state, moving disks between storages,
 pool quotas, moving a VM with extra disks, UEFI and TPM between two servers, restore as a new guest, instant
 recovery, the boot test, locks, copies to two off-site targets, production checkpoints, nested virtualization,
-resource metering, the boot test's port forwarding, the copy-target archive and the four-eyes approval flow.
+resource metering, the boot test's port forwarding, the copy-target archive, the four-eyes approval flow,
+replication of a running VM between two servers, maintenance mode across a server restart, read-only tokens and
+the API rate limit.
 
 Not yet verified on a real server: the systemd units and the Caddy configuration, bridged networking,
 LXC containers, the guest firewall and NIC protection under traffic, dynamic memory and the boot-test service
-checks with a real guest operating system, a real S3 provider, a real SMTP or OpenID Connect provider, and
+checks and in-guest disk usage with a real guest operating system, network metering on a real bridge, real ntfy
+and Telegram, a real S3 provider, a real SMTP or OpenID Connect provider, and
 USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is described.
 
 ## Limits
