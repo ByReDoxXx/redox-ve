@@ -269,6 +269,22 @@ pub async fn replica_action(State(st): State<AppState>, Extension(me): Extension
             let (st, peer) = (st.clone(), peer.clone());
             tokio::task::spawn_blocking(move || st.replica_run(&peer, vmid)).await.unwrap_or_else(|e| Err(Error::Driver(e.to_string()))).map(|()| (tx("Çoğaltma başladı; sonuç görevlerde görünecek.")).to_string())
         }
+        "save" => match (f.every_min.trim().parse::<u32>(), f.failover_min.trim()) {
+            (Err(_), _) => return flash("/cluster", "error", (tx("Aralık dakika olarak bir tam sayı olmalı."))),
+            (Ok(minutes), failover) => {
+                let failover = match failover {
+                    "" | "0" => Ok(None),
+                    text => text.parse::<u32>().map(Some),
+                };
+                match failover {
+                    Err(_) => return flash("/cluster", "error", (tx("Devralma süresi dakika olarak bir tam sayı olmalı (0 kapatır)."))),
+                    Ok(failover) => st
+                        .replica_put(&peer, vmid, minutes, &me.user)
+                        .and_then(|()| if st.snapshot().replicas.iter().any(|r| r.peer == peer && r.source == vmid && r.failover_min == failover) { Ok(()) } else { st.replica_failover_set(&peer, vmid, failover, &me.user) })
+                        .map(|()| (tx("Çoğaltma ayarları kaydedildi.")).to_string()),
+                }
+            }
+        },
         "failover" => match f.failover_min.trim() {
             "" | "0" => st.replica_failover_set(&peer, vmid, None, &me.user).map(|()| (tx("Kendiliğinden devralma kapatıldı.")).to_string()),
             text => match text.parse::<u32>() {

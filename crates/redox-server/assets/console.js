@@ -293,7 +293,7 @@
   if (!canvas) return;
   const status = document.getElementById("console-status");
   const ctx = canvas.getContext("2d", { alpha: false });
-  const say = (text, bad) => { if (status) { status.textContent = text; status.className = bad ? "pill err" : "pill ok"; } };
+  const say = (text, bad, tone) => { if (status) { status.textContent = text; status.className = "pill " + (tone || (bad ? "err" : "ok")); } };
   const display = {
     resize(w, h) { canvas.width = w; canvas.height = h; },
     draw(x, y, w, h, rgba) { ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.length), w, h), x, y); },
@@ -355,7 +355,7 @@
       typeButton.disabled = true;
       const skipped = await session.type(field.value, () => new Promise((done) => setTimeout(done, 12)));
       typeButton.disabled = false;
-      if (skipped) say(skipped + " " + typeButton.dataset.skipped, true);
+      if (skipped) say(skipped + " " + typeButton.dataset.skipped, false, "warn");
       else field.value = "";
       canvas.focus();
     };

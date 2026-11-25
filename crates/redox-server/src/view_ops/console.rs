@@ -129,12 +129,19 @@ pub fn live_console_page(p: &Page, g: &Guest, available: bool) -> String {
                     strong { span class="mono gold" { (g.vmid) } " " (g.name) }
                     @if available {
                         span id="console-status" class="pill idle" role="status" { (tx("Betik bekleniyor…")) }
-                        div class="btns" style="margin-left:auto" {
-                            input id="console-text" class="console-text" type="text" autocomplete="off" spellcheck="false" aria-label=(tx("Konuğa yazdırılacak metin")) placeholder=(tx("Konuğa yazdırılacak metin"));
-                            button id="console-type" class="btn sm" type="button" data-skipped=(tx("karakter yazılamadı (yalnızca ABD klavyesindeki karakterler yazılır)")) title=(tx("Metni konuğa tuş vuruşları olarak gönderir. Pano yerine geçer; konukta ajan gerekmez. Konuğun klavye düzeni ABD İngilizcesi olmalıdır.")) { (tx("Yazdır")) }
-                            button id="console-cad" class="btn sm" type="button" { "Ctrl+Alt+Del" }
-                            button id="console-full" class="btn sm" type="button" { (tx("Tam Ekran")) }
-                            button id="console-blur" class="btn sm" type="button" title=(tx("Klavye odağını konuktan geri alır")) { (tx("Odağı Bırak")) }
+                        div class="end" {
+                            label class="sr" for="console-text" { (tx("Konuğa yazdırılacak metin")) }
+                            span class="joined" {
+                                input id="console-text" type="text" autocomplete="off" spellcheck="false" placeholder=(tx("Konuğa yazdırılacak metin"));
+                                button id="console-type" class="btn sm" type="button" data-skipped=(tx("karakter yazılamadı")) { (crate::view::icon("prompt")) (tx("Yazdır")) }
+                            }
+                            (crate::view::tip("Metni konuğa tuş vuruşları olarak gönderir. Pano yerine geçer; konukta ajan gerekmez. Yalnızca ABD klavyesindeki karakterler yazılır; konuğun klavye düzeni ABD İngilizcesi olmalıdır."))
+                            span class="vsep" aria-hidden="true" {}
+                            span class="group" {
+                                button id="console-cad" class="btn sm" type="button" { "Ctrl+Alt+Del" }
+                                button id="console-full" class="btn sm" type="button" { (tx("Tam ekran")) }
+                                button id="console-blur" class="btn sm" type="button" title=(tx("Klavye odağını konuktan geri alır")) { (tx("Odağı bırak")) }
+                            }
                         }
                     }
                 }

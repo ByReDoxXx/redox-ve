@@ -171,7 +171,7 @@ pub fn storage(p: &Page, media: &[crate::media::Media]) -> String {
                     thead { tr { th { (tx("Alan")) } th { (tx("Tür")) (tip("Dizinin durduğu depolama: düz dizin, ZFS veri kümesi, LVM birimi ya da NFS paylaşımı. Sunucu başlarken tanınır. Diskler her durumda imaj dosyası olarak durur.")) } th { (tx("İçerik")) } th style="width:34%" { (tx("Kullanım")) } th class="num" { (tx("Dolu / Toplam")) } } }
                     tbody { @for s in &c.storages { tr {
                         td class="mono" { (s.id) span class="sub" { (s.node.as_deref().unwrap_or((tx("paylaşımlı")))) } }
-                        td { (tx(s.kind.label())) }
+                        td { span class=(if s.kind == redox_core::StorageKind::Dir { "tag" } else { "tag gold" }) { (tx(s.kind.label())) } }
                         td class="muted" { (s.content.join(", ")) }
                         td class="mono" {
                             (bar(s.used_pct(), &tfmt(format!("{} kullanım", s.id)), false)) " " (s.used_pct()) "%"
@@ -244,60 +244,123 @@ pub fn storage(p: &Page, media: &[crate::media::Media]) -> String {
 }
 
 /// Çoğaltmalar: eş sunuculardaki konukların buradaki yedek kopyaları. Eş sunucu tanımlı değilse çizilmez.
+/// Her çoğaltma bir satırdır; satırda tek eylem vardır (şimdi çoğalt), ayarlar ve kaldırma açılır bölmededir.
 fn replicas_card(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
     let list = &p.cluster.replicas;
     html! {
         @if !peers.is_empty() || !list.is_empty() {
             div class="card" {
-                header { h2 { (tx("Çoğaltma")) } (tip("Eş sunucudaki bir konuğun kopyasını burada düzenli tazeler; her turda yalnızca değişen bloklar indirilir. O sunucu ölürse kopyayı buradan başlatırsınız.")) span class="note" { (list.len()) " / " (redox_core::replicas::MAX_REPLICAS) } }
+                header {
+                    h2 { (tx("Çoğaltma")) }
+                    (tip("Eş sunucudaki bir konuğun kopyasını burada düzenli tazeler; her turda yalnızca değişen bloklar indirilir. O sunucu ölürse kopyayı buradan başlatırsınız."))
+                    div class="end" { span class="note" { (list.len()) " / " (redox_core::replicas::MAX_REPLICAS) } }
+                }
                 @if list.is_empty() {
                     p class="empty" { (tx("Çoğaltma yok. Eş sunucudaki bir sanal makinenin kopyası burada düzenli tazelenir; o sunucu ölürse kopyayı buradan başlatırsınız.")) }
                 } @else {
-                    div class="tw" { table {
-                        thead { tr { th { (tx("Kaynak")) } th { (tx("Aralık")) } th { (tx("Yedek kopya")) } th { (tx("Son başarılı tur")) } th { (tx("Devralma")) (tip("Kaynak sunucuya yazdığınız dakika boyunca ulaşılamazsa yedek kopya kendiliğinden başlatılır. Önce hakeme, yani tanımlı başka bir eş sunucuya sorulur: hakeme ulaşılamıyorsa ya da hakem kaynağı çalışır görüyorsa devralınmaz. 0 kapatır.")) } th { span class="sr" { (tx("İşlem")) } } } }
-                        tbody { @for r in list { tr {
-                            td class="mono" { (r.peer) " / " (r.source) }
-                            td class="mono" { (r.every_min) " dk" }
-                            td {
-                                @match r.standby {
-                                    Some(id) => a class="mono" href={ "/guests/" (id) } { (id) },
-                                    None => span class="dim" { "-" },
-                                }
-                                @if r.running { " " span class="pill idle" { (tx("sürüyor")) } }
-                                @if let Some((fetched, total)) = r.delta.filter(|d| d.1 > 0) { " " span class="tag" title=(tx("Son turda ağdan indirilen blok / toplam blok (4 MiB). Değişmeyen bloklar eski kopyadan alınır.")) { (fetched) " / " (total) (tx(" blok")) } }
-                                @if let Some(e) = &r.error { " " span class="pill err" title=(e) { (icon("alert")) "hata" } }
-                            }
-                            td class="mono muted" { @match r.last_ok { Some(ts) => (datetime(ts)), None => "-" } }
-                            td {
-                                @match r.failover_min { Some(m) => span class="mono" { (m) " dk" }, None => span class="dim" { (tx("kapalı")) } }
-                                @if let Some(ts) = r.failed_over { " " span class="pill err" title=(datetime(ts)) { (tx("devralındı")) } }
-                                @else if let Some(note) = &r.failover_note { " " span class="pill err" title=(crate::i18n::tfmt(note.clone())) { (icon("alert")) (tx("engellendi")) } }
-                                @else if r.failover_min.is_some() && r.down_since.is_some() { " " span class="pill idle" { (tx("kaynak yanıt vermiyor")) } }
-                            }
-                            td class="act" { @if p.admin {
-                                form class="inline" method="post" action="/cluster/replica" {
-                                    input type="hidden" name="peer" value=(r.peer); input type="hidden" name="vmid" value=(r.source);
-                                    input name="failover_min" type="text" inputmode="numeric" size="3" aria-label=(tx("Devralma süresi (dk)")) value=(r.failover_min.unwrap_or(0));
-                                    button class="btn sm" type="submit" name="op" value="failover" { (tx("Devralma")) }
-                                    button class="btn sm" type="submit" name="op" value="run" disabled[r.running] { (tx("Şimdi")) }
-                                    button class="btn sm danger" type="submit" name="op" value="remove" { (tx("Kaldır")) }
-                                }
-                            } }
-                        } } }
-                    } }
+                    div class="rep rep-head" {
+                        span { (tx("Kaynak")) }
+                        span { (tx("Yedek kopya")) }
+                        span { (tx("Devralma")) (tip("Kaynak sunucuya yazdığınız dakika boyunca ulaşılamazsa yedek kopya kendiliğinden başlatılır. Önce hakeme, yani tanımlı başka bir eş sunucuya sorulur: hakeme ulaşılamıyorsa ya da hakem kaynağı çalışır görüyorsa devralınmaz. 0 kapatır.")) }
+                        span class="sr" { (tx("İşlem")) }
+                    }
+                    @for r in list { (replica_row(p, peers, r)) }
                 }
                 @if p.admin && !peers.is_empty() {
-                    form class="inline" method="post" action="/cluster/replica" {
-                        label for="rep-peer" { (tx("Eş sunucu")) }
-                        select id="rep-peer" name="peer" { @for v in peers { option value=(v.name) { (v.name) } } }
-                        label for="rep-vmid" { (tx("Konuk kimliği")) }
-                        input id="rep-vmid" name="vmid" type="text" inputmode="numeric" required;
-                        label for="rep-every" { (tx("Aralık (dk)")) }
-                        input id="rep-every" name="every_min" type="text" inputmode="numeric" value="60" required;
-                        button class="btn sm" type="submit" name="op" value="add" { (icon("plus")) (tx("Çoğalt")) }
+                    form class="addrow" method="post" action="/cluster/replica" {
+                        div class="field" { label for="rep-peer" { (tx("Eş sunucu")) } select id="rep-peer" name="peer" { @for v in peers { option value=(v.name) { (v.name) } } } }
+                        div class="field" { label for="rep-vmid" { (tx("Konuk kimliği")) } input id="rep-vmid" name="vmid" type="text" inputmode="numeric" required; }
+                        div class="field" { label for="rep-every" { (tx("Aralık (dakika)")) } input id="rep-every" name="every_min" type="text" inputmode="numeric" value="60" required; }
+                        button class="btn" type="submit" name="op" value="add" { (icon("plus")) (tx("Çoğalt")) }
                     }
                 }
-                footer { (tx("Kaynak çalışmaya devam eder; ilk turdan sonra yalnızca değişen bloklar indirilir. Kayıp, son turdan beri yazılanlarla sınırlıdır. Yedek kopya kapalı durur; kaynak sunucu ölürse onu buradan başlatın ya da kendiliğinden devralmayı açın. Çalışan bir kopyanın üzerine yazılmaz.")) }
+                footer { (tx("Kaynak çalışmaya devam eder; ilk turdan sonra yalnızca değişen bloklar indirilir. Kayıp, son turdan beri yazılanlarla sınırlıdır. Çalışan bir kopyanın üzerine yazılmaz.")) }
+            }
+        }
+    }
+}
+
+fn replica_row(p: &Page, peers: &[crate::peers::PeerView], r: &redox_core::replicas::Replica) -> Markup {
+    let name = peers.iter().find(|v| v.name == r.peer).and_then(|v| v.guests.iter().find(|g| g.vmid == r.source)).map(|g| g.name.clone());
+    let standby = r.standby.and_then(|id| p.cluster.guest(id).ok());
+    let standby_running = standby.is_some_and(|g| g.status != GuestStatus::Stopped);
+    let last = match r.last_ok {
+        Some(ts) => tfmt(format!("son tur {}", datetime(ts))),
+        None => tx("henüz tur yok").to_string(),
+    };
+    let moved = match r.delta.filter(|d| d.1 > 0) {
+        Some((fetched, total)) => tfmt(format!("{fetched} / {total} blok")),
+        None => tx("tam kopya").to_string(),
+    };
+    html! {
+        div class="rep-wrap" {
+            div class="rep" {
+                div class="src" {
+                    @if let Some(name) = &name { (name) " " }
+                    span class="mono dim" { (r.peer) " / " (r.source) }
+                    span class="sub" { (tfmt(format!("{} dk'da bir", r.every_min))) " · " (last) @if r.last_ok.is_some() { " · " (moved) } }
+                }
+                div {
+                    @match r.standby {
+                        Some(id) => {
+                            a class="mono gold" href={ "/guests/" (id) } { (id) } " "
+                            @if r.running { span class="st pause" { (tx("Tazeleniyor")) } }
+                            @else if standby_running { span class="st run" { (tx("Çalışıyor")) } }
+                            @else { span class="st stop" { (tx("Kapalı, hazır")) } }
+                        },
+                        None => span class="dim" { @if r.running { (tx("İlk tur sürüyor")) } @else { (tx("Henüz yok")) } },
+                    }
+                }
+                div {
+                    @match (r.failover_min, r.failed_over) {
+                        (_, Some(ts)) => { span class="pill warn" { (icon("migrate")) (tx("Devralındı")) } span class="sub" { (datetime(ts)) } },
+                        (None, None) => { span class="dim" { (tx("Kapalı")) } span class="sub" { (tx("kopyayı elle başlatırsınız")) } },
+                        (Some(m), None) => {
+                            @if r.failover_note.is_some() { span class="pill err" { (icon("alert")) (tx("Engellendi")) } }
+                            @else if r.down_since.is_some() { span class="pill warn" { (icon("alert")) (tx("Kaynak yanıt vermiyor")) } }
+                            @else { span class="pill ok" { (icon("check")) (tx("Hazır")) } }
+                            span class="sub" { (tfmt(format!("{m} dk sonra devralır"))) }
+                        },
+                    }
+                }
+                div class="acts" { @if p.admin {
+                    form method="post" action="/cluster/replica" {
+                        input type="hidden" name="peer" value=(r.peer); input type="hidden" name="vmid" value=(r.source);
+                        button class="btn sm" type="submit" name="op" value="run" disabled[r.running || standby_running] { (icon("restart")) (tx("Şimdi çoğalt")) }
+                    }
+                    details class="set" {
+                        summary class="btn sm sq" aria-label=(tfmt(format!("{} / {} ayarları", r.peer, r.source))) { (icon("settings")) }
+                        div class="set-panel" {
+                            form class="set-form" method="post" action="/cluster/replica" {
+                                input type="hidden" name="peer" value=(r.peer); input type="hidden" name="vmid" value=(r.source);
+                                div class="field" {
+                                    label for={ "rep-iv-" (r.peer) "-" (r.source) } { (tx("Çoğaltma aralığı")) }
+                                    div class="row" { input id={ "rep-iv-" (r.peer) "-" (r.source) } name="every_min" type="text" inputmode="numeric" value=(r.every_min) required; span class="unit" { (tx("dakika")) } }
+                                }
+                                div class="field" {
+                                    label for={ "rep-fo-" (r.peer) "-" (r.source) } { (tx("Kendiliğinden devralma")) }
+                                    div class="row" { input id={ "rep-fo-" (r.peer) "-" (r.source) } name="failover_min" type="text" inputmode="numeric" value=(r.failover_min.unwrap_or(0)); span class="unit" { (tx("dakika sonra")) } }
+                                    span class="help" { (tx("0 kapatır. 5 ile 1440 arası. Hakem olacak ikinci bir eş sunucu gerekir.")) }
+                                }
+                                div class="btns end" { button class="btn sm primary" type="submit" name="op" value="save" { (tx("Kaydet")) } }
+                            }
+                            hr;
+                            form class="danger-row" method="post" action="/cluster/replica" {
+                                input type="hidden" name="peer" value=(r.peer); input type="hidden" name="vmid" value=(r.source);
+                                span { (tx("Kopya olağan bir konuk olarak kalır.")) }
+                                button class="btn sm danger" type="submit" name="op" value="remove" { (icon("trash")) (tx("Kaldır")) }
+                            }
+                        }
+                    }
+                } }
+            }
+            @if let Some(e) = &r.error {
+                div class="rep-why" { (icon("alert")) div { b { (tx("Son tur başarısız:")) } " " (tfmt(e.clone())) } }
+            }
+            @if r.failed_over.is_some() || standby_running {
+                div class="rep-why calm" { (icon("alert")) div { (tx("Kopya çalışırken üzerine yazılmaz. Kaynak geri gelince iki kopyadan birini kapatın; sonraki başarılı turda devralma yeniden kurulur.")) } }
+            } @else if let Some(note) = &r.failover_note {
+                div class="rep-why" { (icon("alert")) div { b { (tx("Devralınmadı:")) } " " (tfmt(note.clone())) ". " (tx("Dakikada bir yeniden denenir.")) } }
             }
         }
     }

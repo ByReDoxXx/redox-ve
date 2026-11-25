@@ -7,7 +7,9 @@ impl AppState {
         if self.peers().peer(peer).is_none() {
             return Err(Error::InvalidSpec(format!("\"{peer}\" adında bir eş sunucu tanımlı değil")));
         }
-        if self.driver().image_file("x.qcow2").is_none() {
+        // Var olan çoğaltmanın yalnızca aralığı değişir; yeni çoğaltma disk imajı içe aktarabilen sürücü ister.
+        let exists = self.lock().replicas.iter().any(|r| r.peer == peer && r.source == source);
+        if !exists && self.driver().image_file("x.qcow2").is_none() {
             return Err(Error::InvalidSpec("bu sürücü disk imajı içe aktaramıyor (gerçek sürücü gerekir)".to_string()));
         }
         self.mutate(|c| {

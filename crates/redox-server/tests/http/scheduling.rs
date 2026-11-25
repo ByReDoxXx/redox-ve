@@ -807,12 +807,20 @@ pub(super) async fn replication_card_shows_and_sets_witnessed_failover() {
         c.replicas[0].delta = Some((1, 3));
     });
     let html = page(&app, "/cluster").await;
-    for needle in ["Devralma", r#"name="failover_min""#, r#"value="10""#, "engellendi", "hiçbir hakem sunucuya", "1 / 3", "Önce hakeme"] {
+    for needle in ["Devralma", r#"name="failover_min""#, r#"value="10""#, "Engellendi", "Devralınmadı:", "hiçbir hakem sunucuya", "10 dk sonra devralır", "60 dk'da bir", "Önce hakeme", r#"value="save""#, r#"class="set-panel""#] {
         assert!(html.contains(needle), "{needle}");
     }
     // Devralınmış çoğaltma öyle görünür.
     st.mutate(|c| c.replicas[0].failed_over = Some(1_700_000_000));
-    assert!(page(&app, "/cluster").await.contains("devralındı"));
+    let html = page(&app, "/cluster").await;
+    assert!(html.contains("Devralındı") && html.contains("iki kopyadan birini kapatın") && !html.contains("Devralınmadı:"));
+    // Ayar bölmesi aralığı ve devralmayı birlikte kaydeder.
+    let (status, headers, _) = send(&app, post_form("/cluster/replica", "peer=ankara&vmid=500&op=save&every_min=30&failover_min=20")).await;
+    assert!(status.is_redirection() && location(&headers).contains("notice"), "{}", location(&headers));
+    let saved = st.snapshot().replicas[0].clone();
+    assert_eq!((saved.every_min, saved.failover_min), (30, Some(20)));
+    let (_, headers, _) = send(&app, post_form("/cluster/replica", "peer=ankara&vmid=500&op=save&every_min=x&failover_min=20")).await;
+    assert!(location(&headers).contains("error"));
     // Form: 0 kapatır, geçersiz süre reddedilir.
     let (status, headers, _) = send(&app, post_form("/cluster/replica", "peer=ankara&vmid=500&op=failover&failover_min=0&every_min=")).await;
     assert!(status.is_redirection() && location(&headers).contains("notice"), "{}", location(&headers));

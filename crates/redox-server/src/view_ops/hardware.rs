@@ -360,11 +360,13 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         div class="field" {
                             label for="usb" { (tx("USB aygıtları")) }
                             input id="usb" form="hw" name="usb" type="text" value=(f.usb) placeholder="046d:c52b" autocomplete="off" spellcheck="false" disabled[off];
+                            (device_tags(&f.usb))
                             span class="hint" tabindex="0" role="note" { (tx("Sunucuya takılı aygıtın lsusb çıktısındaki kimliği. Hizmet kullanıcısının aygıta erişim izni olmalıdır.")) }
                         }
                         div class="field" {
-                            label for="pci" { (tx("PCI aygıtları")) }
+                            label for="pci" { (tx("PCI aygıtları ve ekran kartı dilimleri")) }
                             input id="pci" form="hw" name="pci" type="text" value=(f.pci) placeholder="0000:01:00.0" autocomplete="off" spellcheck="false" disabled[off];
+                            (device_tags(&f.pci))
                             span class="hint" tabindex="0" role="note" { (tx("lspci -D çıktısındaki adres. Sunucuda IOMMU açık ve aygıt vfio-pci sürücüsüne bağlı olmalıdır. Paylaşılan ekran kartı (vGPU) için adres yerine aracılı aygıtın kimliğini (mdev UUID) yazın; aynı kart böylece birkaç konuğa bölünür.")) }
                         }
                     }
@@ -377,6 +379,31 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                 a class="btn" href={ (base) "?tab=donanim" } { (tx("Vazgeç")) }
                 button class="btn primary" type="submit" form="hw" disabled[off] { (icon("check")) (tx("Donanımı Kaydet")) }
             }
+        }
+    }
+}
+
+/// Aktarılan aygıt alanının altında, girilen her değerin ne olduğunu söyleyen etiketler (USB, PCI, vGPU).
+/// Tanınmayan değer etiketlenmez; kaydederken zaten reddedilir.
+fn device_tags(value: &str) -> Markup {
+    let known: Vec<(&str, bool, String)> = value
+        .split(',')
+        .map(str::trim)
+        .filter_map(|item| {
+            if redox_core::hw::valid_mdev_uuid(item) {
+                Some(("vGPU", true, format!("{}…{}", &item[..8], &item[item.len() - 4..])))
+            } else if redox_core::hw::valid_pci_addr(item) {
+                Some(("PCI", false, item.to_string()))
+            } else if redox_core::hw::valid_usb_id(item) {
+                Some(("USB", false, item.to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    html! {
+        @if !known.is_empty() {
+            div class="devs" { @for (kind, shared, text) in &known { span class=(if *shared { "tag gold" } else { "tag" }) { b { (kind) } (text) } } }
         }
     }
 }
