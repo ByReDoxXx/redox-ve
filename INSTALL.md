@@ -15,6 +15,51 @@ The guide targets Debian 12 or Ubuntu 22.04 and later (systemd, x86_64). Replace
 > **Language.** The web panel and the CLI help text are in Turkish. Page and button names in this guide are
 > given in Turkish, as they appear on screen, with a translation the first time.
 
+## Installing like Proxmox (installer ISO and one command)
+
+RedoX VE does not run inside a container or another panel; it runs directly on the server's operating system as a
+systemd service. There are two ways to install it:
+
+### A. Installer ISO (for an empty machine)
+
+`deploy/iso/build-iso.sh` builds a RedoX VE installer ISO from Debian's network-install image. Write the ISO to a USB
+stick and boot it. The installer asks only for language and keyboard, the host name, the root password and the disk
+to install to (it asks for confirmation before erasing it); everything else is automatic: a minimal Debian, SSH,
+QEMU/KVM, LXC and RedoX VE. The first network card is attached to the `vmbr0` bridge, so guests get addresses
+straight from your network.
+
+```
+# On Linux, once:
+rustup target add x86_64-unknown-linux-musl && sudo apt install musl-tools xorriso cpio
+cargo build --release --target x86_64-unknown-linux-musl
+sh deploy/iso/build-iso.sh --debian-iso debian-13.x.y-amd64-netinst.iso \
+    --binary target/x86_64-unknown-linux-musl/release/redox --out redox-ve.iso
+sudo dd if=redox-ve.iso of=/dev/sdX bs=4M status=progress conv=fsync      # sdX: the USB stick
+```
+
+When the server boots for the first time the console shows the panel's address (`https://<address>:8006`,
+self-signed certificate). The first administrator `admin` is created with a random password, stored only in
+`/root/redox-ilk-parola.txt`, readable by root. Change the password after the first login and delete the file. The
+machine needs internet access during installation (packages come from the Debian repository).
+
+### B. One command (on an installed Debian or Ubuntu)
+
+```
+sudo sh deploy/install.sh --binary target/release/redox --bridge eth0 --lang en
+```
+
+It does the same setup and asks you for the administrator password. Without `--bridge` no bridge is created (guests
+use NAT); the bridge is only set up on systems that use `/etc/network/interfaces` and comes up after a reboot.
+`--no-tls` leaves the panel on `127.0.0.1:8006` only. `--dry-run` prints what would be done without changing anything.
+
+### What was tested and what was not
+
+The scripts' syntax, the network configuration rewrite (DHCP and static), idempotence on a second run, the systemd
+units and the installer answer file were tested. **Not tested yet:** building the ISO and booting and installing
+from it on a machine, the package installation, Caddy serving on 8006 with a self-signed certificate, and the musl
+build. Do not rely on this path in production until a real installation has confirmed it; the step-by-step manual
+installation follows below.
+
 ## Security model (summary)
 
 | Layer | What it does |

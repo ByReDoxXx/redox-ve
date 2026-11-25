@@ -59,6 +59,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Yerel yedek şifrelemesi (`--backup-passphrase-file`): artımlı yedek parçaları diskte şifreli durur.
 - Sunucular arası ortak konuk ağı için VXLAN kurulum komutları (`redox net vxlan`), aracılı aygıtla ekran kartı paylaşımı (vGPU) ve depolamanın altındaki ZFS, LVM ve NFS'in tanınması.
 - API'nin OpenAPI belgesi (`/api/v1/openapi.json`), canlı konsola metni tuş vuruşu olarak yazdırma, şifreli konteyner yedekleri ve VXLAN için kalıcı systemd birimi (`redox net vxlan … --unit`).
+- Proxmox gibi kurulum: `deploy/iso/build-iso.sh` önyüklenebilir bir kurulum ISO'su üretir, `deploy/install.sh` yeni bir Debian'ı tek komutla RedoX VE sunucusuna çevirir (betikler çevrimdışı sınandı; gerçek bir kurulum henüz yapılmadı).
 - Hakemli kendiliğinden devralma: kaynak sunucu ölünce ve üçüncü bir sunucu onaylayınca yedek kopya başlatılır.
 - Artımlı çoğaltma: ilk turdan sonra ağdan yalnızca değişen 4 MiB'lik bloklar geçer; her blok özetiyle doğrulanır.
 - Konteynerler sunucular arasında kopyalanır ve çoğaltılır; yedek alanının ne zaman dolacağı tahmin edilir; kaynak

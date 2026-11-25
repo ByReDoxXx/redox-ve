@@ -11,6 +11,50 @@ Bu kılavuz Debian 12 / Ubuntu 22.04+ (systemd, x86_64) içindir. Komutlardaki
 > `qemu` sürücüsü bu sunucuda gerçek KVM sanal makineleri çalıştırır (8. bölüm).
 > Aynı sürücü, LXC kuruluysa konteynerleri de çalıştırır (9. bölüm).
 
+## Proxmox gibi kurulum (kurulum ISO'su ve tek komut)
+
+RedoX VE bir konteynerin ya da başka bir panelin içinde çalışmaz; doğrudan sunucunun işletim sisteminde, bir systemd
+hizmeti olarak çalışır. İki kurulum yolu vardır:
+
+### A. Kurulum ISO'su (boş makineye)
+
+`deploy/iso/build-iso.sh`, Debian'ın ağdan kurulum kalıbından bir RedoX VE kurulum ISO'su üretir. ISO bir USB belleğe
+yazılıp önyüklenir. Kurucu yalnızca dili ve klavyeyi, makine adını, kök parolasını ve kurulacak diski sorar (diski
+silmeden önce onay ister); gerisi kendiliğinden kurulur: en küçük Debian, SSH, QEMU/KVM, LXC ve RedoX VE. İlk ağ
+kartı `vmbr0` köprüsüne bağlanır, böylece konuklar ev ağından doğrudan adres alır.
+
+```
+# Linux'ta, bir kez:
+rustup target add x86_64-unknown-linux-musl && sudo apt install musl-tools xorriso cpio
+cargo build --release --target x86_64-unknown-linux-musl
+sh deploy/iso/build-iso.sh --debian-iso debian-13.x.y-amd64-netinst.iso \
+    --binary target/x86_64-unknown-linux-musl/release/redox --out redox-ve.iso
+sudo dd if=redox-ve.iso of=/dev/sdX bs=4M status=progress conv=fsync      # sdX: USB bellek
+```
+
+Sunucu ilk açıldığında konsolda panelin adresi yazar (`https://<adres>:8006`, kendinden imzalı sertifika). İlk
+yönetici hesabı `admin` rastgele bir parolayla oluşturulur; parola yalnızca kökün okuyabildiği
+`/root/redox-ilk-parola.txt` dosyasındadır. İlk girişten sonra parolayı değiştirin ve dosyayı silin. Kurulum
+sırasında makinenin internete çıkması gerekir (paketler Debian deposundan iner).
+
+### B. Tek komut (kurulu bir Debian ya da Ubuntu'ya)
+
+```
+sudo sh deploy/install.sh --binary target/release/redox --bridge eth0
+```
+
+Aynı kurulumu yapar ve yönetici parolasını sizden sorar. `--bridge` verilmezse köprü kurulmaz (konuklar NAT ile
+çalışır); köprü yalnızca `/etc/network/interfaces` kullanan sistemlerde kurulur ve sunucu yeniden başlatılınca
+devreye girer. `--no-tls` paneli yalnızca `127.0.0.1:8006` adresinde bırakır. `--dry-run` hiçbir şeyi değiştirmeden
+yapılacakları yazar.
+
+### Sınananlar ve sınanmayanlar
+
+Betiklerin sözdizimi, ağ ayarı dönüşümü (DHCP ve sabit adres), yeniden çalıştırmada yinelenmeme, systemd birimleri
+ve kurucu yanıt dosyası sınandı. **Henüz sınanmadı:** ISO'nun üretilmesi ve bir makinede önyüklenip kurulması,
+paketlerin kurulması, Caddy'nin kendinden imzalı sertifikayla 8006'da yayın yapması ve musl ile derleme. Bunlar
+gerçek bir kurulumla doğrulanmadan bu yolu üretimde kullanmayın; adım adım elle kurulum aşağıdadır.
+
 ## Güvenlik modeli (özet)
 
 | Katman | Ne yapıyor |

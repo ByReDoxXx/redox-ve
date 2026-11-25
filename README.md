@@ -63,6 +63,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Local backup encryption (`--backup-passphrase-file`): incremental backup chunks are stored encrypted on disk.
 - VXLAN setup commands for a guest network shared between servers (`redox net vxlan`), graphics card sharing through mediated devices (vGPU), and detection of ZFS, LVM and NFS under a storage.
 - An OpenAPI document of the API (`/api/v1/openapi.json`), typing text into the live console as keystrokes, encrypted container backups, and a persistent systemd unit for VXLAN (`redox net vxlan … --unit`).
+- A Proxmox-style installer: `deploy/iso/build-iso.sh` builds a bootable installer ISO, and `deploy/install.sh` turns a fresh Debian into a RedoX VE server with one command (scripts tested offline; a real installation has not been run yet).
 - Automatic failover with a witness: the standby copy starts when the source server dies and a third server agrees.
 - Incremental replication: after the first run only the changed 4 MiB blocks cross the network, each verified by hash.
 - Containers can be copied and replicated between servers; a forecast of when the backup storage fills up; CSV export
