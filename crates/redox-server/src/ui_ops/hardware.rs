@@ -118,8 +118,9 @@ pub async fn disk_remove(State(st): State<AppState>, Extension(me): Extension<Id
     let Ok(id) = id.parse::<u8>() else {
         return flash(&back, "error", "Geçersiz disk numarası.");
     };
-    match st.disk_remove(vmid, id, &me.user) {
-        Ok(()) => flash(&back, "notice", &format!("{id} numaralı disk silindi.")),
+    match st.request_disk_remove(vmid, id, &me.user) {
+        Ok(Some(n)) => flash(&back, "notice", &format!("Disk silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n}).")),
+        Ok(None) => flash(&back, "notice", &format!("{id} numaralı disk silindi.")),
         Err(e) => failed(&back, &e),
     }
 }

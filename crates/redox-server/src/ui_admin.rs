@@ -83,7 +83,13 @@ pub async fn user_delete(State(st): State<AppState>, Extension(me): Extension<Id
     if f.confirm.is_none() {
         return done("/users", Err("silmek için “Eminim” kutusunu işaretleyin".to_string()));
     }
-    done("/users", st.auth().edit(|u| u.remove_user(&name)).map(|()| format!("{name} silindi.")))
+    done(
+        "/users",
+        st.request_user_remove(&name, &me.user).map_err(|e| e.to_string()).map(|queued| match queued {
+            Some(n) => format!("{name} silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n})."),
+            None => format!("{name} silindi."),
+        }),
+    )
 }
 
 pub async fn user_totp_reset(State(st): State<AppState>, Path(name): Path<String>) -> Redirect {

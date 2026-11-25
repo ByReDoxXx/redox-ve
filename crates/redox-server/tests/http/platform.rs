@@ -106,3 +106,31 @@ pub(super) async fn four_eyes_holds_deletions_until_another_admin_approves() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(state.snapshot().guests.len(), guests - 2);
 }
+
+#[tokio::test]
+async fn four_eyes_also_covers_disks_jobs_and_users() {
+    let (app, state) = setup();
+    // Kapalıyken hepsi hemen yapılır (iş yokken silme hatası olağan hatadır, onay isteği değil).
+    let (status, _) = api(&app, request(Method::DELETE, "/api/v1/jobs/yok").body(Body::empty()).unwrap()).await;
+    assert_ne!(status, StatusCode::ACCEPTED);
+    state.set_four_eyes(true);
+    state.job_put(redox_core::BackupJob::from_text("gece", "02:00", "", "", Some(3)).unwrap()).unwrap();
+    state.disk_add(103, 2, "admin").unwrap();
+
+    let (status, body) = api(&app, request(Method::DELETE, "/api/v1/jobs/gece").body(Body::empty()).unwrap()).await;
+    assert_eq!((status, body["approval"].as_u64()), (StatusCode::ACCEPTED, Some(1)));
+    let (status, body) = api(&app, request(Method::DELETE, "/api/v1/guests/103/disks/1").body(Body::empty()).unwrap()).await;
+    assert_eq!((status, body["approval"].as_u64()), (StatusCode::ACCEPTED, Some(2)));
+    let (status, _) = api(&app, request(Method::DELETE, "/api/v1/guests/103/disks/7").body(Body::empty()).unwrap()).await;
+    assert_ne!(status, StatusCode::ACCEPTED, "olmayan disk için istek açılmaz");
+    assert_eq!(state.request_user_remove("yok-boyle-biri", "admin").unwrap_err().to_string(), "yok-boyle-biri adında bir kullanıcı yok");
+    let c = state.snapshot();
+    assert!(c.job("gece").is_ok() && c.guest(103).unwrap().hw.disks.len() == 1, "onaylanana kadar ikisi de duruyor");
+    let home = page(&app, "/").await;
+    assert!(home.contains("gece yedek işini silmek") && home.contains("103 kimlikli konuğun 1 numaralı diskini silmek"));
+
+    assert_eq!(state.approve(1, "ikinci-yonetici").unwrap(), "onaylandı: gece yedek işini silmek");
+    assert_eq!(state.approve(2, "ikinci-yonetici").unwrap(), "onaylandı: 103 kimlikli konuğun 1 numaralı diskini silmek");
+    let c = state.snapshot();
+    assert!(c.job("gece").is_err() && c.guest(103).unwrap().hw.disks.is_empty());
+}

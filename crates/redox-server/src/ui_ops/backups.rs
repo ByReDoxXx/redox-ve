@@ -53,15 +53,16 @@ pub async fn job_save(State(st): State<AppState>, RawForm(body): RawForm) -> Red
 }
 
 /// `run`: işi şimdi başlatır; `delete`: siler (aldığı yedekler kalır).
-pub async fn job_action(State(st): State<AppState>, Path((name, op)): Path<(String, String)>) -> Redirect {
+pub async fn job_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, op)): Path<(String, String)>) -> Redirect {
     match op.as_str() {
         "run" => match st.job_run(&name) {
             Ok(0) => flash("/backups", "error", &format!("{name} işinin kapsamında konuk yok.")),
             Ok(n) => flash("/backups", "notice", &format!("{name} işi başlatıldı: {n} konuk sırayla yedeklenecek; sonuç görevlerde görünür.")),
             Err(e) => failed("/backups", &e),
         },
-        "delete" => match st.job_remove(&name) {
-            Ok(()) => flash("/backups", "notice", &format!("{name} işi silindi; aldığı yedekler duruyor.")),
+        "delete" => match st.request_job_remove(&name, &me.user) {
+            Ok(Some(n)) => flash("/backups", "notice", &format!("{name} işi silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n}).")),
+            Ok(None) => flash("/backups", "notice", &format!("{name} işi silindi; aldığı yedekler duruyor.")),
             Err(e) => failed("/backups", &e),
         },
         _ => flash("/backups", "error", "Bilinmeyen işlem."),

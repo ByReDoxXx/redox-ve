@@ -407,9 +407,8 @@ async fn nic_add(State(st): State<AppState>, Extension(me): Extension<Identity>,
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "index": index, "network": network }))))
 }
 
-async fn disk_remove(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((vmid, id)): Path<(VmId, u8)>) -> Result<StatusCode, ApiError> {
-    st.disk_remove(vmid, id, &me.user)?;
-    Ok(StatusCode::NO_CONTENT)
+async fn disk_remove(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((vmid, id)): Path<(VmId, u8)>) -> Result<Response, ApiError> {
+    Ok(queued(st.request_disk_remove(vmid, id, &me.user)?))
 }
 
 /// Yedeği dış hedefe gönderir; sonuç görev günlüğünde görünür.
@@ -625,9 +624,8 @@ async fn job_put(State(st): State<AppState>, Json(body): Json<JobBody>) -> Resul
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn job_delete(State(st): State<AppState>, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
-    st.job_remove(&name)?;
-    Ok(StatusCode::NO_CONTENT)
+async fn job_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> Result<Response, ApiError> {
+    Ok(queued(st.request_job_remove(&name, &me.user)?))
 }
 
 async fn job_run(State(st): State<AppState>, Path(name): Path<String>) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {

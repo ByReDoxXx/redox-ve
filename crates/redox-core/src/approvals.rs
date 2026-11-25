@@ -14,6 +14,10 @@ pub const MAX_APPROVALS: usize = 64;
 
 pub const BACKUP_DELETE: &str = "backup-delete";
 pub const GUEST_DELETE: &str = "guest-delete";
+/// Hedef `kimlik:disk` biçimindedir.
+pub const DISK_REMOVE: &str = "disk-remove";
+pub const JOB_REMOVE: &str = "job-remove";
+pub const USER_REMOVE: &str = "user-remove";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Approval {
@@ -33,6 +37,12 @@ impl Approval {
         match self.action.as_str() {
             BACKUP_DELETE => format!("{} yedeğini silmek", self.target),
             GUEST_DELETE => format!("{} kimlikli konuğu silmek", self.target),
+            DISK_REMOVE => match self.target.split_once(':') {
+                Some((vmid, disk)) => format!("{vmid} kimlikli konuğun {disk} numaralı diskini silmek"),
+                None => format!("{} diskini silmek", self.target),
+            },
+            JOB_REMOVE => format!("{} yedek işini silmek", self.target),
+            USER_REMOVE => format!("{} kullanıcısını silmek", self.target),
             other => format!("{other} {}", self.target),
         }
     }
@@ -95,6 +105,10 @@ mod tests {
         assert_eq!((first, second), (1, 2));
         assert_eq!(c.pending_approvals(NOW).len(), 2);
         assert_eq!(c.approvals[0].describe(), "vm-103-1 yedeğini silmek");
+        let text = |action: &str, target: &str| Approval { id: 9, action: action.into(), target: target.into(), by: "a".into(), at: NOW }.describe();
+        assert_eq!(text(DISK_REMOVE, "103:2"), "103 kimlikli konuğun 2 numaralı diskini silmek");
+        assert_eq!(text(JOB_REMOVE, "gece"), "gece yedek işini silmek");
+        assert_eq!(text(USER_REMOVE, "ayse"), "ayse kullanıcısını silmek");
 
         assert!(c.take_approval(first, "ayse", NOW).unwrap_err().to_string().contains("kendi isteğinizi onaylayamazsınız"));
         assert_eq!(c.take_approval(first, "mehmet", NOW).unwrap().target, "vm-103-1");

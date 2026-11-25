@@ -34,6 +34,41 @@ impl AppState {
         })
     }
 
+    /// Ek disk silme (veriyle birlikte); dört göz ilkesi açıksa onay isteği açar.
+    pub fn request_disk_remove(&self, vmid: VmId, disk: u8, user: &str) -> Result<Option<u64>, Error> {
+        if !self.four_eyes() {
+            return self.disk_remove(vmid, disk, user).map(|()| None);
+        }
+        self.mutate(|c| {
+            if !c.guest(vmid)?.hw.disks.iter().any(|d| d.id == disk) {
+                return Err(Error::InvalidSpec(format!("{vmid} kimlikli konukta {disk} numaralı disk yok")));
+            }
+            self.open_approval(c, redox_core::approvals::DISK_REMOVE, &format!("{vmid}:{disk}"), user).map(Some)
+        })
+    }
+
+    /// Yedek işini silme (işi silen, yedeklemeyi sessizce durdurabilir); dört göz ilkesi açıksa onay isteği açar.
+    pub fn request_job_remove(&self, name: &str, user: &str) -> Result<Option<u64>, Error> {
+        if !self.four_eyes() {
+            return self.job_remove(name).map(|()| None);
+        }
+        self.mutate(|c| {
+            c.job(name)?;
+            self.open_approval(c, redox_core::approvals::JOB_REMOVE, name, user).map(Some)
+        })
+    }
+
+    /// Kullanıcı silme; dört göz ilkesi açıksa onay isteği açar.
+    pub fn request_user_remove(&self, name: &str, user: &str) -> Result<Option<u64>, Error> {
+        if !self.four_eyes() {
+            return self.auth().edit(|u| u.remove_user(name)).map(|()| None).map_err(Error::InvalidSpec);
+        }
+        if !self.auth().list().iter().any(|u| u.name == name) {
+            return Err(Error::InvalidSpec(format!("{name} adında bir kullanıcı yok")));
+        }
+        self.mutate(|c| self.open_approval(c, redox_core::approvals::USER_REMOVE, name, user).map(Some))
+    }
+
     pub(super) fn open_approval(&self, c: &mut Cluster, action: &str, target: &str, user: &str) -> Result<u64, Error> {
         let known = c.approvals.len();
         let id = c.request_approval(action, target, user, now())?;
@@ -55,6 +90,14 @@ impl AppState {
                 let vmid = approval.target.parse().map_err(|_| Error::InvalidSpec(format!("geçersiz konuk kimliği: {}", approval.target)))?;
                 self.delete_guest(vmid, &who)?
             }
+            redox_core::approvals::DISK_REMOVE => {
+                let parsed = approval.target.split_once(':').and_then(|(vmid, disk)| Some((vmid.parse().ok()?, disk.parse().ok()?)));
+                let (vmid, disk) = parsed.ok_or_else(|| Error::InvalidSpec(format!("geçersiz disk hedefi: {}", approval.target)))?;
+                self.disk_remove(vmid, disk, &who)?
+            }
+            redox_core::approvals::JOB_REMOVE => self.job_remove(&approval.target)?,
+            // İkinci yönetici kendi hesabının silinmesini de onaylayabilir; son yöneticiyi silmeyi kullanıcı dosyası reddeder.
+            redox_core::approvals::USER_REMOVE => self.auth().edit(|u| u.remove_user(&approval.target)).map_err(Error::InvalidSpec)?,
             other => return Err(Error::InvalidSpec(format!("bilinmeyen onay türü: {other}"))),
         }
         Ok(format!("onaylandı: {}", approval.describe()))
