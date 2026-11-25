@@ -33,7 +33,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod remote;
+mod seal;
 mod upkeep;
+
+pub use seal::marked as seal_marked;
 
 /// Parça boyutu: 4 MiB.
 pub const CHUNK_SIZE: usize = 4 * 1024 * 1024;
@@ -98,6 +101,8 @@ pub struct Store {
     /// Dış hedefe gönderme ve hedeften silme sırayla yapılır: biri, diğerinin az önce
     /// "hedefte var" diye atladığı parçayı silemesin.
     sync: Mutex<()>,
+    /// Yerel şifreleme anahtarı; varsa yeni parçalar diske şifreli yazılır.
+    seal: Option<seal::Seal>,
 }
 
 /// Hedefteki parça adı (yereldeki düzenle aynı).
@@ -149,7 +154,18 @@ impl Store {
     }
 
     pub fn with_chunk_size(dir: impl Into<PathBuf>, chunk_size: usize) -> Self {
-        Store { dir: dir.into(), chunk_size: chunk_size.max(1), gate: RwLock::new(()), sync: Mutex::new(()) }
+        Store { dir: dir.into(), chunk_size: chunk_size.max(1), gate: RwLock::new(()), sync: Mutex::new(()), seal: None }
+    }
+
+    /// Depoyu parolayla şifreli kullanır: bundan sonra yazılan parçalar şifrelenir, şifreli parçalar okunabilir.
+    /// Önceden şifresiz yazılmış parçalar olduğu gibi kalır ve okunmaya devam eder.
+    pub fn sealed(mut self, passphrase: &str) -> Result<Self, String> {
+        self.seal = Some(seal::Seal::open(&self.dir, passphrase)?);
+        Ok(self)
+    }
+
+    pub fn is_sealed(&self) -> bool {
+        self.seal.is_some()
     }
 
     fn index_path(&self, id: &str) -> PathBuf {
@@ -321,7 +337,10 @@ impl Store {
         if let Ok(meta) = std::fs::metadata(&path) {
             return Ok((meta.len(), false));
         }
-        let packed = zstd::bulk::compress(data, ZSTD_LEVEL).map_err(|e| format!("parça sıkıştırılamadı: {e}"))?;
+        let mut packed = zstd::bulk::compress(data, ZSTD_LEVEL).map_err(|e| format!("parça sıkıştırılamadı: {e}"))?;
+        if let Some(seal) = &self.seal {
+            packed = seal.seal(&packed, hash.as_bytes())?;
+        }
         let parent = path.parent().ok_or("geçersiz parça yolu")?;
         std::fs::create_dir_all(parent).map_err(|e| format!("{} oluşturulamadı: {e}", parent.display()))?;
         write_atomic(&path, &packed)?;
@@ -330,13 +349,20 @@ impl Store {
 
     /// Parçayı okur, açar ve özetini doğrular.
     fn get(&self, hash: &str, expected_len: usize) -> Result<Vec<u8>, String> {
-        Self::decode(&self.chunk_path(hash), hash, expected_len)
+        self.decode(&self.chunk_path(hash), hash, expected_len)
     }
 
-    /// `path` dosyasındaki sıkıştırılmış parçayı açar; uzunluğu ve özeti tutmuyorsa hata verir.
-    fn decode(path: &Path, hash: &str, expected_len: usize) -> Result<Vec<u8>, String> {
+    /// `path` dosyasındaki (şifreliyse çözülen) sıkıştırılmış parçayı açar; uzunluğu ve özeti tutmuyorsa hata verir.
+    fn decode(&self, path: &Path, hash: &str, expected_len: usize) -> Result<Vec<u8>, String> {
         let file = std::fs::File::open(path).map_err(|e| format!("parça eksik ({}): {e}", &hash[..12]))?;
-        let decoder = zstd::stream::read::Decoder::new(file).map_err(|e| format!("parça açılamadı ({}): {e}", &hash[..12]))?;
+        // Bozuk bir dosya belleği tüketemesin: sıkıştırılmış parça, ham boyutundan ancak biraz büyük olabilir.
+        let mut packed = Vec::new();
+        file.take(expected_len as u64 + expected_len as u64 / 8 + 4096).read_to_end(&mut packed).map_err(|e| format!("parça okunamadı ({}): {e}", &hash[..12]))?;
+        if packed.starts_with(seal::MAGIC) {
+            let seal = self.seal.as_ref().ok_or_else(|| format!("parça şifreli ({}): sunucuyu --backup-passphrase-file ile başlatın", &hash[..12]))?;
+            packed = seal.unseal(&packed, hash.as_bytes()).map_err(|()| format!("parça bozuk ({}): şifresi çözülemedi", &hash[..12]))?;
+        }
+        let decoder = zstd::stream::read::Decoder::new(&packed[..]).map_err(|e| format!("parça açılamadı ({}): {e}", &hash[..12]))?;
         let mut data = Vec::with_capacity(expected_len);
         // Bozuk bir parça belleği tüketemesin: beklenenden bir bayt fazlası okunur, o kadar.
         decoder.take(expected_len as u64 + 1).read_to_end(&mut data).map_err(|e| format!("parça bozuk ({}): {e}", &hash[..12]))?;

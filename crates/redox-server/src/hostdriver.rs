@@ -164,6 +164,10 @@ impl Hypervisor for HostDriver {
         self.of(guest).ok()?.io_counters(guest)
     }
 
+    fn backups_sealed(&self) -> bool {
+        self.vm.backups_sealed()
+    }
+
     fn backup_raw(&self, id: &str, disk: u8, dest: &std::path::Path) -> Result<(), String> {
         if id.starts_with("ct-") { Err("konteyner yedeği blok blok aktarılmaz".to_string()) } else { self.vm.backup_raw(id, disk, dest) }
     }

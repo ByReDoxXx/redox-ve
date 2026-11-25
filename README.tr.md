@@ -56,6 +56,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Bakım kipi: sunucu güncellemesinden önce konukları kapatır, sonra yeniden başlatır.
 - Konuk içi disk doluluğu (ajanla) ve uyarısı; uyarılar web kancası, e-posta, ntfy ve Telegram ile gider.
 - Salt okunur API token'ları ve isteğe bağlı API hız sınırı.
+- Yerel yedek şifrelemesi (`--backup-passphrase-file`): artımlı yedek parçaları diskte şifreli durur.
 - Artımlı çoğaltma: ilk turdan sonra ağdan yalnızca değişen 4 MiB'lik bloklar geçer; her blok özetiyle doğrulanır.
 - Konteynerler sunucular arasında kopyalanır ve çoğaltılır; yedek alanının ne zaman dolacağı tahmin edilir; kaynak
   ölçümü ve denetim günlüğü CSV olarak indirilir; imaj kataloğunda virtio-win sürücü kalıbı vardır.
@@ -423,7 +424,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 503, Windows'ta 434 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 505, Windows'ta 435 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 

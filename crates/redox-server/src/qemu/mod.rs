@@ -157,6 +157,13 @@ impl QemuDriver {
             }
         }
         let store = crate::chunkstore::Store::new(cfg.backups_dir());
+        let store = match &cfg.backup_passphrase {
+            Some(_) if !cfg.incremental_backups => return Err("yerel yedek şifrelemesi artımlı yedekle çalışır (--incremental-backups)".to_string()),
+            Some(passphrase) => store.sealed(passphrase)?,
+            // Şifrelenmiş depo parolasız açılırsa yeni yedekler sessizce şifresiz yazılırdı.
+            None if crate::chunkstore::seal_marked(&cfg.backups_dir()) => return Err(format!("{} şifreli bir yedek deposu; sunucuyu --backup-passphrase-file ile başlatın", cfg.backups_dir().display())),
+            None => store,
+        };
         Ok(QemuDriver { cfg, has_uefi, has_tpm, has_9p, store, agents: Mutex::new(HashMap::new()), samples: Mutex::new(HashMap::new()) })
     }
 
@@ -914,6 +921,10 @@ impl Hypervisor for QemuDriver {
             let _ = guest;
             None
         }
+    }
+
+    fn backups_sealed(&self) -> bool {
+        self.store.is_sealed()
     }
 
     fn backup_raw(&self, id: &str, disk: u8, dest: &Path) -> Result<(), String> {

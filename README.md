@@ -60,6 +60,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Maintenance mode: drain the guests before a host update and start them again afterwards.
 - Disk usage inside guests (through the agent) with alerts; alerts by webhook, e-mail, ntfy and Telegram.
 - Read-only API tokens and an optional API rate limit.
+- Local backup encryption (`--backup-passphrase-file`): incremental backup chunks are stored encrypted on disk.
 - Incremental replication: after the first run only the changed 4 MiB blocks cross the network, each verified by hash.
 - Containers can be copied and replicated between servers; a forecast of when the backup storage fills up; CSV export
   of resource usage and the audit log; the virtio-win driver media in the image catalog.
@@ -421,7 +422,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-503 tests pass on Linux and 434 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+505 tests pass on Linux and 435 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 

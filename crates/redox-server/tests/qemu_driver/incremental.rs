@@ -458,3 +458,40 @@ pub(super) async fn full_backups_with_extra_disks_reach_offsite_and_download() {
     assert!(files_under(&remote).is_empty() && files_under(&cfg.backups_dir()).is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+pub(super) fn local_backup_store_can_be_encrypted_with_a_passphrase() {
+    if !python_available() {
+        return;
+    }
+    let (mut cfg, dir) = config();
+    cfg.backup_passphrase = Some("dogru-at-pil-zimba".into());
+    assert!(QemuDriver::new(cfg.clone()).err().unwrap().contains("--incremental-backups"), "tam yedekler şifrelenmez: açıkça reddedilir");
+    cfg.incremental_backups = true;
+    let d = redox_server::hostdriver::HostDriver::new(QemuDriver::new(cfg.clone()).unwrap(), None);
+    assert!(d.backups_sealed());
+    let g = guest(&cfg, "gizli");
+    d.create(&g).unwrap();
+    let disk = cfg.disk_path(g.vmid);
+    let content = patterned(2);
+    std::fs::write(&disk, &content).unwrap();
+    d.backup(&g, "vm-100-a").unwrap();
+    // Diskteki parçaların hiçbiri açık veri taşımaz.
+    let chunks: Vec<PathBuf> = files_under(&cfg.backups_dir().join("chunks"));
+    assert!(!chunks.is_empty() && chunks.iter().all(|f| std::fs::read(f).unwrap().starts_with(b"RDXSEAL1")));
+    assert!(d.verify_backup("vm-100-a", &[]).is_ok());
+    std::fs::write(&disk, b"bozuk").unwrap();
+    d.restore(&g, "vm-100-a", &[]).unwrap();
+    assert!(std::fs::read(&disk).unwrap() == content);
+    // Artımlı çoğaltmanın açık önbelleği şifreli depoda üretilmez; ham içerik yine istenince çıkarılabilir.
+    let raw = dir.join("ham");
+    d.backup_raw("vm-100-a", 0, &raw).unwrap();
+    assert!(std::fs::read(&raw).unwrap() == content);
+    drop(d);
+    // Parolasız ya da yanlış parolayla başlatma reddedilir.
+    cfg.backup_passphrase = None;
+    assert!(QemuDriver::new(cfg.clone()).err().unwrap().contains("--backup-passphrase-file"));
+    cfg.backup_passphrase = Some("baska-bir-parola-123".into());
+    assert!(QemuDriver::new(cfg.clone()).err().unwrap().contains("parolası yanlış"));
+    std::fs::remove_dir_all(dir).unwrap();
+}

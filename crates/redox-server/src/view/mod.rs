@@ -94,6 +94,8 @@ pub struct Page<'a> {
     pub backup_age: u32,
     /// Yedeklerin sunucu dışı hedefinin kısa tanımı; yapılandırılmadıysa `None`.
     pub offsite: Option<&'a str>,
+    /// Yerel yedek deposu şifreli mi?
+    pub sealed: bool,
     /// Grafiklerin zaman aralığı.
     pub range: crate::history::Range,
     pub history: &'a crate::state::History,

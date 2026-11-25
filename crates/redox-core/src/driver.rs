@@ -176,6 +176,11 @@ pub trait Hypervisor: Send + Sync {
         None
     }
 
+    /// Yedekler diskte şifreli mi saklanıyor?
+    fn backups_sealed(&self) -> bool {
+        false
+    }
+
     /// Yedekteki bir diskin ham içeriğini `dest` dosyasına yazar (artımlı çoğaltma blokları bundan okunur).
     fn backup_raw(&self, _id: &str, _disk: u8, _dest: &std::path::Path) -> Result<(), String> {
         Err("bu sürücü yedeğin ham içeriğini veremiyor".to_string())

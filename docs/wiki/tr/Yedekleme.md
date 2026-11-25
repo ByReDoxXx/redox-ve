@@ -58,3 +58,21 @@ Yerel yedekler şifrelenmez; yedek dizinini şifreli bir birime (LUKS) koyun.
 `--incremental-backups` ile yedekler ortak bir parça deposuna yazılır: her yedek yalnızca yeni veriyi ekler ama tek
 başına geri yüklenir; birini silmek diğerlerini bozmaz. Çalışan sanal makinede değişen blok takibi yalnızca değişen
 bölümleri okur.
+
+## Yerel yedeklerin şifrelenmesi
+
+```
+redox serve … --incremental-backups --backup-passphrase-file /etc/redox/yedek-parola
+```
+
+Dosyada tek satır, en az 12 karakterlik bir parola bulunur (`chmod 600`). Bundan sonra alınan sanal makine
+yedeklerinin parçaları diske ChaCha20-Poly1305 ile şifreli yazılır; anahtar paroladan Argon2id ile türetilir. *Yedekler*
+sayfasında **şifreli depo** etiketi görünür.
+
+- **Parolayı kaybederseniz bu yedekler açılamaz.** Parolayı sunucunun dışında da saklayın.
+- Şifrelenmiş depo parolasız ya da yanlış parolayla açılmaz; sunucu başlamayı reddeder.
+- Şifrelemeyi açmadan önce alınmış yedekler olduğu gibi (şifresiz) kalır ve okunmaya devam eder.
+- Şifrelenmeyenler: konteyner yedekleri, tam (artımlı olmayan) yedekler ve yedek dizinleri (parça özetleri ile disk
+  boyutları). Geri yükleme ve dışa aktarma sırasında geçici açık dosyalar oluşur ve iş bitince silinir.
+- Dış hedefe giden parçalar da şifreli gider (dış hedefin kendi parolası varsa iki kat).
+- Şifreli depoda artımlı çoğaltma için açık önbellek tutulmaz; bu sunucudan yapılan çoğaltma her turda tam kopyalar.

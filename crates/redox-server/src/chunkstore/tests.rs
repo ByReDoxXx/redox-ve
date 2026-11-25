@@ -614,3 +614,42 @@ fn unpush_keeps_every_chunk_when_it_cannot_tell_what_is_needed() {
     assert_eq!(remote.chunks(), 3);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn sealed_store_keeps_chunks_encrypted_on_disk() {
+    const PASS: &str = "dogru-at-pil-zimba";
+    let (plain, dir) = store();
+    // Şifrelemeden önce alınmış yedek olduğu gibi kalır ve okunur.
+    put(&plain, "eski", b"ESKIESKI").unwrap();
+    assert!(!plain.is_sealed() && !seal_marked(&dir));
+    assert!(Store::with_chunk_size(&dir, 8).sealed("kisa").err().unwrap().contains("en az 12"));
+    let s = Store::with_chunk_size(&dir, 8).sealed(PASS).unwrap();
+    assert!(s.is_sealed() && seal_marked(&dir));
+    let data = disk();
+    put(&s, "yeni", &data).unwrap();
+    assert_eq!(restored(&s, &dir, "yeni").unwrap(), data);
+    assert_eq!(restored(&s, &dir, "eski").unwrap(), b"ESKIESKI");
+    assert_eq!(s.verify("yeni").unwrap(), 3);
+    let sealed: Vec<PathBuf> = chunk_files(&dir).into_iter().filter(|f| std::fs::read(f).unwrap().starts_with(b"RDXSEAL1")).collect();
+    assert_eq!((chunk_files(&dir).len(), sealed.len()), (4, 3), "yeni parçalar şifreli, eski parça olduğu gibi");
+
+    // Parolasız açılan depo şifreli parçayı okuyamaz ve nedenini söyler; yanlış parola baştan reddedilir.
+    assert!(restored(&plain, &dir, "yeni").unwrap_err().contains("--backup-passphrase-file"));
+    assert!(Store::with_chunk_size(&dir, 8).sealed("yanlis-parola-12345").err().unwrap().contains("parolası yanlış"));
+    // Aynı parolayla yeniden açılan depo okur (anahtar işaret dosyasındaki tuzdan türetilir).
+    let again = Store::with_chunk_size(&dir, 8).sealed(PASS).unwrap();
+    assert_eq!(restored(&again, &dir, "yeni").unwrap(), data);
+
+    // Şifreli bir parça başka bir parçanın adına konursa ya da değiştirilirse çözülmez.
+    let (a, b) = (sealed[0].clone(), sealed[1].clone());
+    let original = std::fs::read(&a).unwrap();
+    std::fs::copy(&b, &a).unwrap();
+    assert!(restored(&again, &dir, "yeni").unwrap_err().contains("şifresi çözülemedi"));
+    let mut tampered = original.clone();
+    *tampered.last_mut().unwrap() ^= 1;
+    std::fs::write(&a, &tampered).unwrap();
+    assert!(again.verify("yeni").unwrap_err().contains("şifresi çözülemedi"));
+    std::fs::write(&a, &original).unwrap();
+    assert_eq!(again.verify("yeni").unwrap(), 3);
+    std::fs::remove_dir_all(dir).unwrap();
+}

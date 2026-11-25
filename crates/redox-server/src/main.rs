@@ -44,6 +44,7 @@ struct ServeOptions {
     incremental_backups: bool,
     cbt: bool,
     backup_mbps: u64,
+    backup_passphrase_file: Option<PathBuf>,
     alert_webhook: Option<String>,
     alert_ntfy: Option<String>,
     api_rate: Option<u64>,
@@ -87,6 +88,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         incremental_backups: false,
         cbt: false,
         backup_mbps: 0,
+        backup_passphrase_file: None,
         alert_webhook: None,
         alert_ntfy: None,
         api_rate: None,
@@ -123,6 +125,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--incremental-backups" => opts.incremental_backups = true,
             "--changed-block-tracking" => opts.cbt = true,
             "--backup-mbps" => opts.backup_mbps = number(value()?)?,
+            "--backup-passphrase-file" => opts.backup_passphrase_file = Some(PathBuf::from(value()?)),
             "--alert-webhook" => opts.alert_webhook = Some(value()?.clone()),
             "--alert-ntfy" => opts.alert_ntfy = Some(value()?.clone()),
             "--api-rate" => opts.api_rate = Some(number(value()?)?),
@@ -157,6 +160,9 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
     }
     if opts.cbt && !opts.incremental_backups {
         return Err("--changed-block-tracking, --incremental-backups ile birlikte kullanılır".to_string());
+    }
+    if opts.backup_passphrase_file.is_some() && !opts.incremental_backups {
+        return Err("--backup-passphrase-file, --incremental-backups ile birlikte kullanılır".to_string());
     }
     if opts.incremental_backups && opts.driver != "qemu" {
         return Err("--incremental-backups yalnızca qemu sürücüsüyle kullanılır (--driver qemu)".to_string());
@@ -214,6 +220,10 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
             cfg.incremental_backups = opts.incremental_backups;
             cfg.cbt = opts.cbt;
             cfg.backup_mbps = opts.backup_mbps.min(100_000);
+            if let Some(path) = &opts.backup_passphrase_file {
+                let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
+                cfg.backup_passphrase = Some(text.trim().to_string());
+            }
             cfg.storages = opts.storages.clone();
             if let Some(dir) = &opts.ovmf_dir {
                 cfg.ovmf_dir = dir.clone();

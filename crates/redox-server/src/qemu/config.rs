@@ -30,6 +30,8 @@ pub struct QemuConfig {
     pub storages: Vec<(String, PathBuf)>,
     /// Yeni yedekler parça deposuna mı yazılsın? (Yalnızca değişen kısım yer kaplar.)
     pub incremental_backups: bool,
+    /// Yerel yedek deposunun şifreleme parolası (yalnızca artımlı yedekle).
+    pub backup_passphrase: Option<String>,
     /// Değişen blok takibi: çalışan konuğun artımlı yedeğinde yalnızca son yedekten beri yazılan bloklar okunur.
     pub cbt: bool,
     /// Yedek kopyalama hız sınırı (MB/sn, disk başına); 0 sınırsız. Yedek, konukların disk hızını tüketmesin diye.
@@ -53,6 +55,7 @@ impl QemuConfig {
             sys_module: PathBuf::from("/sys/module"),
             storages: Vec::new(),
             incremental_backups: false,
+            backup_passphrase: None,
             backup_mbps: 0,
             cbt: false,
         }

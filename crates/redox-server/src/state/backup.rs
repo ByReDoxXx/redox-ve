@@ -391,6 +391,10 @@ impl AppState {
     /// istekte üretilir, yedek silinince kaldırılır.
     pub fn backup_raw_cache(&self, id: &str, disk: u8) -> Result<std::path::PathBuf, Error> {
         let backup = self.lock().backup(id)?.clone();
+        if self.driver().backups_sealed() {
+            // Ham önbellek, şifreli deponun yanında yedeğin açık bir kopyasını bırakırdı.
+            return Err(Error::InvalidSpec("yedekler şifreli saklanıyor; artımlı aktarım için açık kopya tutulmaz".to_string()));
+        }
         if disk != 0 && !backup.disks.iter().any(|d| d.id == disk) {
             return Err(Error::InvalidSpec(format!("bu yedekte {disk} numaralı ek disk yok")));
         }

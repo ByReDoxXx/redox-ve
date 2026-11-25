@@ -41,7 +41,9 @@ pub fn backups(p: &Page) -> String {
         (archive_card(p))
         (jobs_card(p))
         div class="card" style="margin-top:var(--s4)" {
-            header { h2 { (tx("Yedekler")) } (tip("Bütün konukların yedekleri. Yedek, konuğun disklerinin sunucudaki yedek dizinine alınmış kopyasıdır.")) }
+            header { h2 { (tx("Yedekler")) } (tip("Bütün konukların yedekleri. Yedek, konuğun disklerinin sunucudaki yedek dizinine alınmış kopyasıdır."))
+                @if p.sealed { span class="tag" { (tx("şifreli depo")) } (tip("Sanal makine yedeklerinin parçaları diskte şifreli durur. Parola kaybolursa bu yedekler açılamaz. Konteyner yedekleri ve parça listeleri şifrelenmez.")) }
+            }
             @if all.is_empty() {
                 p class="empty" { (tx("Henüz yedek yok. Yedek, bir konuğun sayfasındaki Yedekler sekmesinden ya da zamanlamayla alınır.")) }
             } @else {

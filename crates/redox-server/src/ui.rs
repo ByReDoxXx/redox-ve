@@ -47,6 +47,7 @@ pub(crate) struct Ctx {
     files: bool,
     backup_age: u32,
     offsite: Option<String>,
+    sealed: bool,
     range: crate::history::Range,
     history: crate::state::History,
 }
@@ -70,6 +71,7 @@ impl Ctx {
             files: st.guestfish().is_some(),
             backup_age: st.backup_age_days(),
             offsite: st.offsite().map(|c| c.describe()),
+            sealed: st.driver().backups_sealed(),
             range,
             query,
             history: if st.driver().is_real() { st.history_for(range) } else { Default::default() },
@@ -106,6 +108,7 @@ impl Ctx {
             files: self.files,
             backup_age: self.backup_age,
             offsite: self.offsite.as_deref(),
+            sealed: self.sealed,
             history: &self.history,
         }
     }

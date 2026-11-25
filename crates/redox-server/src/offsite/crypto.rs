@@ -21,7 +21,7 @@ pub(super) fn derive_key(passphrase: &str, salt: &[u8]) -> Result<ChaCha20Poly13
     Ok(cipher)
 }
 
-pub(super) fn derive_key_uncached(passphrase: &str, salt: &[u8]) -> Result<ChaCha20Poly1305, String> {
+pub fn derive_key_uncached(passphrase: &str, salt: &[u8]) -> Result<ChaCha20Poly1305, String> {
     let params = argon2::Params::new(19_456, 2, 1, Some(32)).map_err(|e| e.to_string())?;
     let mut key = [0u8; 32];
     argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)

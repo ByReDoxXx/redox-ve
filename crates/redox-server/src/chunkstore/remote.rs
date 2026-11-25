@@ -90,13 +90,13 @@ impl Store {
             for (hash, len) in &chunks {
                 let path = self.chunk_path(hash);
                 // Yerelde duran parça da doğrulanır: bozulmuşsa hedefteki sağlam kopyayla değiştirilir.
-                if path.is_file() && Self::decode(&path, hash, *len).is_ok() {
+                if path.is_file() && self.decode(&path, hash, *len).is_ok() {
                     continue;
                 }
                 let parent = path.parent().ok_or("geçersiz parça yolu")?;
                 std::fs::create_dir_all(parent).map_err(|e| format!("{} oluşturulamadı: {e}", parent.display()))?;
                 let temp = parent.join(format!(".{hash}.{}-{}.tmp", std::process::id(), TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
-                let checked = remote.get(&remote_chunk(hash), &temp).and_then(|()| Self::decode(&temp, hash, *len).map(|_| ()));
+                let checked = remote.get(&remote_chunk(hash), &temp).and_then(|()| self.decode(&temp, hash, *len).map(|_| ()));
                 let placed = checked.and_then(|()| std::fs::rename(&temp, &path).map_err(|e| format!("parça yerine konamadı: {e}")));
                 if let Err(e) = placed {
                     let _ = std::fs::remove_file(&temp);
