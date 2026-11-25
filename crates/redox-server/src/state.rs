@@ -34,11 +34,107 @@ pub fn local_now() -> (String, u8, u16) {
     (t.format("%Y-%m-%d").to_string(), t.weekday().num_days_from_monday() as u8, (t.hour() * 60 + t.minute()) as u16)
 }
 
+/// Yedeği sırayla her hedeften geri yüklemeyi dener: asıl hedefe erişilemiyorsa ya da kopya orada bozuksa
+/// kopya hedeflerine geçilir. Hedef yoksa yalnızca yerel dosyalar kullanılır.
+fn restore_from_any(d: &dyn Hypervisor, g: &Guest, backup: &Backup, disks: &[u8], remotes: &[Arc<crate::offsite::Config>]) -> Result<(), String> {
+    let Some((first, rest)) = remotes.split_first() else {
+        return restore_work(d, g, backup, disks, None);
+    };
+    let mut outcome = restore_work(d, g, backup, disks, Some(first));
+    for remote in rest {
+        if outcome.is_ok() {
+            break;
+        }
+        outcome = restore_work(d, g, backup, disks, Some(remote));
+    }
+    outcome
+}
+
+/// Geri yüklemenin sürücü tarafı: yerelde eksik dosyalar dış kopyadan iner, sonra diskler ve makine durumu
+/// konuğa yazılır. Hem konuğun üstüne geri yüklemede hem yedekten yeni konuk açmada kullanılır.
+fn restore_work(d: &dyn Hypervisor, g: &Guest, backup: &Backup, disks: &[u8], remote: Option<&Arc<crate::offsite::Config>>) -> Result<(), String> {
+    let id1 = backup.id.as_str();
+    // Yerel dosya yoksa (disk değişmiş olabilir) dış kopya önce geri indirilir.
+    if let Some(config) = remote {
+        let fetch = |disk: u8| match d.backup_disk_file(id1, disk) {
+            Some(path) if !path.exists() => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                // Bu sürümle gönderilmiş kopya adına bağlıdır: hedefte başka bir yedeğin dosyasıyla
+                // değiştirilmişse geri yükleme reddedilir.
+                config.pull_bound(&path, backup.offsite_bound)
+            }
+            _ => Ok(()),
+        };
+        if backup.new_mb.is_some() {
+            // Parçalı dış kopya: yalnızca yerelde eksik parçalar iner (bütün diskler tek dizindedir).
+            if !d.backup_present(id1) && !d.pull_backup(id1, &**config)? {
+                fetch(0)?;
+            }
+        } else {
+            // Tam yedek: yerelde eksik olan her disk dosyası indirilir.
+            for disk in std::iter::once(0).chain(disks.iter().copied()) {
+                fetch(disk)?;
+            }
+        }
+    }
+    // Makine durumu arşivi yerelde yoksa o da dış kopyadan iner.
+    if let (true, Some(config), Some(path)) = (backup.machine, remote, d.backup_machine_file(id1)) {
+        if !path.exists() {
+            config.pull_bound(&path, backup.offsite_bound)?;
+        }
+    }
+    match (d.restore(g, id1, disks), remote) {
+        // Yerel parça bozuk ya da eksikse (geri yükleme hiçbir diske dokunmadan durmuştur) dış kopyadan
+        // onarılıp bir kez daha denenir.
+        (Err(first), Some(config)) if backup.new_mb.is_some() => match d.pull_backup(id1, &**config) {
+            Ok(true) => d.restore(g, id1, disks),
+            _ => Err(first),
+        },
+        (outcome, _) => outcome,
+    }
+}
+
 /// `export_backup`'ın bu çağrı için ürettiği geçici kopyayı ve (boşsa) dizinini siler.
 pub fn discard_export(path: &Path) {
     let _ = std::fs::remove_file(path);
     if let Some(dir) = path.parent() {
         let _ = std::fs::remove_dir(dir);
+    }
+}
+
+/// Yedek sınamasının kapı denetimi: `127.0.0.1:port` adresine (konuğun kapısına yönlendirilmiştir) bağlanır
+/// ve hizmetten **veri gelmesini** bekler. QEMU'nun kullanıcı kipindeki ağı sunucu tarafındaki bağlantıyı
+/// konuk yanıt vermeden de kabul ettiği için bağlanabilmek tek başına kanıt değildir. Hizmet kendiliğinden
+/// konuşmuyorsa (HTTP gibi) kısa bir istek gönderilir. `patience`: hizmetin ayağa kalkması için tanınan süre.
+pub fn probe_tcp(port: u16, patience: Duration) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let deadline = std::time::Instant::now() + patience;
+    loop {
+        let attempt = (|| -> Result<(), String> {
+            let mut stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| format!("bağlanılamadı: {e}"))?;
+            let mut byte = [0u8; 1];
+            for (step, wait) in [(0, Duration::from_secs(2)), (1, Duration::from_secs(5))] {
+                if step == 1 {
+                    stream.write_all(b"HEAD / HTTP/1.0\r\n\r\n").map_err(|e| format!("bağlantı koptu: {e}"))?;
+                }
+                stream.set_read_timeout(Some(wait)).map_err(|e| e.to_string())?;
+                match stream.read(&mut byte) {
+                    Ok(0) => return Err("bağlantı veri gelmeden kapandı (kapı kapalı ya da hizmet çalışmıyor)".to_string()),
+                    Ok(_) => return Ok(()),
+                    Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                    Err(e) => return Err(format!("bağlantı koptu: {e}")),
+                }
+            }
+            Err("hizmet veri göndermedi (konuk yanıt vermiyor olabilir; veri göndermeyen hizmetler için sınama komutunu kullanın)".to_string())
+        })();
+        let Err(why) = attempt else { return Ok(()) };
+        if std::time::Instant::now() >= deadline {
+            return Err(why);
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -64,8 +160,20 @@ struct Inner {
     peers: crate::peers::Peers,
     /// Yedeklerin sunucu dışı hedefi; yapılandırılmadıysa `None`.
     offsite: Mutex<Option<Arc<crate::offsite::Config>>>,
+    /// Yedeklerin kopyalandığı ek dış hedefler (3-2-1: ikinci, üçüncü kopya).
+    offsite_copies: Mutex<Vec<Arc<crate::offsite::Config>>>,
     /// Tek oturum açma; yapılandırılmadıysa `None`.
     oidc: Mutex<Option<Arc<crate::oidc::Oidc>>>,
+    /// Yedeklerin içindeki dosyaları okuyan `guestfish` programı; yoksa dosya düzeyinde geri yükleme kapalıdır.
+    guestfish: Mutex<Option<String>>,
+    /// Yedek sınamasında geçici konuğun çalışır halde bekletildiği süre.
+    boot_test_wait: Mutex<Duration>,
+    /// Bu kadar gündür yedeği olmayan konuk "korumasız" sayılır; 0 kapalı.
+    backup_age_days: Mutex<u32>,
+    /// Dört göz ilkesi: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.
+    four_eyes: std::sync::atomic::AtomicBool,
+    /// Günlük yedek raporunun saati (gece yarısından dakika) ve son gönderildiği gün.
+    report: Mutex<(Option<u16>, Option<String>)>,
     /// Gerçek sürücüden toplanan ölçüm geçmişi (anahtar: `node:cpu`, `guest:100:mem` …).
     history: Mutex<HashMap<String, VecDeque<f64>>>,
     /// Dakikalık ve saatlik ortalamalar (diske yazılır).
@@ -91,6 +199,12 @@ impl AppState {
             peers: crate::peers::Peers::default(),
             offsite: Mutex::new(None),
             oidc: Mutex::new(None),
+            guestfish: Mutex::new(None),
+            offsite_copies: Mutex::new(Vec::new()),
+            boot_test_wait: Mutex::new(Duration::from_secs(60)),
+            backup_age_days: Mutex::new(7),
+            four_eyes: std::sync::atomic::AtomicBool::new(false),
+            report: Mutex::new((None, None)),
             history: Mutex::new(HashMap::new()),
             long: Mutex::new(Default::default()),
         }))
@@ -112,6 +226,182 @@ impl AppState {
         self.0.oidc.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
+    pub fn set_four_eyes(&self, on: bool) {
+        self.0.four_eyes.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn four_eyes(&self) -> bool {
+        self.0.four_eyes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Kullanıcının istediği yedek silme. Dört göz ilkesi açıksa silmez: onay isteği açar ve numarasını
+    /// döndürür. (Zamanlayıcının budaması ve iç temizlikler bu yoldan geçmez.)
+    pub fn request_backup_delete(&self, id: &str, user: &str) -> Result<Option<u64>, Error> {
+        if !self.four_eyes() {
+            return self.backup_delete(id, user).map(|()| None);
+        }
+        self.mutate(|c| {
+            c.backup_deletable(id, now())?;
+            self.open_approval(c, redox_core::approvals::BACKUP_DELETE, id, user).map(Some)
+        })
+    }
+
+    /// Kullanıcının istediği konuk silme; dört göz ilkesi açıksa onay isteği açar.
+    pub fn request_guest_delete(&self, vmid: VmId, user: &str) -> Result<Option<u64>, Error> {
+        if !self.four_eyes() {
+            return self.delete_guest(vmid, user).map(|()| None);
+        }
+        self.mutate(|c| {
+            c.check_deletable(vmid)?;
+            self.open_approval(c, redox_core::approvals::GUEST_DELETE, &vmid.to_string(), user).map(Some)
+        })
+    }
+
+    fn open_approval(&self, c: &mut Cluster, action: &str, target: &str, user: &str) -> Result<u64, Error> {
+        let known = c.approvals.len();
+        let id = c.request_approval(action, target, user, now())?;
+        if c.approvals.len() > known {
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, format!("approval request #{id} {action} {target}"), &Ok(()), now(), None);
+        }
+        Ok(id)
+    }
+
+    /// Bekleyen isteği onaylar ve işlemi yürütür; ne yapıldığını döndürür. Onaylayan, isteği yapandan başka
+    /// biri olmalıdır. İşlem iki yöneticinin adıyla günlüğe geçer.
+    pub fn approve(&self, id: u64, user: &str) -> Result<String, Error> {
+        let approval = self.mutate(|c| c.take_approval(id, user, now()))?;
+        let who = format!("{}+{user}", approval.by);
+        match approval.action.as_str() {
+            redox_core::approvals::BACKUP_DELETE => self.backup_delete(&approval.target, &who)?,
+            redox_core::approvals::GUEST_DELETE => {
+                let vmid = approval.target.parse().map_err(|_| Error::InvalidSpec(format!("geçersiz konuk kimliği: {}", approval.target)))?;
+                self.delete_guest(vmid, &who)?
+            }
+            other => return Err(Error::InvalidSpec(format!("bilinmeyen onay türü: {other}"))),
+        }
+        Ok(format!("onaylandı: {}", approval.describe()))
+    }
+
+    /// Bekleyen isteği reddeder (ya da isteği yapan geri çeker).
+    pub fn reject(&self, id: u64, user: &str) -> Result<(), Error> {
+        self.mutate(|c| {
+            let approval = c.reject_approval(id, now())?;
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, format!("approval reject #{id} {} {}", approval.action, approval.target), &Ok(()), now(), None);
+            Ok(())
+        })
+    }
+
+    pub fn set_backup_age_days(&self, days: u32) {
+        *self.0.backup_age_days.lock().unwrap_or_else(|e| e.into_inner()) = days;
+    }
+
+    pub fn backup_age_days(&self) -> u32 {
+        *self.0.backup_age_days.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Günlük yedek raporunun saatini ayarlar (gece yarısından dakika).
+    pub fn set_backup_report(&self, minute_of_day: u16) {
+        self.0.report.lock().unwrap_or_else(|e| e.into_inner()).0 = Some(minute_of_day);
+    }
+
+    /// Şimdiki yedek raporu.
+    pub fn backup_report(&self) -> crate::report::Report {
+        crate::report::compose(&self.snapshot(), now(), self.backup_age_days())
+    }
+
+    /// Saati geldiyse günlük yedek raporunu e-postayla gönderir (günde bir kez). Gönderildiyse sonucu döndürür.
+    /// Sunucu o saatte kapalıysa rapor, gün bitmeden açılınca gönderilir.
+    pub fn report_tick(&self, today: &str, minute_of_day: u16) -> Option<Result<(), String>> {
+        {
+            let mut report = self.0.report.lock().unwrap_or_else(|e| e.into_inner());
+            let due = report.0.is_some_and(|at| at <= minute_of_day) && report.1.as_deref() != Some(today);
+            if !due {
+                return None;
+            }
+            // Önce işaretle: gönderim başarısız olsa da aynı gün her turda yeniden denenmesin.
+            report.1 = Some(today.to_string());
+        }
+        let report = self.backup_report();
+        let outcome = match self.alerts().email() {
+            Some(config) => config.send(&report.subject, &report.body),
+            None => Err("e-posta ayarı yok (--alert-email)".to_string()),
+        };
+        self.mutate(|c| {
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, SCHEDULER, "backup report".to_string(), &outcome, now(), None);
+        });
+        Some(outcome)
+    }
+
+    pub fn set_boot_test_wait(&self, wait: Duration) {
+        *self.0.boot_test_wait.lock().unwrap_or_else(|e| e.into_inner()) = wait;
+    }
+
+    pub fn set_guestfish(&self, bin: Option<String>) {
+        *self.0.guestfish.lock().unwrap_or_else(|e| e.into_inner()) = bin;
+    }
+
+    pub fn guestfish(&self) -> Option<String> {
+        self.0.guestfish.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Yedeğin içini okumak için gereken imaj dosyası ve silinmesi gereken geçici bir kopya olup olmadığı.
+    /// Artımlı yedek tek dosya olmadığı için önce geçici bir imaja dökülür (uzun sürebilir).
+    pub fn backup_image(&self, id: &str, disk: u8) -> Result<(String, std::path::PathBuf, bool), Error> {
+        let bin = self.guestfish().ok_or_else(|| Error::InvalidSpec("dosya düzeyinde geri yükleme için sunucuda guestfish gerekir (sudo apt install libguestfs-tools)".to_string()))?;
+        let backup = self.lock().backup(id)?.clone();
+        if !backup.id.starts_with("vm-") {
+            return Err(Error::InvalidSpec("konteyner yedeği bir tar arşividir: yedeği indirip tar ile açın".to_string()));
+        }
+        if disk != 0 && !backup.disks.iter().any(|d| d.id == disk) {
+            return Err(Error::InvalidSpec(format!("bu yedekte {disk} numaralı ek disk yok")));
+        }
+        match self.driver().export_backup(id, disk).map_err(Error::Driver)? {
+            Some((path, temporary)) if path.is_file() => Ok((bin, path, temporary)),
+            Some(_) => Err(Error::InvalidSpec("yedek dosyası yerelde yok; önce geri yükleyerek ya da yeniden göndererek dış kopyadan indirin".to_string())),
+            None => Err(Error::InvalidSpec("bu sürücü yedek dosyası tutmuyor (gerçek sürücü gerekir)".to_string())),
+        }
+    }
+
+    /// Ek bir dış hedef ekler: asıl hedefe giden her yedek buraya da kopyalanır.
+    pub fn add_offsite_copy(&self, config: crate::offsite::Config) {
+        self.0.offsite_copies.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::new(config));
+    }
+
+    pub fn offsite_copies(&self) -> Vec<Arc<crate::offsite::Config>> {
+        self.0.offsite_copies.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Yedeğin geri indirilebileceği hedefler, deneme sırasıyla: asıl hedef, sonra kopya hedefleri.
+    fn remotes_for(&self, backup: &Backup) -> Vec<Arc<crate::offsite::Config>> {
+        let mut remotes: Vec<_> = if backup.offsite { self.offsite().into_iter().collect() } else { Vec::new() };
+        if backup.copies > 0 {
+            remotes.extend(self.offsite_copies());
+        }
+        remotes
+    }
+
+    /// Asıl hedefe gitmiş yedeği ek hedeflere de kopyalar; başarılı kopya sayısını döndürür.
+    /// Başarısız kopya görev günlüğüne yazılır; asıl dış kopya ve yerel yedek yine geçerlidir.
+    fn push_copies(&self, id: &str, disks: &[u8], vmid: Option<VmId>) -> u8 {
+        let mut made = 0u8;
+        for copy in self.offsite_copies() {
+            // Kopya hedefinde hangi parçaların durduğu bilinmediği için hepsi hedefe sorulur.
+            let outcome = self.push_to(&copy, id, disks, Vec::new());
+            if outcome.is_ok() {
+                made += 1;
+            } else {
+                self.mutate(|c| {
+                    let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+                    c.log(&node, SCHEDULER, format!("backup copy {id} ({})", copy.describe()), &outcome, now(), vmid);
+                });
+            }
+        }
+        made
+    }
+
     pub fn set_offsite(&self, config: crate::offsite::Config) {
         *self.0.offsite.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(config));
     }
@@ -131,10 +421,24 @@ impl AppState {
     fn push_file(&self, id: &str, disks: &[u8], recheck: bool) -> Option<Result<(), String>> {
         let config = self.offsite()?;
         let known = if recheck { Vec::new() } else { self.offsite_others(id) };
-        match self.driver().push_backup(id, &known, &*config) {
-            Ok(Some(_)) => return Some(Ok(())),
+        Some(self.push_to(&config, id, disks, known))
+    }
+
+    /// Yedeğin disklerini ve (varsa) makine durumu arşivini verilen hedefe gönderir.
+    fn push_to(&self, config: &Arc<crate::offsite::Config>, id: &str, disks: &[u8], known: Vec<String>) -> Result<(), String> {
+        self.push_disks(config, id, disks, known)?;
+        // Makine durumu arşivi (varsa) disklerden sonra gider.
+        match self.driver().backup_machine_file(id) {
+            Some(path) if path.is_file() => config.push(&path).map(|_| ()),
+            _ => Ok(()),
+        }
+    }
+
+    fn push_disks(&self, config: &Arc<crate::offsite::Config>, id: &str, disks: &[u8], known: Vec<String>) -> Result<(), String> {
+        match self.driver().push_backup(id, &known, &**config) {
+            Ok(Some(_)) => return Ok(()),
             Ok(None) => {}
-            Err(e) => return Some(Err(e)),
+            Err(e) => return Err(e),
         }
         // Tam yedek: asıl disk ve her ek disk ayrı dosya olarak gider.
         let mut sent: Vec<std::path::PathBuf> = Vec::new();
@@ -157,11 +461,11 @@ impl AppState {
                     for path in &sent {
                         let _ = config.delete(path);
                     }
-                    return Some(Err(e));
+                    return Err(e);
                 }
             }
         }
-        Some(Ok(()))
+        Ok(())
     }
 
     /// Kapalı sanal makineyi dışa aktarma için hazırlar: konuğun kaydı, geçici dizin ve vmdk diskleri.
@@ -263,7 +567,9 @@ impl AppState {
         self.dispatch(move || {
             let disks: Vec<u8> = backup.disks.iter().map(|d| d.id).collect();
             let outcome = me.push_file(&backup.id, &disks, true).unwrap_or(Ok(()));
+            let copies = if outcome.is_ok() { me.push_copies(&backup.id, &disks, Some(backup.vmid)) } else { backup.copies };
             me.mutate(|c| {
+                c.set_backup_copies(&backup.id, copies);
                 let node = c.guest(backup.vmid).map(|g| g.node.clone()).ok().or_else(|| c.nodes.first().map(|n| n.id.clone())).unwrap_or_default();
                 if outcome.is_ok() {
                     c.set_backup_offsite(&backup.id, true);
@@ -303,9 +609,6 @@ impl AppState {
         if remote.kind != redox_core::GuestKind::Vm {
             return Err("yalnızca sanal makineler taşınabilir (konteyner taşıma yok)".to_string());
         }
-        if !remote.hw.disks.is_empty() {
-            return Err("ek diskli sanal makine taşınamaz: taşıma yalnızca asıl diski kopyalar".to_string());
-        }
         // Çalışan (ya da zaten askıda olan) konuk bellek durumuyla birlikte taşınır: kaynakta askıya alınır,
         // diski ve belleği kopyalanır, burada kaldığı yerden devam eder. Kesinti kopyalama süresi kadardır.
         let live = remote.status != redox_core::GuestStatus::Stopped;
@@ -329,10 +632,30 @@ impl AppState {
         if let Some(parent) = image_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{} oluşturulamadı: {e}", parent.display()))?;
         }
-        let downloaded = peer.download_backup(&backup, image_path);
+        // Asıl diskin yanına ek diskler ve makine durumu (UEFI değişkenleri, sanal TPM) da indirilir.
+        let extra_path = |disk: u8| image_path.with_extension(format!("disk{disk}"));
+        let machine_path = image_path.with_extension("machine");
+        let wants_machine = remote.hw.firmware == redox_core::hw::Firmware::Uefi || remote.hw.tpm;
+        let discard = || {
+            for disk in &remote.hw.disks {
+                let _ = std::fs::remove_file(extra_path(disk.id));
+            }
+            let _ = std::fs::remove_file(&machine_path);
+        };
+        let downloaded = (|| {
+            peer.download_backup(&backup, image_path)?;
+            for disk in &remote.hw.disks {
+                peer.download_backup_disk(&backup, disk.id, &extra_path(disk.id)).map_err(|e| format!("ek disk {} indirilemedi: {e}", disk.id))?;
+            }
+            if wants_machine { peer.download_machine(&backup, &machine_path) } else { Ok(false) }
+        })();
         // Eşte bıraktığımız geçici yedek her durumda silinir.
         let _ = peer.delete_backup(&backup);
-        downloaded?;
+        let has_machine = downloaded.inspect_err(|_| discard())?;
+        if remote.hw.tpm && !has_machine {
+            discard();
+            return Err("konuğun sanal TPM durumu eş sunucudan alınamadı (eş eski bir sürüm olabilir); TPM durumu olmadan taşınan konuk şifreli disklerini açamaz".to_string());
+        }
 
         let local = self.snapshot();
         let node = local.nodes.first().ok_or("bu sunucuda düğüm yok")?;
@@ -354,8 +677,12 @@ impl AppState {
         }
         if !self.driver().firewall() {
             hw.firewall = false;
+            hw.nic_guard = false;
         }
         hw.suspended = false;
+        // Ek diskler konuk oluşturulduktan sonra numaraları ve içerikleriyle eklenir.
+        hw.disks.clear();
+        hw.disk_seq = 0;
         let spec = GuestSpec {
             // Bellek durumuyla gelen konuk, kimliği boşsa aynı kimliği alır: ağ kartının adresi kimlikten türetilir.
             vmid: Some(remote.vmid).filter(|id| carry_state && local.guest(*id).is_err()),
@@ -372,7 +699,28 @@ impl AppState {
             iso: None,
             hw,
         };
-        let id = self.create_guest(&spec, user).map_err(|e| e.to_string())?;
+        let id = self.create_guest(&spec, user).map_err(|e| e.to_string()).inspect_err(|_| discard())?;
+        let extras = (|| {
+            for disk in &remote.hw.disks {
+                let guest = self.mutate(|c| {
+                    c.add_disk_exact(id, disk)?;
+                    c.guest(id).cloned()
+                })
+                .map_err(|e| e.to_string())?;
+                self.driver().import_disk(&guest, disk.id, &extra_path(disk.id)).map_err(|e| format!("ek disk {}: {e}", disk.id))?;
+            }
+            if has_machine {
+                let guest = self.snapshot().guest(id).cloned().map_err(|e| e.to_string())?;
+                self.driver().restore_machine(&guest, &machine_path).map_err(|e| format!("makine durumu (UEFI/TPM) uygulanamadı: {e}"))?;
+            }
+            Ok::<_, String>(())
+        })();
+        discard();
+        if let Err(e) = extras {
+            // Yarım kopya bırakılmaz.
+            let _ = self.delete_guest(id, user);
+            return Err(e);
+        }
         // İmaj yalnızca taşıma içindi; kayıtta kalırsa silinmiş bir dosyayı gösterir.
         self.mutate(|c| {
             if let Ok(g) = c.guest_mut_for_import(id) {
@@ -673,11 +1021,19 @@ impl AppState {
             .map(|((vmid, p), g)| (*vmid, if p.status == redox_core::GuestStatus::Stopped { None } else { driver.guest_agent(g) }))
             .collect();
         let node = snapshot.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+        let ios: Vec<_> = probes.iter().zip(&snapshot.guests).map(|((_, p), g)| if p.status == redox_core::GuestStatus::Stopped { None } else { driver.io_counters(g) }).collect();
 
         let mut cluster = self.lock();
         let mut changed = false;
-        for (vmid, probe) in &probes {
+        for ((vmid, probe), io) in probes.iter().zip(ios) {
             changed |= cluster.observe_guest(*vmid, probe, now());
+            cluster.record_usage(*vmid, io, now());
+        }
+        // Ölçüm sayaçları her turda değişir; dosyayı yıpratmamak için beş dakikada bir yazılır.
+        static USAGE_SAVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        if now().saturating_sub(USAGE_SAVED.load(std::sync::atomic::Ordering::Relaxed)) >= 300 {
+            USAGE_SAVED.store(now(), std::sync::atomic::Ordering::Relaxed);
+            changed = true;
         }
         for (vmid, ip) in ips {
             changed |= cluster.observe_ip(vmid, ip);
@@ -1003,6 +1359,40 @@ mod tests {
     }
 
     #[test]
+    fn tcp_probe_needs_data_from_the_service_not_just_a_connection() {
+        use std::io::{Read, Write};
+        let serve = |handler: fn(std::net::TcpStream)| {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                for stream in listener.incoming().flatten() {
+                    handler(stream);
+                }
+            });
+            port
+        };
+        let quick = Duration::from_millis(100);
+        // SSH gibi: bağlanınca karşılama gönderir.
+        let banner = serve(|mut s| {
+            let _ = s.write_all(b"SSH-2.0-sinama\r\n");
+        });
+        probe_tcp(banner, quick).unwrap();
+        // HTTP gibi: istek gelince yanıt verir.
+        let http = serve(|mut s| {
+            let mut buf = [0u8; 64];
+            if s.read(&mut buf).is_ok_and(|n| n > 0) {
+                let _ = s.write_all(b"HTTP/1.0 200 OK\r\n\r\n");
+            }
+        });
+        probe_tcp(http, quick).unwrap();
+        // Bağlantıyı kabul edip hemen kapatan (konuk kapıyı reddetti) ve hiç dinlenmeyen kapı.
+        let closing = serve(drop);
+        assert!(probe_tcp(closing, quick).unwrap_err().contains("veri gelmeden kapandı"));
+        let unused = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        assert!(probe_tcp(unused, quick).unwrap_err().contains("bağlanılamadı"));
+    }
+
+    #[test]
     fn refresh_is_a_no_op_for_the_simulator() {
         let state = AppState::new(Cluster::demo(1000), Box::new(SimDriver::default()), Duration::ZERO, None, auth());
         let before = state.snapshot();
@@ -1086,10 +1476,19 @@ impl AppState {
         if patch.firewall == Some(true) {
             self.check_firewall(true)?;
         }
+        if patch.nested == Some(true) && driver.is_real() && !driver.nested_virt() {
+            return Err(Error::InvalidSpec(crate::qemu::NESTED_HINT.to_string()));
+        }
+        if patch.nic_guard == Some(true) && driver.is_real() && !driver.firewall() {
+            return Err(Error::InvalidSpec("ağ kartı koruması kapalı: sunucuyu --firewall ile başlatın (nftables ve CAP_NET_ADMIN gerekir)".to_string()));
+        }
         if patch.shares.as_ref().is_some_and(|s| !s.is_empty()) && !driver.shared_folders() {
             return Err(Error::InvalidSpec("bu sunucudaki QEMU paylaşılan klasörü (9p) desteklemiyor".to_string()));
         }
         self.check_machine(patch.firmware == Some(redox_core::hw::Firmware::Uefi), patch.tpm == Some(true))?;
+        if let Some(model) = &patch.cpu_type {
+            redox_core::hw::check_cpu_vendor(model, driver.host_cpu_vendor()).map_err(Error::InvalidSpec)?;
+        }
         if driver.is_real() {
             for network in patch.nics.iter().flatten() {
                 self.check_bridge(redox_core::hw::parse_nic(network).map(|(bridge, _)| bridge).unwrap_or(network))?;
@@ -1155,6 +1554,75 @@ impl AppState {
         outcome.map(|()| index).map_err(Error::Driver)
     }
 
+    /// Bellek balonunun hedefini ayarlar (MB; 0: belleğin tamamı). Konuk çalışıyorsa hemen uygulanır,
+    /// kapalıysa bir sonraki açılışta. Uygulanamazsa kayıt eski değerine döner.
+    pub fn balloon_set(&self, vmid: VmId, target_mb: u64, user: &str) -> Result<(), Error> {
+        let (before, guest) = self.mutate(|c| {
+            let before = c.set_balloon_target(vmid, target_mb)?;
+            Ok::<_, Error>((before, c.guest(vmid)?.clone()))
+        })?;
+        let live = matches!(guest.status, redox_core::GuestStatus::Running | redox_core::GuestStatus::Paused);
+        let outcome = if live { self.driver().set_balloon(&guest, guest.hw.balloon_mb) } else { Ok(()) };
+        self.mutate(|c| {
+            if outcome.is_err() {
+                c.restore_balloon_target(vmid, before);
+            }
+            c.log(&guest.node, user, format!("vm balloon {vmid} {target_mb}"), &outcome, now(), Some(vmid));
+        });
+        outcome.map_err(Error::Driver)
+    }
+
+    /// Konuğun kaynak ölçümü sayaçlarını sıfırlar (fatura dönemi kapanınca).
+    pub fn usage_reset(&self, vmid: VmId, user: &str) -> Result<(), Error> {
+        self.mutate(|c| {
+            c.reset_usage(vmid, now())?;
+            let (node, kind) = c.guest(vmid).map(|g| (g.node.clone(), g.kind))?;
+            c.log(&node, user, format!("{kind} usage-reset {vmid}"), &Ok(()), now(), Some(vmid));
+            Ok(())
+        })
+    }
+
+    /// Dinamik belleği açar (alt sınır MB) ya da kapatır (0). Kapatılınca balon boşaltılır: konuk belleğinin
+    /// tamamını geri alır.
+    pub fn dynamic_memory_set(&self, vmid: VmId, min_mb: u64, user: &str) -> Result<(), Error> {
+        let guest = self.mutate(|c| {
+            c.set_dynamic_memory(vmid, min_mb)?;
+            if min_mb == 0 {
+                c.restore_balloon_target(vmid, 0);
+            }
+            Ok::<_, Error>(c.guest(vmid)?.clone())
+        })?;
+        let live = matches!(guest.status, redox_core::GuestStatus::Running | redox_core::GuestStatus::Paused);
+        let outcome = if live && min_mb == 0 { self.driver().set_balloon(&guest, 0) } else { Ok(()) };
+        self.mutate(|c| c.log(&guest.node, user, format!("vm balloon {vmid} auto {min_mb}"), &outcome, now(), Some(vmid)));
+        outcome.map_err(Error::Driver)
+    }
+
+    /// Dinamik belleği açık olan çalışan konukların bellek hedefini kullanımlarına göre ayarlar; değişen
+    /// konuk sayısını döndürür. Ölçüm vermeyen (balon sürücüsü olmayan) konuklara dokunulmaz.
+    pub fn dynamic_memory_tick(&self) -> usize {
+        let guests: Vec<_> = self
+            .snapshot()
+            .guests
+            .iter()
+            .filter(|g| g.kind == redox_core::GuestKind::Vm && g.status == redox_core::GuestStatus::Running && g.hw.balloon && g.hw.mem_min_mb > 0 && g.lock.is_none())
+            .cloned()
+            .collect();
+        let mut changed = 0;
+        for g in guests {
+            let Some(stats) = self.driver().balloon_stats(&g) else { continue };
+            let Some(target) = redox_core::hw::dynamic_memory_target(g.mem_total_mb, g.hw.mem_min_mb, g.hw.balloon_mb, stats) else { continue };
+            match self.driver().set_balloon(&g, target) {
+                Ok(()) => {
+                    self.mutate(|c| c.set_dynamic_target(g.vmid, target));
+                    changed += 1;
+                }
+                Err(e) => eprintln!("uyarı: konuk {} için dinamik bellek hedefi uygulanamadı: {e}", g.vmid),
+            }
+        }
+        changed
+    }
+
     /// Ek diski verileriyle birlikte siler.
     pub fn disk_remove(&self, vmid: VmId, id: u8, user: &str) -> Result<(), Error> {
         let guest = self.mutate(|c| {
@@ -1187,6 +1655,16 @@ impl AppState {
             return Err(Error::InvalidSpec("konuk güvenlik duvarı kapalı: sunucuyu --firewall ile başlatın (nftables ve CAP_NET_ADMIN gerekir)".to_string()));
         }
         Ok(())
+    }
+
+    /// Ağ kartı korumalarını konukların o anki arayüzleriyle eşitler (konuk açılıp kapandıkça arayüz adları
+    /// değişir). Düzenli aralıkla çağrılır; kurallar değişmediyse hiçbir şey yüklenmez.
+    pub fn guards_tick(&self) -> Result<(), String> {
+        if !self.driver().firewall() {
+            return Ok(());
+        }
+        let guests = self.lock().guests.clone();
+        self.driver().refresh_guards(&guests)
     }
 
     /// Bütün konukların güvenlik duvarı kurallarını yeniden yükler. Başarısızlık görev günlüğüne yazılır.
@@ -1242,6 +1720,25 @@ impl AppState {
         )
     }
 
+    /// Üretim denetim noktası: çalışan konuğun disklerinin, bellek durumu olmadan ve (konuk ajanı varsa) dosya
+    /// sistemleri dondurularak alınan anlık görüntüsü. Bellekli görüntüye göre küçük ve hızlıdır; geri dönüşte
+    /// konuk o andan devam etmez, o andaki diskle yeniden açılır.
+    pub fn snapshot_create_production(&self, vmid: VmId, name: &str, user: &str) -> Result<TaskId, Error> {
+        let (kind, n1, n2, n3) = (self.kind_of(vmid)?, name.to_string(), name.to_string(), name.to_string());
+        if kind != redox_core::GuestKind::Vm {
+            return Err(Error::InvalidSpec("üretim denetim noktası yalnızca sanal makinelerde alınır".to_string()));
+        }
+        self.run_op(
+            vmid,
+            user,
+            format!("{kind} checkpoint {vmid} {name}"),
+            self.stopped_unless_live(kind, "anlık görüntü almak"),
+            move |c| c.not_template(vmid).and_then(|()| c.check_snapshot_new(vmid, &n1)),
+            move |d, g| d.snapshot_disk_only(g, &n2),
+            move |c, quiesced| c.add_snapshot_kind(vmid, &n3, now(), true, quiesced),
+        )
+    }
+
     pub fn snapshot_rollback(&self, vmid: VmId, name: &str, user: &str) -> Result<TaskId, Error> {
         let (kind, n1, n2) = (self.kind_of(vmid)?, name.to_string(), name.to_string());
         self.run_op(
@@ -1249,7 +1746,7 @@ impl AppState {
             user,
             format!("{kind} rollback {vmid} {name}"),
             self.stopped_unless_live(kind, "anlık görüntüye dönmek"),
-            move |c| c.not_template(vmid).and_then(|()| c.not_suspended(vmid)).and_then(|()| c.check_snapshot(vmid, &n1)),
+            move |c| c.not_template(vmid).and_then(|()| c.not_suspended(vmid)).and_then(|()| c.check_snapshot(vmid, &n1)).and_then(|()| c.check_rollback_state(vmid, &n1)),
             move |d, g| d.snapshot(g, SnapshotOp::Rollback(&n2)),
             |_, ()| {},
         )
@@ -1268,6 +1765,24 @@ impl AppState {
         )
     }
 
+    /// Kapalı konuğun disklerini başka bir depolama alanına taşır.
+    pub fn storage_move(&self, vmid: VmId, target: &str, user: &str) -> Result<TaskId, Error> {
+        let kind = self.kind_of(vmid)?;
+        if !self.driver().storage_supports(target, kind) {
+            return Err(Error::InvalidSpec("konteynerler ek depolama alanlarında tutulamaz; yalnızca sanal makine diskleri taşınır".to_string()));
+        }
+        let (to, to2, to3) = (target.to_string(), target.to_string(), target.to_string());
+        self.run_op(
+            vmid,
+            user,
+            format!("{kind} move {vmid} {target}"),
+            Some("depolama alanını değiştirmek"),
+            move |c| c.check_storage_move(vmid, &to),
+            move |d, g| d.move_storage(g, &to2),
+            move |c, ()| c.apply_storage_move(vmid, &to3),
+        )
+    }
+
     pub fn resize_disk(&self, vmid: VmId, new_gb: u64, user: &str) -> Result<TaskId, Error> {
         let kind = self.kind_of(vmid)?;
         self.run_op(
@@ -1283,7 +1798,7 @@ impl AppState {
 
     /// Diskin yedeğini alır; yedeğin kimliğini döndürür.
     pub fn backup_create(&self, vmid: VmId, user: &str) -> Result<String, Error> {
-        self.backup_create_as(vmid, user, false)
+        self.backup_create_as(vmid, user, false, None)
     }
 
     /// Zamanlayıcının bir turu: saati gelen otomatik yedekleri başlatır ve saklama sayısını
@@ -1293,7 +1808,7 @@ impl AppState {
         for vmid in &due {
             // Önce işaretle: başarısız olsa da aynı gün her turda yeniden denenmesin.
             self.mutate(|c| c.mark_auto_backup(*vmid, today));
-            if let Err(e) = self.backup_create_as(*vmid, SCHEDULER, true) {
+            if let Err(e) = self.backup_create_as(*vmid, SCHEDULER, true, None) {
                 self.mutate(|c| {
                     if let Ok(g) = c.guest(*vmid).cloned() {
                         c.log(&g.node, SCHEDULER, format!("{} backup {vmid}", g.kind), &Err(e.to_string()), now(), Some(*vmid));
@@ -1302,11 +1817,68 @@ impl AppState {
             }
         }
         // Kilit döngüden önce bırakılmalı: silme işlemi kümeyi yeniden kilitler.
-        let stale = self.lock().prunable_backups();
+        let stale = self.lock().prunable_backups(now());
         for id in stale {
             let _ = self.backup_delete(&id, SCHEDULER);
         }
         due.len()
+    }
+
+    /// Yedek işlerinin bir turu: saati gelen işleri başlatır ve süren turlarda sıradaki konuğun yedeğini
+    /// başlatır (bütün işler arasında aynı anda en çok bir yedek). Başlatılan yedek sayısını döndürür.
+    pub fn jobs_tick(&self, today: &str, weekday: u8, minute_of_day: u16) -> usize {
+        self.mutate(|c| c.start_due_jobs(today, weekday, minute_of_day));
+        // Yedek penceresi kapandıysa sıradaki konuklara başlanmaz; kaç konuğun kaldığı günlüğe yazılır.
+        self.mutate(|c| {
+            for (job, left) in c.close_job_windows(minute_of_day) {
+                let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+                c.log(&node, SCHEDULER, format!("job {job}"), &Err(format!("yedek penceresi kapandı: {left} konuk bu turda yedeklenmedi")), now(), None);
+            }
+        });
+        // İşin aldığı ve kaydı oluşmuş yedekler doğrulanır (iş bunu istiyorsa).
+        for id in self.mutate(|c| c.take_verifiable()) {
+            let _ = self.backup_verify(&id, SCHEDULER);
+        }
+        let Some(step) = self.mutate(|c| c.step_jobs()) else { return 0 };
+        match self.backup_create_as(step.vmid, SCHEDULER, true, Some(step.job.clone())) {
+            Ok(id) => {
+                self.mutate(|c| c.job_backup_taken(&step.job, &id));
+                1
+            }
+            Err(e) => {
+                // Yedeği alınamayan konuk (ör. çalışan konteyner) günlüğe yazılır; tur sıradakiyle sürer.
+                self.mutate(|c| {
+                    c.job_step_failed(&step.job);
+                    if let Ok(g) = c.guest(step.vmid).cloned() {
+                        c.log(&g.node, SCHEDULER, format!("{} backup {} (iş: {})", g.kind, step.vmid, step.job), &Err(e.to_string()), now(), Some(step.vmid));
+                    }
+                });
+                0
+            }
+        }
+    }
+
+    /// Kaynak havuzunu ekler ya da kotalarını günceller.
+    pub fn pool_put(&self, pool: redox_core::Pool) -> Result<(), Error> {
+        self.mutate(|c| c.put_pool(pool))
+    }
+
+    pub fn pool_remove(&self, name: &str) -> Result<(), Error> {
+        self.mutate(|c| c.remove_pool(name))
+    }
+
+    /// Yedek işini ekler ya da günceller.
+    pub fn job_put(&self, job: redox_core::BackupJob) -> Result<(), Error> {
+        self.mutate(|c| c.put_job(job))
+    }
+
+    pub fn job_remove(&self, name: &str) -> Result<(), Error> {
+        self.mutate(|c| c.remove_job(name))
+    }
+
+    /// İşi şimdi başlatır (günlük işareti değişmez); sıraya giren konuk sayısını döndürür.
+    pub fn job_run(&self, name: &str) -> Result<usize, Error> {
+        self.mutate(|c| c.start_job(name, None))
     }
 
     /// Yeniden başlatma turu: "yeniden başlat" işaretli, beklenmedik biçimde kapanmış konukları açar.
@@ -1401,7 +1973,7 @@ impl AppState {
         started
     }
 
-    fn backup_create_as(&self, vmid: VmId, user: &str, auto: bool) -> Result<String, Error> {
+    fn backup_create_as(&self, vmid: VmId, user: &str, auto: bool, job: Option<String>) -> Result<String, Error> {
         let guest = self.lock().guest(vmid)?.clone();
         let created = now();
         let id = format!("{}-{vmid}-{created}", guest.kind);
@@ -1411,7 +1983,7 @@ impl AppState {
             vmid,
             user,
             format!("{} backup {vmid}", guest.kind),
-            self.stopped_unless_live(guest.kind, "yedek almak"),
+            if self.driver().live_backup(guest.kind) { None } else { Some("yedek almak") },
             move |c| match c.backup(&id1) {
                 Ok(_) => Err(Error::InvalidSpec("bu konuğun bu saniyede alınmış bir yedeği var; bir saniye sonra yeniden deneyin".to_string())),
                 Err(_) => Ok(()),
@@ -1423,14 +1995,29 @@ impl AppState {
                 let disks = if g.kind == redox_core::GuestKind::Vm { g.hw.disks.clone() } else { Vec::new() };
                 let ids: Vec<u8> = disks.iter().map(|disk| disk.id).collect();
                 let disk_gb = g.disk_gb;
-                d.backup(g, &id2).map(|size| (size, me.push_file(&id2, &ids, false), disks, disk_gb))
+                d.backup(g, &id2).map(|size| {
+                    let spec = Some(Box::new(g.to_spec()));
+                    let machine = d.backup_machine_file(&id2).is_some_and(|path| path.is_file());
+                    let pushed = me.push_file(&id2, &ids, false);
+                    // Asıl hedefe giden yedek, ek kopya hedeflerine de gider.
+                    let copies = if matches!(pushed, Some(Ok(()))) { me.push_copies(&id2, &ids, Some(vmid)) } else { 0 };
+                    (size, pushed, disks, disk_gb, machine, spec, copies)
+                })
             },
-            move |c, (size, pushed, disks, disk_gb)| {
+            move |c, (size, pushed, disks, disk_gb, machine, spec, copies)| {
                 let offsite = matches!(pushed, Some(Ok(())));
                 if let Some(Err(message)) = pushed {
                     c.log(&node, &who, format!("backup push {id3}"), &Err(message), now(), Some(vmid));
                 }
-                c.add_backup(Backup { id: id3, vmid, guest_name: guest.name, created, size_mb: size.size_mb, auto, offsite, new_mb: size.new_mb, disks, disk_gb, quiesced: size.quiesced, cbt: size.cbt, offsite_bound: offsite });
+                // Yedeği bir iş aldıysa ve işin kilit süresi varsa yedek o süre boyunca silinemez.
+                let locked_until = job.as_deref().and_then(|name| c.job(name).ok()).filter(|j| j.lock_days > 0).map(|j| created + u64::from(j.lock_days) * redox_core::retention::DAY_SECS);
+                let taken = id3.clone();
+                c.add_backup(Backup { id: id3, vmid, guest_name: guest.name, created, size_mb: size.size_mb, auto, offsite, new_mb: size.new_mb, disks, disk_gb, quiesced: size.quiesced, cbt: size.cbt, offsite_bound: offsite, job, machine, spec, suspicious: None, locked_until, tested: None, copies });
+                // Olağan dışı değişim başarısız bir görev olarak da kaydedilir: uyarı kanallarına (web kancası,
+                // e-posta) böyle ulaşır.
+                if let Some(note) = c.backups.iter().find(|b| b.id == taken).and_then(|b| b.suspicious.clone()) {
+                    c.log(&node, &who, format!("backup anomaly {taken}"), &Err(note), now(), Some(vmid));
+                }
             },
         )?;
         Ok(id)
@@ -1439,8 +2026,8 @@ impl AppState {
     /// Yedeği, ait olduğu konuğun diskinin yerine koyar.
     pub fn backup_restore(&self, id: &str, user: &str) -> Result<TaskId, Error> {
         let backup = self.lock().backup(id)?.clone();
-        let (kind, vmid, id1) = (self.kind_of(backup.vmid)?, backup.vmid, id.to_string());
-        let remote = if backup.offsite { self.offsite() } else { None };
+        let (kind, vmid) = (self.kind_of(backup.vmid)?, backup.vmid);
+        let remotes = self.remotes_for(&backup);
         // Yedekteki ek disklerden konuğa hâlâ takılı olanlar da geri yüklenir. Liste, konuk kilitlenirken
         // (aynı kilit altında) belirlenir: arada disk eklenip çıkarılamaz.
         let chosen = Arc::new(Mutex::new(Vec::<u8>::new()));
@@ -1458,46 +2045,233 @@ impl AppState {
             },
             move |d, g| {
                 let disks = chosen.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                // Yerel dosya yoksa (disk değişmiş olabilir) dış kopya önce geri indirilir.
-                if let Some(config) = &remote {
-                    let fetch = |disk: u8| match d.backup_disk_file(&id1, disk) {
-                        Some(path) if !path.exists() => {
-                            if let Some(parent) = path.parent() {
-                                let _ = std::fs::create_dir_all(parent);
-                            }
-                            // Bu sürümle gönderilmiş kopya adına bağlıdır: hedefte başka bir yedeğin dosyasıyla
-                            // değiştirilmişse geri yükleme reddedilir.
-                            config.pull_bound(&path, backup.offsite_bound)
-                        }
-                        _ => Ok(()),
-                    };
-                    if backup.new_mb.is_some() {
-                        // Parçalı dış kopya: yalnızca yerelde eksik parçalar iner (bütün diskler tek dizindedir).
-                        if !d.backup_present(&id1) && !d.pull_backup(&id1, &**config)? {
-                            fetch(0)?;
-                        }
-                    } else {
-                        // Tam yedek: yerelde eksik olan her disk dosyası indirilir.
-                        for disk in std::iter::once(0).chain(disks.iter().copied()) {
-                            fetch(disk)?;
-                        }
-                    }
-                }
-                match (d.restore(g, &id1, &disks), &remote) {
-                    // Yerel parça bozuk ya da eksikse (geri yükleme hiçbir diske dokunmadan durmuştur) dış kopyadan
-                    // onarılıp bir kez daha denenir.
-                    (Err(first), Some(config)) if backup.new_mb.is_some() => match d.pull_backup(&id1, &**config) {
-                        Ok(true) => d.restore(g, &id1, &disks),
-                        _ => Err(first),
-                    },
-                    (outcome, _) => outcome,
-                }
+                restore_from_any(d, g, &backup, &disks, &remotes)
             },
             move |c, ()| c.after_restore(vmid, disk_gb),
         )
     }
 
+    /// Yedekten yeni bir sanal makine oluşturur: özgün konuğa dokunulmaz (silinmiş de olabilir). Konuğun tanımı
+    /// yedekle birlikte saklanan kayıttan, o yoksa (eski yedek) şimdiki konuktan alınır. Yeni konuğun kimliğini döndürür.
+    pub fn backup_restore_new(&self, id: &str, name: &str, user: &str) -> Result<VmId, Error> {
+        self.restore_new(id, name, user, false)
+    }
+
+    /// Anında kurtarma: yedekten, diskleri yedeğin üzerine kurulu yeni bir konuk oluşturur. Kopyalama olmadığı için
+    /// konuk hemen başlatılabilir; yedek, konuk ondan ayrılana kadar (`guest_detach`) silinemez.
+    pub fn backup_instant(&self, id: &str, name: &str, user: &str) -> Result<VmId, Error> {
+        let backup = self.lock().backup(id)?.clone();
+        if backup.new_mb.is_some() {
+            return Err(Error::InvalidSpec("artımlı yedek parça parça durur; anında açılamaz. \"Yeni konuk olarak aç\" ile geri yükleyin".to_string()));
+        }
+        let (new, ids) = self.prepare_from_backup(&backup, name, user, false, true)?;
+        let guest = self.snapshot().guest(new)?.clone();
+        let built = self.driver().instant_from_backup(&guest, &backup.id, &ids);
+        self.mutate(|c| c.log(&guest.node, user, format!("vm instant {new} {id}"), &built, now(), Some(new)));
+        if let Err(e) = built {
+            let _ = self.delete_guest(new, user);
+            return Err(Error::Driver(e));
+        }
+        Ok(new)
+    }
+
+    /// Anında kurtarılmış konuğu yedekten bağımsızlaştırır; konuk çalışırken de yapılır.
+    pub fn guest_detach(&self, vmid: VmId, user: &str) -> Result<TaskId, Error> {
+        let kind = self.kind_of(vmid)?;
+        self.run_op(vmid, user, format!("{kind} detach {vmid}"), None, move |c| c.check_detach(vmid), |d, g| d.detach_backing(g), move |c, ()| c.apply_detach(vmid))
+    }
+
+    /// Konuk üzerindeki işlem bitene kadar bekler ve konuğun son halini döndürür.
+    fn wait_unlocked(&self, vmid: VmId, limit: Duration) -> Result<Guest, String> {
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            let guest = self.snapshot().guest(vmid).map_err(|e| e.to_string())?.clone();
+            if guest.lock.is_none() {
+                return Ok(guest);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("işlem zamanında bitmedi".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    /// Konuğun en son başarısız görevinin iletisi.
+    fn last_failure(&self, vmid: VmId) -> String {
+        self.snapshot().tasks.iter().find(|t| t.vmid == Some(vmid) && t.status == TaskStatus::Failed).and_then(|t| t.message.clone()).unwrap_or_else(|| "neden bilinmiyor".to_string())
+    }
+
+    /// Yedeği **açarak** sınar: yedekten ağdan yalıtılmış geçici bir konuk oluşturur, başlatır, bir süre çalışır
+    /// halde kaldığını (ve konuk ajanı varsa işletim sisteminin yanıt verdiğini) denetler, sonra konuğu siler.
+    /// Sonuç yedeğe ve görev günlüğüne yazılır. Özet doğrulamasından farkı: yalnızca verinin bozulmadığını değil,
+    /// yedeğin gerçekten açılan bir konuk verdiğini gösterir.
+    pub fn backup_test(&self, id: &str, user: &str) -> Result<(), Error> {
+        let backup = self.lock().backup(id)?.clone();
+        if !backup.id.starts_with("vm-") {
+            return Err(Error::InvalidSpec("yalnızca sanal makine yedekleri açılarak sınanır".to_string()));
+        }
+        let (me, user) = (self.clone(), user.to_string());
+        let wait = *self.0.boot_test_wait.lock().unwrap_or_else(|e| e.into_inner());
+        self.dispatch(move || {
+            let mut temp: Option<VmId> = None;
+            let outcome = (|| -> Result<String, String> {
+                let name = format!("sinama-{}", backup.vmid);
+                let new = me.restore_new(&backup.id, &name, &user, true).map_err(|e| format!("geçici konuk oluşturulamadı: {e}"))?;
+                temp = Some(new);
+                me.wait_unlocked(new, Duration::from_secs(6 * 3600))?;
+                if me.snapshot().tasks.iter().any(|t| t.vmid == Some(new) && t.command.starts_with("vm restore-new") && t.status == TaskStatus::Failed) {
+                    return Err(format!("yedek geri yüklenemedi: {}", me.last_failure(new)));
+                }
+                // Kapı denetimi istenmişse sunucuda boş bir kapı seçilir ve konuğun kapısına yönlendirilir.
+                let wants_port = me.snapshot().guest(new).is_ok_and(|g| g.hw.test_port > 0);
+                if wants_port {
+                    let free = std::net::TcpListener::bind(("127.0.0.1", 0)).and_then(|l| l.local_addr()).map(|a| a.port()).map_err(|e| format!("sınama için boş kapı bulunamadı: {e}"))?;
+                    me.mutate(|c| c.set_test_forward(new, free));
+                }
+                me.run_action(new, Action::Start, &user).map_err(|e| format!("geçici konuk başlatılamadı: {e}"))?;
+                if me.wait_unlocked(new, Duration::from_secs(600))?.status != redox_core::GuestStatus::Running {
+                    return Err(format!("yedekten açılan konuk başlamadı: {}", me.last_failure(new)));
+                }
+                std::thread::sleep(wait);
+                let guest = me.snapshot().guest(new).map_err(|e| e.to_string())?.clone();
+                let alive = me.driver().probe(&guest).is_none_or(|p| p.status == redox_core::GuestStatus::Running);
+                let agent = me.driver().guest_agent(&guest);
+                if !alive {
+                    return Err(format!("yedekten açılan konuk {} saniye içinde kendiliğinden kapandı", wait.as_secs()));
+                }
+                let mut note = match agent {
+                    Some(os) => format!("konuk açıldı ve işletim sistemi yanıt verdi ({os})"),
+                    None => format!("konuk {} sn çalıştı; konuk ajanı olmadığı için işletim sisteminin açıldığı doğrulanamadı", wait.as_secs()),
+                };
+                // İstenen denetimler: hizmet gerçekten ayağa kalktı mı?
+                if guest.hw.test_port > 0 {
+                    probe_tcp(guest.hw.test_fwd, wait.max(Duration::from_secs(1))).map_err(|e| format!("konuk açıldı ama TCP {} kapısındaki hizmet doğrulanamadı: {e}", guest.hw.test_port))?;
+                    note.push_str(&format!("; TCP {} kapısındaki hizmet yanıt verdi", guest.hw.test_port));
+                }
+                if !guest.hw.test_cmd.is_empty() {
+                    me.driver().guest_run(&guest, &guest.hw.test_cmd).map_err(|e| format!("konuk açıldı ama sınama komutu başarısız: {e}"))?;
+                    note.push_str("; sınama komutu başarıyla bitti");
+                }
+                Ok(note)
+            })();
+            // Geçici konuk her durumda kaldırılır.
+            if let Some(new) = temp {
+                if me.snapshot().guest(new).is_ok_and(|g| g.status != redox_core::GuestStatus::Stopped) {
+                    let _ = me.run_action(new, Action::Stop, &user);
+                }
+                let _ = me.wait_unlocked(new, Duration::from_secs(600));
+                me.refresh(None, None);
+                if let Err(e) = me.delete_guest(new, &user) {
+                    eprintln!("uyarı: sınama konuğu {new} silinemedi: {e}");
+                }
+            }
+            me.mutate(|c| {
+                let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+                let (ok, note) = match &outcome {
+                    Ok(note) => (true, note.clone()),
+                    Err(why) => (false, why.clone()),
+                };
+                c.set_backup_test(&backup.id, redox_core::BackupTest { at: now(), ok, note });
+                c.log(&node, &user, format!("backup test {}", backup.id), &outcome.map(|_| ()), now(), Some(backup.vmid));
+            });
+        });
+        Ok(())
+    }
+
+    /// `isolated`: kopya ağdan yalıtılır ve sunucuya özgü hiçbir şeye (köprü, paylaşım, hız sınırı) bağlanmaz.
+    fn restore_new(&self, id: &str, name: &str, user: &str, isolated: bool) -> Result<VmId, Error> {
+        let backup = self.lock().backup(id)?.clone();
+        let (new, ids) = self.prepare_from_backup(&backup, name, user, isolated, false)?;
+        let remotes = self.remotes_for(&backup);
+        let command = format!("vm restore-new {new} {id}");
+        match self.run_op(new, user, command, Some("yedeği geri yüklemek"), |_| Ok(()), move |d, g| restore_from_any(d, g, &backup, &ids, &remotes), |_, ()| {}) {
+            Ok(_) => Ok(new),
+            Err(e) => {
+                // Yarım konuk bırakılmaz.
+                let _ = self.delete_guest(new, user);
+                Err(e)
+            }
+        }
+    }
+
+    /// Yedekteki tanımdan yeni bir konuk kaydı ve boş diskler hazırlar; yeni kimliği ve yedekteki ek disk
+    /// numaralarını döndürür. `instant`: diskler yedeğin üzerine kurulacak (boş ek disk dosyası açılmaz).
+    fn prepare_from_backup(&self, backup: &Backup, name: &str, user: &str, isolated: bool, instant: bool) -> Result<(VmId, Vec<u8>), Error> {
+        if !backup.id.starts_with("vm-") {
+            return Err(Error::InvalidSpec("yalnızca sanal makine yedekleri yeni konuk olarak açılır".to_string()));
+        }
+        let c = self.snapshot();
+        let mut spec = match (&backup.spec, c.guest(backup.vmid)) {
+            (Some(saved), _) => (**saved).clone(),
+            // Eski yedekte tanım yoktur: şimdiki konuğun ayarları kullanılır, ama yalnızca gerçekten aynı konuksa.
+            // Silinen konuğun kimliği sonradan başka bir konuğa verilmiş olabilir; ad tutmuyorsa onunki alınmaz.
+            (None, Ok(guest)) if guest.name == backup.guest_name => guest.to_spec(),
+            (None, _) => {
+                return Err(Error::InvalidSpec(
+                    "bu yedek eski biçimde alınmış ve konuğu silinmiş: konuğun ayarları bilinmiyor. Aynı ayarlarla bir konuk oluşturup yedeği ona geri yükleyin".to_string(),
+                ))
+            }
+        };
+        (spec.vmid, spec.name, spec.onboot, spec.iso) = (None, name.trim().to_string(), false, None);
+        if backup.disk_gb > 0 {
+            spec.disk_gb = backup.disk_gb;
+        }
+        // Düğüm ya da depolama alanı artık yoksa bu sunucudaki ilk uygun olan kullanılır.
+        if c.node(&spec.node).is_err() {
+            spec.node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+        }
+        if !c.storages.iter().any(|s| s.id == spec.storage && s.available_on(&spec.node)) {
+            spec.storage = c.storages.iter().find(|s| s.available_on(&spec.node) && s.content.iter().any(|k| k == "disk")).map(|s| s.id.clone()).unwrap_or_default();
+        }
+        // Kopya; şablonluk, askı durumu, zamanlama ve ek diskler özgün konuktan devralınmaz (diskler aşağıda eklenir).
+        let hw = &mut spec.hw;
+        (hw.image, hw.template, hw.suspended, hw.base, hw.restart, hw.disk_seq) = (None, false, false, None, false, 0);
+        hw.disks.clear();
+        hw.schedules.clear();
+        // Kopya, sunucunun fiziksel aygıtlarını kendiliğinden üstlenmez (özgün konuk onları kullanıyor olabilir).
+        hw.usb.clear();
+        hw.pci.clear();
+        if isolated {
+            hw.isolated = true;
+            hw.nics = hw.nics.iter().map(|_| redox_core::NAT.to_string()).collect();
+            (hw.vlan, hw.net_mbps, hw.firewall, hw.balloon_mb) = (0, 0, false, 0);
+            hw.shares.clear();
+            hw.fw_rules.clear();
+            spec.bridge = redox_core::NAT.to_string();
+        }
+        if instant {
+            spec.hw.instant = Some(backup.id.clone());
+        }
+        let new = self.create_guest(&spec, user)?;
+        let prepared = backup.disks.iter().try_for_each(|disk| {
+            let guest = self.mutate(|c| {
+                c.add_disk_exact(new, disk)?;
+                c.guest(new).cloned()
+            })?;
+            if instant { Ok(()) } else { self.driver().add_disk(&guest, disk.id, disk.size_gb).map_err(Error::Driver) }
+        });
+        match prepared {
+            Ok(()) => Ok((new, backup.disks.iter().map(|d| d.id).collect())),
+            Err(e) => {
+                let _ = self.delete_guest(new, user);
+                Err(e)
+            }
+        }
+    }
+
+    /// Yedeği `days` gün boyunca silinemez yapar (kilit yalnızca uzatılabilir).
+    pub fn backup_lock(&self, id: &str, days: u32, user: &str) -> Result<u64, Error> {
+        self.mutate(|c| {
+            let outcome = c.lock_backup(id, days, now());
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, format!("backup lock {id} {days}"), &outcome.as_ref().map(|_| ()).map_err(|e| e.to_string()), now(), None);
+            outcome
+        })
+    }
+
     pub fn backup_delete(&self, id: &str, user: &str) -> Result<(), Error> {
+        // Kilitli yedek, süresi dolana kadar kimse tarafından silinemez (zamanlayıcının budaması dahil).
+        self.lock().backup_deletable(id, now())?;
         let backup = self.lock().backup(id)?.clone();
         let others = self.offsite_others(id);
         let outcome = self.driver().delete_backup(id);
@@ -1510,27 +2284,89 @@ impl AppState {
         });
         // Dış kopya arka planda silinir (süren bir göndermeyi beklemesi gerekebilir; istek bunu beklemez).
         // Silinemezse yerel silme yine geçerlidir ve hata görev günlüğüne yazılır.
-        if let (true, Some(config)) = (outcome.is_ok() && backup.offsite, self.offsite()) {
-            let (me, user) = (self.clone(), user.to_string());
-            self.dispatch(move || {
-                // Parçalı dış kopyada yalnızca bu yedeğe özgü parçalar silinir; yoksa disk dosyaları tek tek.
-                let remote = match me.driver().unpush_backup(&backup.id, &others, &*config) {
-                    Ok(true) => Ok(()),
-                    Ok(false) => std::iter::once(0)
-                        .chain(backup.disks.iter().map(|d| d.id))
-                        .filter_map(|disk| me.driver().backup_disk_file(&backup.id, disk))
-                        .try_for_each(|path| config.delete(&path)),
-                    Err(e) => Err(e),
-                };
-                if remote.is_err() {
-                    me.mutate(|c| {
-                        let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
-                        c.log(&node, &user, format!("backup unpush {}", backup.id), &remote, now(), None);
-                    });
-                }
-            });
+        let targets = if outcome.is_ok() { self.remotes_for(&backup) } else { Vec::new() };
+        let primary = self.offsite();
+        let archived: Vec<String> = self.lock().archive.iter().map(|b| b.id.clone()).collect();
+        let mut kept = false;
+        for config in targets {
+            let copy = !primary.as_ref().is_some_and(|p| Arc::ptr_eq(p, &config));
+            // Saklama süresi olan kopya hedefi yedeği tutar: yedek arşive alınır, süresi dolunca oradan da silinir.
+            if copy && config.keeps(backup.created, now()) {
+                kept = true;
+                continue;
+            }
+            // Kopya hedefinde arşivdeki yedeklerin parçaları da durmalıdır.
+            let mut others = others.clone();
+            if copy {
+                others.extend(archived.iter().cloned());
+            }
+            self.unpush_from(config, backup.clone(), others, user.to_string());
+        }
+        if kept {
+            self.mutate(|c| c.archive_backup(backup.clone()));
         }
         outcome.map_err(Error::Driver)
+    }
+
+    /// Yedeğin bir dış hedefteki kopyasını arka planda siler (süren bir göndermeyi beklemesi gerekebilir).
+    /// Parçalı dış kopyada yalnızca bu yedeğe özgü parçalar silinir (`others`: parçaları durması gereken
+    /// öbür yedekler); yoksa disk dosyaları tek tek. Silinemezse hata görev günlüğüne yazılır.
+    fn unpush_from(&self, config: Arc<crate::offsite::Config>, backup: Backup, others: Vec<String>, user: String) {
+        let me = self.clone();
+        self.dispatch(move || {
+            let remote = match me.driver().unpush_backup(&backup.id, &others, &*config) {
+                Ok(true) => Ok(()),
+                Ok(false) => std::iter::once(0)
+                    .chain(backup.disks.iter().map(|d| d.id))
+                    .filter_map(|disk| me.driver().backup_disk_file(&backup.id, disk))
+                    .try_for_each(|path| config.delete(&path)),
+                Err(e) => Err(e),
+            };
+            let remote = remote.and_then(|()| match me.driver().backup_machine_file(&backup.id) {
+                Some(path) if backup.machine => config.delete(&path),
+                _ => Ok(()),
+            });
+            if remote.is_err() {
+                me.mutate(|c| {
+                    let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+                    c.log(&node, &user, format!("backup unpush {}", backup.id), &remote, now(), None);
+                });
+            }
+        });
+    }
+
+    /// Arşivde saklama süresi dolan yedekleri kopya hedeflerinden siler; silinen kayıt sayısını döndürür.
+    /// Düzenli aralıkla çağrılır; süresi dolan yoksa hedefe hiç gidilmez.
+    pub fn archive_tick(&self) -> usize {
+        let copies = self.offsite_copies();
+        let expired: Vec<Backup> = self.lock().archive.iter().filter(|b| !copies.iter().any(|c| c.keeps(b.created, now()))).cloned().collect();
+        for backup in &expired {
+            self.mutate(|c| {
+                c.drop_archived(&backup.id);
+                let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+                c.log(&node, SCHEDULER, format!("backup archive-expire {}", backup.id), &Ok(()), now(), None);
+            });
+            let mut others = self.offsite_others(&backup.id);
+            others.extend(self.lock().archive.iter().map(|b| b.id.clone()));
+            for config in &copies {
+                self.unpush_from(config.clone(), backup.clone(), others.clone(), SCHEDULER.to_string());
+            }
+        }
+        expired.len()
+    }
+
+    /// Arşivdeki yedeği yedek listesine geri getirir. Dosyaları kopya hedefinde durur; geri yükleme ya da
+    /// yedekten yeni konuk açma sırasında oradan indirilir.
+    pub fn backup_recover(&self, id: &str, user: &str) -> Result<(), Error> {
+        if self.offsite_copies().is_empty() {
+            return Err(Error::InvalidSpec("kopya hedefi tanımlı değil: arşivdeki yedek indirilemez (--offsite-copy)".to_string()));
+        }
+        self.mutate(|c| {
+            c.unarchive_backup(id)?;
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, format!("backup recover {id}"), &Ok(()), now(), None);
+            Ok(())
+        })
     }
 
     /// Durdurulmuş konuğu yeni bir kimlikle kopyalar; yeni konuğun kimliğini döndürür.

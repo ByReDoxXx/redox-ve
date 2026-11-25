@@ -21,6 +21,23 @@ pub struct Cluster {
     /// En yeni yedek başta.
     #[serde(default)]
     pub backups: Vec<Backup>,
+    /// Yedek işleri (ada göre sıralı).
+    #[serde(default)]
+    pub jobs: Vec<crate::jobs::BackupJob>,
+    /// Kaynak havuzları (ada göre sıralı).
+    #[serde(default)]
+    pub pools: Vec<crate::pools::Pool>,
+    /// Arşiv: yerelde silinmiş ama saklama süresi dolmadığı için kopya hedefinde duran yedekler (en yeni başta).
+    #[serde(default)]
+    pub archive: Vec<Backup>,
+    /// Dört göz ilkesi: ikinci yöneticinin onayını bekleyen istekler ve son verilen sıra numarası.
+    #[serde(default)]
+    pub approvals: Vec<crate::approvals::Approval>,
+    #[serde(default)]
+    pub(crate) approval_seq: u64,
+    /// Konuk başına birikimli kaynak tüketimi (kimliğe göre sıralı).
+    #[serde(default)]
+    pub usage: Vec<crate::usage::Usage>,
     next_task_id: TaskId,
 }
 
@@ -51,6 +68,12 @@ impl Cluster {
             storages: Vec::new(),
             tasks: Vec::new(),
             backups: Vec::new(),
+            jobs: Vec::new(),
+            pools: Vec::new(),
+            usage: Vec::new(),
+            archive: Vec::new(),
+            approvals: Vec::new(),
+            approval_seq: 0,
             next_task_id: 1,
         }
     }
@@ -141,6 +164,7 @@ impl Cluster {
             self.storages[si].used_gb = self.storages[si].used_gb.saturating_sub(disk_gb);
         }
         self.guests.retain(|g| g.vmid != vmid);
+        self.usage.retain(|u| u.vmid != vmid);
         let suffix = format!(" create {vmid}");
         if let Some(task) = self.tasks.iter_mut().find(|t| t.vmid == Some(vmid) && t.command.ends_with(&suffix)) {
             task.status = TaskStatus::Failed;
@@ -399,6 +423,8 @@ impl Cluster {
             backup_time: None,
             backup_keep: DEFAULT_KEEP,
             last_auto_backup: None,
+            pool: None,
+            backup_gfs: crate::retention::Gfs::default(),
             // Şablonluk ve bağlı klon ilişkisi yalnızca kendi işlemleriyle kurulur; istekle verilemez.
             hw: crate::hw::Hardware { template: false, base: None, suspended: false, disk_seq: 0, ..spec.hw.clone() },
         };
@@ -426,6 +452,7 @@ impl Cluster {
             self.storages[si].used_gb = self.storages[si].used_gb.saturating_sub(disk_gb);
         }
         self.guests.retain(|g| g.vmid != vmid);
+        self.usage.retain(|u| u.vmid != vmid);
         self.push_task(&node, user, format!("{kind} destroy {vmid}"), TaskStatus::Ok, now, None, None);
         Ok(())
     }

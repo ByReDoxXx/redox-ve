@@ -196,7 +196,11 @@ pub fn snapshots_tab(p: &Page, g: &Guest) -> Markup {
                 div class="tw" { table {
                     thead { tr { th { "Ad" } th { "Alındığı an" } th { span class="sr" { "İşlem" } } } }
                     tbody { @for s in g.snapshots.iter().rev() { tr {
-                        td class="mono" { (s.name) }
+                        td class="mono" {
+                            (s.name)
+                            @if s.disk_only { " " span class="tag" title="Üretim denetim noktası: bellek durumu yok. Geri dönmek için konuk kapalı olmalıdır; konuk o andaki diskle yeniden açılır." { "yalnızca disk" } }
+                            @if s.quiesced { " " span class="tag" title="Görüntü alınırken dosya sistemleri konuk ajanıyla donduruldu." { "tutarlı" } }
+                        }
                         td class="mono muted" { (datetime(s.created)) }
                         td class="act" {
                             @if can {
@@ -211,11 +215,14 @@ pub fn snapshots_tab(p: &Page, g: &Guest) -> Markup {
                 form class="inline" method="post" action={ (base) "/snapshots" } {
                     label for="snap" { "Yeni anlık görüntü" }
                     input id="snap" name="name" type="text" placeholder="örn. guncelleme-oncesi" autocomplete="off" required disabled[!can_create];
+                    @if live && g.kind == GuestKind::Vm && g.status != GuestStatus::Stopped {
+                        label class="check" title="Bellek kaydedilmez; konuk ajanı varsa dosya sistemleri dondurulur. Küçük ve hızlıdır; geri dönüşte konuk o andaki diskle yeniden açılır." { input type="checkbox" name="production" value="1" disabled[!can_create]; "Üretim (belleksiz)" }
+                    }
                     button class="btn primary sm" type="submit" disabled[!can_create] { (icon("snapshot")) "Al" }
                 }
                 @if live {
                     @if g.status != GuestStatus::Stopped {
-                        footer { "Konuk çalışırken alınan görüntü bellek durumunu da içerir; kayıt sırasında konuk kısa süre duraklar." }
+                        footer { "Konuk çalışırken alınan görüntü bellek durumunu da içerir; kayıt sırasında konuk kısa süre duraklar. \"Üretim\" seçilirse bellek kaydedilmez: yalnızca diskler, dosya sistemleri dondurularak görüntülenir." }
                     }
                 } @else if g.status != GuestStatus::Stopped {
                     footer { (stopped_note(g, "Anlık görüntü işlemleri")) }
@@ -228,7 +235,7 @@ pub fn snapshots_tab(p: &Page, g: &Guest) -> Markup {
 pub fn backups_tab(p: &Page, g: &Guest) -> Markup {
     let base = format!("/guests/{}", g.vmid);
     let mine: Vec<_> = p.cluster.backups_of(g.vmid).collect();
-    let live = p.live && g.kind == GuestKind::Vm;
+    let live = if g.kind == GuestKind::Vm { p.live } else { p.live_ct };
     let stopped = p.admin && g.lock.is_none() && g.status == GuestStatus::Stopped;
     let can = p.may_operate(g) && g.lock.is_none() && (g.status == GuestStatus::Stopped || live);
     let stored: u64 = mine.iter().map(|b| b.new_mb.unwrap_or(b.size_mb)).sum();
@@ -254,6 +261,15 @@ pub fn backups_tab(p: &Page, g: &Guest) -> Markup {
                             div class="l1" {
                                 span { (datetime(b.created)) }
                                 @if b.auto { span class="tag" { "otomatik" } }
+                                @if let Some(note) = &b.suspicious { span class="pill warn" title=(note) { (icon("alert")) "olağan dışı değişim" } }
+                                @if b.offsite && !b.offsite_bound { span class="tag" title="Dış kopya eski biçimde: hedefte başka bir yedeğin dosyasıyla değiştirilirse fark edilmez. Menüden yeniden gönderin." { "dış kopya ada bağlı değil" } }
+                                @if b.is_locked(crate::state::now()) { span class="tag gold" title="Bu tarihe kadar silinemez ve budanmaz" { "kilitli: " (redox_core::retention::date_label(b.locked_until.unwrap_or(0))) } }
+                                @if b.copies > 0 { span class="tag" title="Ek dış hedeflerdeki kopya sayısı" { "+" (b.copies) " kopya" } }
+                                @if let Some(test) = &b.tested {
+                                    @if test.ok { span class="tag" title=(test.note) { "sınandı: " (redox_core::retention::date_label(test.at)) } }
+                                    @else { span class="tag" title=(test.note) { "sınama başarısız" } }
+                                }
+                                @if b.machine { span class="tag" title="UEFI değişkenleri ve sanal TPM durumu yedeğe dahil" { "UEFI/TPM" } }
                                 @if b.new_mb.is_some() { span class="tag gold" { "artımlı" } } @else { span class="tag" { "tam" } }
                                 @if b.cbt { span class="tag" { "hızlı" } }
                                 @if b.quiesced == Some(true) { span class="tag" { "donduruldu" } }
@@ -276,11 +292,28 @@ pub fn backups_tab(p: &Page, g: &Guest) -> Markup {
                                             a href={ "/backups/" (b.id) "/download" } download { (icon("disk")) "İndir: asıl disk" }
                                             @for d in &b.disks { a href={ "/backups/" (b.id) "/download?disk=" (d.id) } download { (icon("disk")) "İndir: disk " (d.id) } }
                                         }
+                                        @if g.kind == GuestKind::Vm && b.new_mb.is_none() {
+                                            form method="post" action={ "/backups/" (b.id) "/instant" } { button type="submit" { (icon("play")) "Anında aç" small { "kopyalama beklemeden" } } }
+                                        }
+                                        @if g.kind == GuestKind::Vm {
+                                            form method="post" action={ "/backups/" (b.id) "/test" } { button type="submit" { (icon("play")) "Açarak sına" small { "geçici, yalıtılmış konuk" } } }
+                                        }
+                                        @if p.files && g.kind == GuestKind::Vm {
+                                            a href={ "/backups/" (b.id) "/files?path=/" } { (icon("disk")) "Dosyalara göz at" small { "tek dosya geri al" } }
+                                        }
+                                        @if g.kind == GuestKind::Vm {
+                                            form method="post" action={ "/backups/" (b.id) "/restore-new" } { button type="submit" { (icon("plus")) "Yeni konuk olarak aç" small { "bu konuğa dokunmaz" } } }
+                                        }
                                         @if !b.offsite && p.offsite.is_some() {
                                             form method="post" action={ "/backups/" (b.id) "/push" } { button type="submit" { (icon("migrate")) "Dış hedefe gönder" } }
                                         }
-                                        @if p.real || (!b.offsite && p.offsite.is_some()) { hr; }
-                                        a class="danger" href={ (base) "/confirm?op=delbackup&name=" (b.id) } { (icon("trash")) "Yedeği sil…" }
+                                        form method="post" action={ "/backups/" (b.id) "/lock" } { button type="submit" { (icon("shield")) "Kilitle" small { (redox_core::retention::DEFAULT_LOCK_DAYS) " gün silinemez" } } }
+                                        hr;
+                                        @if b.is_locked(crate::state::now()) {
+                                            span class="muted" { (icon("shield")) "Kilitli yedek silinemez" }
+                                        } @else {
+                                            a class="danger" href={ (base) "/confirm?op=delbackup&name=" (b.id) } { (icon("trash")) "Yedeği sil…" }
+                                        }
                                     }
                                 }
                             }
@@ -290,6 +323,7 @@ pub fn backups_tab(p: &Page, g: &Guest) -> Markup {
                 footer {
                     @if p.admin { (stopped_note(g, if live { "Geri yüklemek" } else { "Yedek almak ve geri yüklemek" })) }
                     @if p.real && g.kind == GuestKind::Vm { p { "Konuk çalışırken alınan yedekte, konukta ajan (qemu-guest-agent) varsa dosya sistemleri kopyadan hemen önce dondurulur (" span class="mono" { "donduruldu" } "). Ajan yoksa yedek yine alınır; elektriği kesilmiş bir diskin tutarlılığındadır." } }
+                    @if p.live_ct && g.kind == GuestKind::Ct { p { "Çalışan konteyner yedek süresince dondurulur (içindeki programlar durur, ağ bağlantıları bekler) ve yedek bitince kaldığı yerden sürer. Kesinti istemiyorsanız yedeği sakin bir saate zamanlayın." } }
                     @if incremental { p { "Artımlı yedekler ortak bir parça deposunu paylaşır: her yedek yalnızca öncekilerde bulunmayan veriyi ekler, yine de tek başına geri yüklenir. Birini silmek diğerlerini etkilemez." } }
                     @if !g.hw.disks.is_empty() || mine.iter().any(|b| !b.disks.is_empty()) { p { "Yedek, alındığı andaki ek diskleri de kapsar. Geri yükleme, yedekteki ek disklerden konuğa hâlâ takılı olanları geri getirir; sonradan eklenen disklere dokunmaz, kaldırılmış diskleri geri eklemez." } }
                 }
@@ -341,6 +375,7 @@ pub struct EditForm {
     pub name: String,
     pub os: String,
     pub tags: String,
+    pub pool: String,
     pub cores: String,
     pub memory_mb: String,
     pub iso: String,
@@ -357,13 +392,30 @@ pub struct EditForm {
     pub shares: String,
     pub backup_time: String,
     pub backup_keep: String,
+    pub rpo_hours: String,
+    pub backup_weekly: String,
+    pub backup_monthly: String,
+    pub backup_yearly: String,
     pub firewall: Option<String>,
+    pub nic_guard: Option<String>,
     pub fw_rules: String,
+    pub backup_pre: String,
+    pub test_port: String,
+    pub test_cmd: String,
+    pub backup_post: String,
     pub firmware: String,
     pub tpm: Option<String>,
     pub nics: String,
     pub usb: String,
     pub pci: String,
+    pub cpu_type: String,
+    pub balloon: Option<String>,
+    pub nested: Option<String>,
+    pub ci_user: String,
+    pub ci_ssh_key: String,
+    pub ci_ip: String,
+    pub ci_gw: String,
+    pub ci_dns: String,
 }
 
 impl EditForm {
@@ -373,6 +425,7 @@ impl EditForm {
             name: g.name.clone(),
             os: g.os.clone(),
             tags: g.tags.join(", "),
+            pool: g.pool.clone().unwrap_or_default(),
             cores: g.cores.to_string(),
             memory_mb: g.mem_total_mb.to_string(),
             iso: g.iso.clone().unwrap_or_default(),
@@ -380,6 +433,10 @@ impl EditForm {
             bridge: g.bridge.clone(),
             backup_time: g.backup_time.clone().unwrap_or_default(),
             backup_keep: g.backup_keep.to_string(),
+            rpo_hours: g.hw.rpo_hours.to_string(),
+            backup_weekly: g.backup_gfs.weekly.to_string(),
+            backup_monthly: g.backup_gfs.monthly.to_string(),
+            backup_yearly: g.backup_gfs.yearly.to_string(),
             onboot: g.onboot.then(|| "1".to_string()),
             restart: g.hw.restart.then(|| "1".to_string()),
             boot_order: g.hw.boot_order.to_string(),
@@ -390,12 +447,25 @@ impl EditForm {
             vlan: g.hw.vlan.to_string(),
             shares: g.hw.shares.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "),
             firewall: g.hw.firewall.then(|| "1".to_string()),
+            nic_guard: g.hw.nic_guard.then(|| "1".to_string()),
             firmware: g.hw.firmware_choice().to_string(),
             tpm: g.hw.tpm.then(|| "1".to_string()),
             nics: g.hw.nics.join(", "),
             usb: g.hw.usb.join(", "),
             pci: g.hw.pci.join(", "),
+            cpu_type: g.hw.cpu_type.clone(),
+            balloon: g.hw.balloon.then(|| "1".to_string()),
+            nested: g.hw.nested.then(|| "1".to_string()),
+            ci_user: g.hw.ci_user.clone().unwrap_or_default(),
+            ci_ssh_key: g.hw.ci_ssh_key.clone().unwrap_or_default(),
+            ci_ip: g.hw.ci_ip.clone().unwrap_or_default(),
+            ci_gw: g.hw.ci_gw.clone().unwrap_or_default(),
+            ci_dns: g.hw.ci_dns.join(", "),
             fw_rules: g.hw.fw_rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"),
+            backup_pre: g.hw.backup_pre.clone(),
+            test_port: g.hw.test_port.to_string(),
+            test_cmd: g.hw.test_cmd.clone(),
+            backup_post: g.hw.backup_post.clone(),
         }
     }
 }
@@ -438,6 +508,24 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         div class="field" {
                             span class="label" { "Güvenlik yongası" }
                             label class="check" { input type="checkbox" form="hw" name="tpm" value="1" checked[f.tpm.is_some()] disabled[off]; "Sanal TPM 2.0" }
+                        }
+                        div class="field" {
+                            label for="cpu_type" { "İşlemci türü" }
+                            select id="cpu_type" form="hw" name="cpu_type" disabled[off] {
+                                option value="" selected[f.cpu_type.is_empty()] { "Sunucunun işlemcisi (host)" }
+                                @for model in redox_core::hw::CPU_TYPES { option value=(model) selected[f.cpu_type == model] { (model) } }
+                            }
+                            span class="hint" { "En hızlısı sunucunun kendi işlemcisidir. Konuğu farklı işlemcili bir sunucuya taşıyacaksanız ikisinin de desteklediği ortak bir model seçin. Başka üreticinin modeli (Intel sunucuda EPYC gibi) kabul edilmez." }
+                        }
+                        div class="field" {
+                            span class="label" { "İç içe sanallaştırma" }
+                            label class="check" { input type="checkbox" form="hw" name="nested" value="1" checked[f.nested.is_some()] disabled[off]; "Konuğa VT-x / AMD-V göster" }
+                            span class="hint" { "Konuk kendi sanal makinelerini çalıştırabilir (KVM, Hyper-V, WSL2, Docker Desktop). Sunucunun KVM modülünde iç içe sanallaştırma açık olmalıdır; qemu64 ve kvm64 modelleriyle kullanılamaz." }
+                        }
+                        div class="field" {
+                            span class="label" { "Bellek balonu" }
+                            label class="check" { input type="checkbox" form="hw" name="balloon" value="1" checked[f.balloon.is_some()] disabled[off]; "Balon aygıtını tak" }
+                            span class="hint" { "Konuğun belleği çalışırken küçültülüp büyütülebilir. Konukta virtio balon sürücüsü gerekir (Linux'ta hazır; Windows'ta virtio-win)." }
                         }
                     }
                 }
@@ -546,6 +634,61 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         }
                     }
                 }
+                @if g.hw.balloon {
+                    div class="card" {
+                        header { h2 { "Bellek hedefi" } span class="note" { @if g.hw.balloon_mb == 0 { "tamamı (" (g.mem_total_mb) " MB)" } @else { (g.hw.balloon_mb) " / " (g.mem_total_mb) " MB" } } }
+                        @if p.admin {
+                            form class="inline" method="post" action={ (base) "/balloon" } {
+                                label for="balloon_mb" { "Hedef (MB)" }
+                                input id="balloon_mb" name="mb" type="text" inputmode="numeric" value=(g.hw.balloon_mb) required disabled[g.lock.is_some() || g.hw.mem_min_mb > 0];
+                                button class="btn sm" type="submit" disabled[g.lock.is_some() || g.hw.mem_min_mb > 0] { (icon("check")) "Uygula" }
+                            }
+                            form class="inline" method="post" action={ (base) "/balloon" } {
+                                label for="mem_min" { "Dinamik bellek: en az (MB)" }
+                                input id="mem_min" name="min" type="text" inputmode="numeric" value=(g.hw.mem_min_mb) required disabled[g.lock.is_some()];
+                                button class="btn sm" type="submit" disabled[g.lock.is_some()] { (icon("check")) "Uygula" }
+                            }
+                        }
+                        footer {
+                            "Konuk çalışırken de değişir. " (redox_core::hw::MIN_BALLOON_MB) " MB ile konuğun belleği arasında bir değer yazın; 0 balonu boşaltır. "
+                            "Konuk belleği hemen bırakmayabilir: balon sürücüsü kullanılmayan belleği verir, gerekirse konuk takas alanına başvurur. "
+                            "Dinamik bellekte hedefi RedoX belirler: konuğun kullandığı bellek + %" (redox_core::hw::DYNAMIC_BUFFER_PCT) " pay, alt sınır ile belleğin tamamı arasında. 0 kapatır."
+                        }
+                    }
+                }
+                div class="card" {
+                    header { h2 { "cloud-init" } span class="note" { @if g.hw.cloud_init() { "açık · sürüm " (g.hw.ci_gen) } @else { "kapalı" } } }
+                    div class="form" {
+                        div class="field" {
+                            label for="ci_user" { "Kullanıcı" }
+                            input id="ci_user" form="hw" name="ci_user" type="text" value=(f.ci_user) placeholder=(redox_core::hw::DEFAULT_CI_USER) autocomplete="off" spellcheck="false" disabled[off];
+                            span class="hint" { "Parolasız sudo yetkisiyle açılır; parolayla giriş kapalıdır." }
+                        }
+                        div class="field full" {
+                            label for="ci_ssh_key" { "SSH açık anahtarı" }
+                            input id="ci_ssh_key" form="hw" name="ci_ssh_key" type="text" value=(f.ci_ssh_key) placeholder="ssh-ed25519 AAAA… ad@makine" autocomplete="off" spellcheck="false" disabled[off];
+                            span class="hint" { "Doluysa cloud-init açıktır; boşaltırsanız kapanır ve aşağıdaki ayarlar da silinir." }
+                        }
+                        div class="field" {
+                            label for="ci_ip" { "Sabit adres" }
+                            input id="ci_ip" form="hw" name="ci_ip" type="text" value=(f.ci_ip) placeholder="10.0.0.5/24" autocomplete="off" spellcheck="false" disabled[off];
+                            span class="hint" { "Birinci kart için IPv4 adresi ve önek. Boşsa konuk DHCP kullanır." }
+                        }
+                        div class="field" {
+                            label for="ci_gw" { "Ağ geçidi" }
+                            input id="ci_gw" form="hw" name="ci_gw" type="text" value=(f.ci_gw) placeholder="10.0.0.1" autocomplete="off" spellcheck="false" disabled[off];
+                        }
+                        div class="field" {
+                            label for="ci_dns" { "Ad sunucuları" }
+                            input id="ci_dns" form="hw" name="ci_dns" type="text" value=(f.ci_dns) placeholder="1.1.1.1, 9.9.9.9" autocomplete="off" spellcheck="false" disabled[off];
+                            span class="hint" { "Virgülle ayırın; en fazla " (redox_core::hw::MAX_CI_DNS) ". Yalnızca sabit adresle." }
+                        }
+                    }
+                    footer {
+                        "Konuğun işletim sisteminde cloud-init kurulu olmalıdır (bulut imajlarında hazır gelir). Ayarlar değişince konuk bir sonraki açılışta "
+                        "bunları yeniden uygular: yeni kullanıcı ve anahtar eklenir, makinenin SSH sunucu anahtarları yenilenebilir; eski kullanıcı silinmez."
+                    }
+                }
                 div class="card" {
                     header { h2 { "Paylaşılan klasörler" } span class="note" { (g.hw.shares.len()) " / " (redox_core::hw::MAX_SHARES) } }
                     div class="form" {
@@ -615,6 +758,14 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                         input id="tags" name="tags" type="text" value=(f.tags) autocomplete="off";
                         span class="hint" { "Virgülle ayırın; küçük harf, rakam ve tire. En fazla " (redox_core::MAX_TAGS) "." }
                     }
+                    div class="field" {
+                        label for="pool" { "Kaynak havuzu" }
+                        select id="pool" name="pool" {
+                            option value="" selected[f.pool.is_empty()] { "Havuz yok" }
+                            @for pool in &p.cluster.pools { option value=(pool.name) selected[f.pool == pool.name] { (pool.name) } }
+                        }
+                        span class="hint" { "Havuzun kotası bu konuğun çekirdek, bellek ve disklerini de sayar. Havuzlar " a class="link" href="/pools" { "Havuzlar" } " sayfasından tanımlanır." }
+                    }
                 }
             }
             fieldset disabled[off] {
@@ -653,6 +804,42 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                     div class="field" {
                         label for="backup_keep" { "Saklanacak otomatik yedek" }
                         input id="backup_keep" name="backup_keep" type="text" inputmode="numeric" value=(f.backup_keep);
+                    }
+                    div class="field" {
+                        label for="rpo_hours" { "Yedek yaşı hedefi (RPO, saat)" }
+                        input id="rpo_hours" name="rpo_hours" type="text" inputmode="numeric" value=(f.rpo_hours);
+                        span class="hint" { "Son yedek bundan eskiyse konuk Yedekler sayfasında ve günlük raporda \"korumasız\" görünür. 0: sunucunun genel ayarı." }
+                    }
+                    div class="field" {
+                        label for="backup_weekly" { "Ek olarak sakla: haftalık / aylık / yıllık" }
+                        span class="inline" {
+                            input id="backup_weekly" name="backup_weekly" type="text" inputmode="numeric" value=(f.backup_weekly) aria-label="Haftalık yedek sayısı" style="max-width:5rem";
+                            input name="backup_monthly" type="text" inputmode="numeric" value=(f.backup_monthly) aria-label="Aylık yedek sayısı" style="max-width:5rem";
+                            input name="backup_yearly" type="text" inputmode="numeric" value=(f.backup_yearly) aria-label="Yıllık yedek sayısı" style="max-width:5rem";
+                        }
+                        span class="hint" { "Son N yedeğe ek olarak, yedeği olan son N haftanın, ayın ve yılın en yeni otomatik yedeği saklanır. 0 kapalı." }
+                    }
+                    @if g.kind == GuestKind::Vm {
+                        div class="field" {
+                            label for="backup_pre" { "Yedekten önce konukta çalıştır" }
+                            input id="backup_pre" name="backup_pre" type="text" value=(f.backup_pre) placeholder="/usr/local/bin/yedek-oncesi.sh" autocomplete="off" spellcheck="false";
+                            span class="hint" { "Konuk çalışırken alınan yedekten hemen önce, konuk ajanıyla çalışır (ör. veritabanını tutarlı duruma getirmek için). Başarısız olursa yedek alınmaz." }
+                        }
+                        div class="field" {
+                            label for="backup_post" { "Yedekten sonra konukta çalıştır" }
+                            input id="backup_post" name="backup_post" type="text" value=(f.backup_post) placeholder="/usr/local/bin/yedek-sonrasi.sh" autocomplete="off" spellcheck="false";
+                            span class="hint" { "Disk görüntüsü alınır alınmaz çalışır. Mutlak program yolu ve argümanları yazın; kabuk kullanılmaz. Konukta qemu-guest-agent gerekir." }
+                        }
+                        div class="field" {
+                            label for="test_port" { "Yedek sınamasında denetlenecek TCP kapısı" }
+                            input id="test_port" name="test_port" type="text" inputmode="numeric" value=(f.test_port);
+                            span class="hint" { "Yedek açılarak sınanırken bu kapıdaki hizmetten yanıt beklenir (ör. 22, 80, 3306). 0: denetlenmez. Veri göndermeyen hizmetler için aşağıdaki komutu kullanın." }
+                        }
+                        div class="field" {
+                            label for="test_cmd" { "Yedek sınamasında konukta çalıştır" }
+                            input id="test_cmd" name="test_cmd" type="text" value=(f.test_cmd) placeholder="/usr/local/bin/saglik.sh" autocomplete="off" spellcheck="false";
+                            span class="hint" { "Yedekten açılan geçici konukta konuk ajanıyla çalışır; 0 ile bitmezse sınama başarısız sayılır (ör. veritabanı tutarlılık denetimi)." }
+                        }
                         span class="hint" { "Fazlası en eskiden başlayarak silinir. Elle aldıklarınıza dokunulmaz." }
                     }
                 }
@@ -666,6 +853,13 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                         span class="hint" {
                             "Açıkken yalnızca aşağıdaki kurallara uyan gelen bağlantılar geçer; konuğun başlattığı bağlantılar serbesttir. "
                             @if g.kind == GuestKind::Vm { "Yalnızca köprüye bağlı sanal makinede etkilidir; NAT'ta dışarıdan zaten yalnızca yönlendirilen kapılara erişilir." }
+                        }
+                    }
+                    @if g.kind == GuestKind::Vm {
+                        div class="field" {
+                            span class="label" { "Ağ kartı koruması" }
+                            label class="check" { input type="checkbox" name="nic_guard" value="1" checked[f.nic_guard.is_some()]; "Sahte MAC, DHCP sunucusu ve yönlendirici duyurusunu engelle" }
+                            span class="hint" { "Konuk yalnızca kendi MAC adresiyle konuşabilir; ağa DHCP yanıtı ya da IPv6 yönlendirici duyurusu (RA) gönderemez. Köprüye bağlı kartlarda etkilidir; çalışırken de açılıp kapanır (en geç 15 saniyede uygulanır)." }
                         }
                     }
                     div class="field" {
@@ -739,10 +933,61 @@ fn schedules_card(p: &Page, g: &Guest) -> Markup {
     }
 }
 
+/// Konuğun disklerini aynı düğümdeki başka bir depolama alanına taşıma formu.
+fn storage_card(p: &Page, g: &Guest, stopped: bool) -> Markup {
+    let others: Vec<_> = p.cluster.storages.iter().filter(|s| s.available_on(&g.node) && s.id != g.storage && s.content.iter().any(|c| c == "disk")).collect();
+    let size = g.total_disk_gb();
+    html! {
+        div class="card" {
+            header { h2 { "Depolama alanı" } span class="note" { "şimdi: " span class="mono" { (g.storage) } " · " (size) " GB" } }
+            div class="op" {
+                div {
+                    h3 { "Diskleri başka alana taşı" }
+                    p {
+                        "Konuğun bütün diskleri (ek diskler dahil) seçilen alana kopyalanır, kopya tamamlanınca eski yerlerinden silinir; anlık görüntüler disklerle birlikte gelir. "
+                        "Süre disklerin dolu kısmıyla orantılıdır. Konuk kapalı olmalıdır; yarıda kalan taşıma konuğu eski alanında bırakır."
+                    }
+                }
+                @if others.is_empty() {
+                    span class="muted" { "Bu düğümde disk tutan başka alan yok." }
+                } @else {
+                    form method="post" action={ "/guests/" (g.vmid) "/move" } {
+                        select name="storage" aria-label="Hedef depolama alanı" disabled[!stopped] {
+                            @for s in &others { option value=(s.id) disabled[s.free_gb() < size] { (s.id) " · " (s.free_gb()) " GB boş" } }
+                        }
+                        button class="btn" type="submit" disabled[!stopped] { (icon("migrate")) "Taşı" }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Çoğalt ve Taşı sekmesi: klon, şablon ve dışa aktarma (yalnızca yönetici).
 pub fn clone_tab(p: &Page, g: &Guest) -> Markup {
     let base = format!("/guests/{}", g.vmid);
     let stopped = g.status == GuestStatus::Stopped && g.lock.is_none();
+    // Gerçek konteynerde yalnızca klon vardır: şablon, bağlı klon ve OVA sanal makinelere özgüdür.
+    if !crate::view::disk_ops(p, g) {
+        return html! {
+            @if !stopped {
+                div class="notice" role="status" { (icon("alert")) span { "Klonlamak için önce konteyneri kapatın." } }
+            }
+            div class="card" {
+                header { h2 { "Klonla" } }
+                div class="op" {
+                    div {
+                        h3 { "Bu konteynerin kopyası" }
+                        p { "Kök dosya sistemi ve ayarlar kopyalanır; kopya kendi kimliğini, adını ve ağ adresini alır. Anlık görüntüler, yedek zamanlaması ve port yönlendirmeleri kopyalanmaz." }
+                    }
+                    form method="post" action={ (base) "/clone" } {
+                        input id="clone" name="name" type="text" value={ (g.name) "-kopya" } autocomplete="off" aria-label="Yeni konteynerin adı" disabled[!stopped];
+                        button class="btn primary" type="submit" disabled[!stopped] { (icon("plus")) "Klonla" }
+                    }
+                }
+            }
+        };
+    }
     let clones: Vec<&Guest> = p.cluster.guests.iter().filter(|c| c.hw.base == Some(g.vmid)).collect();
     html! {
         @if !stopped {
@@ -803,6 +1048,22 @@ pub fn clone_tab(p: &Page, g: &Guest) -> Markup {
                     } }
                 }
             }
+            @if let Some(backup) = &g.hw.instant {
+                div class="card" {
+                    header { h2 { "Yedeğin üzerinde çalışıyor" } span class="note" { "anında kurtarma · " span class="mono" { (backup) } } }
+                    div class="op" {
+                        div {
+                            h3 { "Yedekten ayır" }
+                            p {
+                                "Bu konuğun diskleri " span class="mono" { (backup) } " yedeğine dayanan ince katmanlardır: konuk yalnızca değişiklikleri tutar, geri kalanını yedekten okur. "
+                                "Ayırınca yedekteki veri disklere kopyalanır ve konuk bağımsız olur; konuk çalışırken de yapılır. O zamana kadar yedek silinemez ve budanmaz."
+                            }
+                        }
+                        form method="post" action={ (base) "/detach" } { button class="btn primary" type="submit" disabled[g.lock.is_some()] { (icon("check")) "Yedekten Ayır" } }
+                    }
+                }
+            }
+            (storage_card(p, g, stopped))
             div class="card" {
                 header { h2 { "Dışa aktar ve taşı" } }
                 @if p.real {

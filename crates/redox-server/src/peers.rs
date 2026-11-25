@@ -254,7 +254,27 @@ impl Peer {
 
     /// Yedek dosyasını indirir: önce geçici ada, bitince asıl ada. İndirilen bayt sayısını döndürür.
     pub fn download_backup(&self, id: &str, dest: &std::path::Path) -> Result<u64, String> {
-        let response = self.request("GET", &format!("/api/v1/backups/{id}/download"), Duration::from_secs(120)).call().map_err(peer_error)?;
+        self.download_backup_disk(id, 0, dest)
+    }
+
+    /// Yedeğin makine durumu arşivini (UEFI değişkenleri, sanal TPM) indirir; yedekte arşiv yoksa `false`.
+    pub fn download_machine(&self, id: &str, dest: &std::path::Path) -> Result<bool, String> {
+        match self.request("GET", &format!("/api/v1/backups/{id}/machine"), Duration::from_secs(120)).call() {
+            Ok(response) => {
+                let mut data = Vec::new();
+                use std::io::Read;
+                response.into_reader().take(256 * 1024 * 1024).read_to_end(&mut data).map_err(|e| format!("makine durumu indirilemedi: {e}"))?;
+                std::fs::write(dest, data).map(|()| true).map_err(|e| format!("{} yazılamadı: {e}", dest.display()))
+            }
+            Err(ureq::Error::Status(404, _)) => Ok(false),
+            Err(e) => Err(peer_error(e)),
+        }
+    }
+
+    /// Yedekteki bir diski indirir: 0 asıl disk, 1 ve üstü ek diskler.
+    pub fn download_backup_disk(&self, id: &str, disk: u8, dest: &std::path::Path) -> Result<u64, String> {
+        let query = if disk == 0 { String::new() } else { format!("?disk={disk}") };
+        let response = self.request("GET", &format!("/api/v1/backups/{id}/download{query}"), Duration::from_secs(120)).call().map_err(peer_error)?;
         let expected: Option<u64> = response.header("content-length").and_then(|v| v.parse().ok());
         let tmp = dest.with_extension("indiriliyor");
         let copied = std::fs::File::create(&tmp).and_then(|mut out| {

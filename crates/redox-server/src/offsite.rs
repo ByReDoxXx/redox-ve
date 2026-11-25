@@ -21,7 +21,10 @@ const CHUNK: usize = 64 * 1024;
 const TAG: usize = 16;
 const HEADER: usize = 8 + 16 + 7;
 /// Tek istekle yüklenebilen en büyük S3 nesnesi.
-const S3_MAX: u64 = 5 * 1024 * 1024 * 1024;
+/// S3'te bu boyutu aşan dosyalar parçalı yüklenir (tek istekle yükleme sınırı 5 GB'tır).
+const S3_PART: u64 = 64 * 1024 * 1024;
+/// S3 bir yüklemede en çok bu kadar parça kabul eder.
+const S3_MAX_PARTS: u64 = 10_000;
 
 #[derive(Clone, PartialEq)]
 pub enum Target {
@@ -35,6 +38,11 @@ pub struct Config {
     pub target: Target,
     /// Doluysa yedekler gönderilmeden önce bu parolayla şifrelenir.
     passphrase: Option<String>,
+    /// S3'te parçalı yüklemenin parça boyutu; bundan büyük dosyalar parçalara bölünür.
+    part_bytes: u64,
+    /// Kopya hedefinde saklama süresi (gün): yedek yerelde silinse de alındığı andan başlayarak bu kadar
+    /// gün hedefte durur (arşiv). 0: yerelde silinen yedek hedeften de silinir.
+    pub keep_days: u32,
 }
 
 /// Gizli anahtar ve parola hata ayıklama çıktısına yazılmaz.
@@ -62,6 +70,10 @@ impl Config {
         if passphrase.as_ref().is_some_and(|p| p.len() < 12) {
             return Err("dış yedek dosyası: şifreleme parolası en az 12 karakter olmalı".to_string());
         }
+        let keep_days = match take("keep_days") {
+            Some(days) => days.parse::<u32>().ok().filter(|d| *d <= 36_500).ok_or_else(|| format!("dış yedek dosyası: \"keep_days\" 0 ile 36500 arasında bir gün sayısı olmalı: {days}"))?,
+            None => 0,
+        };
         let kind = need(take("kind"), "kind")?;
         let target = match kind.as_str() {
             "dir" => {
@@ -94,7 +106,12 @@ impl Config {
         if let Some(unknown) = map.keys().next() {
             return Err(format!("dış yedek dosyası: bilinmeyen anahtar \"{unknown}\""));
         }
-        Ok(Config { target, passphrase })
+        Ok(Config { target, passphrase, part_bytes: S3_PART, keep_days })
+    }
+
+    /// Bu hedef, `created` anında alınmış yedeği yerelde silinse de hâlâ saklıyor mu?
+    pub fn keeps(&self, created: u64, now: u64) -> bool {
+        self.keep_days > 0 && created + u64::from(self.keep_days) * 86_400 > now
     }
 
     pub fn encrypted(&self) -> bool {
@@ -169,10 +186,11 @@ impl Config {
                 }
             }
             Target::S3 { .. } => {
-                if len > S3_MAX {
-                    return Err("yedek 5 GB sınırını aşıyor; S3 hedefine tek parçada gönderilemez (dizin hedefi kullanın)".to_string());
+                if len > self.part_bytes {
+                    self.s3_multipart(&name, &mut body, len)?;
+                } else {
+                    self.s3_query("PUT", &name, "", Some((&mut body, len)))?;
                 }
-                self.s3("PUT", &name, Some((body, len)))?;
                 let stored = self.s3("HEAD", &name, None)?.header("content-length").and_then(|v| v.parse::<u64>().ok());
                 if stored != Some(len) {
                     return Err(format!("hedefteki boyut doğrulanamadı (beklenen {len}, bulunan {stored:?})"));
@@ -260,7 +278,49 @@ impl Config {
         }
     }
 
+    /// Büyük dosyayı parça parça yükler: başlat, parçaları sırayla gönder, tamamla. Parçalar bellekte
+    /// tutulmaz, akıtılır. Herhangi bir adım başarısız olursa yükleme iptal edilir (hedefte yarım parça kalmaz).
+    fn s3_multipart(&self, name: &str, body: &mut dyn Read, len: u64) -> Result<(), String> {
+        // Parça sayısı sınırı aşılmasın diye çok büyük dosyalarda parça boyutu büyütülür.
+        let part = self.part_bytes.max(len.div_ceil(S3_MAX_PARTS));
+        let started = self.s3_query("POST", name, "uploads=", Some((&mut std::io::empty(), 0)))?.into_string().map_err(|e| format!("hedefin yanıtı okunamadı: {e}"))?;
+        let upload = xml_value(&started, "UploadId").ok_or("hedef parçalı yüklemeyi başlatmadı (UploadId yok)")?;
+        let id = uri_encode(&upload);
+        let sent = (|| {
+            let mut etags: Vec<String> = Vec::new();
+            let mut left = len;
+            while left > 0 {
+                let size = left.min(part);
+                let number = etags.len() + 1;
+                let mut chunk = (&mut *body).take(size);
+                let response = self.s3_query("PUT", name, &format!("partNumber={number}&uploadId={id}"), Some((&mut chunk, size))).map_err(|e| format!("{number}. parça gönderilemedi: {e}"))?;
+                etags.push(response.header("etag").ok_or_else(|| format!("hedef {number}. parça için kimlik (ETag) döndürmedi"))?.to_string());
+                left -= size;
+            }
+            let list: String = etags.iter().enumerate().map(|(i, tag)| format!("<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>", i + 1, xml_escape(tag))).collect();
+            let complete = format!("<CompleteMultipartUpload>{list}</CompleteMultipartUpload>");
+            let done = self.s3_query("POST", name, &format!("uploadId={id}"), Some((&mut complete.as_bytes(), complete.len() as u64)))?.into_string().map_err(|e| format!("hedefin yanıtı okunamadı: {e}"))?;
+            // S3, tamamlama hatasını 200 yanıtının gövdesinde de bildirebilir.
+            match xml_value(&done, "Code") {
+                Some(code) if done.contains("<Error>") => Err(format!("hedef parçaları birleştiremedi: {code}")),
+                _ => Ok(()),
+            }
+        })();
+        if sent.is_err() {
+            let _ = self.s3_query("DELETE", name, &format!("uploadId={id}"), None);
+        }
+        sent
+    }
+
     fn s3(&self, method: &str, name: &str, body: Option<(Box<dyn Read + Send + Sync>, u64)>) -> Result<ureq::Response, String> {
+        match body {
+            Some((mut reader, len)) => self.s3_query(method, name, "", Some((&mut reader, len))),
+            None => self.s3_query(method, name, "", None),
+        }
+    }
+
+    /// `query`: kurallı sorgu dizgisi (ada göre sıralı, değerleri `uri_encode` ile kodlanmış); boş olabilir.
+    fn s3_query(&self, method: &str, name: &str, query: &str, body: Option<(&mut dyn Read, u64)>) -> Result<ureq::Response, String> {
         let Target::S3 { endpoint, host, bucket, region, prefix, access_key, secret_key } = &self.target else {
             return Err("hedef S3 değil".to_string());
         };
@@ -268,11 +328,12 @@ impl Config {
         let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         const UNSIGNED: &str = "UNSIGNED-PAYLOAD";
         let headers = [("host", host.as_str()), ("x-amz-content-sha256", UNSIGNED), ("x-amz-date", amz_date.as_str())];
-        let authorization = sigv4(method, &path, &headers, UNSIGNED, &amz_date, region, access_key, secret_key);
+        let authorization = sigv4_query(method, &path, query, &headers, UNSIGNED, &amz_date, region, access_key, secret_key);
+        let url = if query.is_empty() { format!("{endpoint}{path}") } else { format!("{endpoint}{path}?{query}") };
         // Büyük dosyalar için toplam süre sınırı yok; bağlantı ve okuma sınırları var.
         let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout_read(Duration::from_secs(120)).redirects(0).build();
         let request = agent
-            .request(method, &format!("{endpoint}{path}"))
+            .request(method, &url)
             .set("x-amz-content-sha256", UNSIGNED)
             .set("x-amz-date", &amz_date)
             .set("Authorization", &authorization);
@@ -307,6 +368,22 @@ impl redox_core::Remote for Config {
     }
 }
 
+/// AWS'nin URI kodlaması: harf, rakam ve `-_.~` dışındaki her bayt `%XX` olur.
+pub fn uri_encode(text: &str) -> String {
+    text.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+/// XML yanıtındaki ilk `<etiket>değer</etiket>` değerini döndürür.
+fn xml_value(xml: &str, tag: &str) -> Option<String> {
+    let start = xml.find(&format!("<{tag}>"))? + tag.len() + 2;
+    let end = xml[start..].find(&format!("</{tag}>"))? + start;
+    Some(xml[start..end].replace("&quot;", "\"").replace("&amp;", "&"))
+}
+
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -320,10 +397,17 @@ fn hmac(key: &[u8], data: &str) -> Vec<u8> {
 /// AWS Signature Version 4 `Authorization` başlığı. `headers` ada göre sıralı ve küçük harfli olmalıdır.
 #[allow(clippy::too_many_arguments)]
 pub fn sigv4(method: &str, path: &str, headers: &[(&str, &str)], payload_hash: &str, amz_date: &str, region: &str, access_key: &str, secret_key: &str) -> String {
+    sigv4_query(method, path, "", headers, payload_hash, amz_date, region, access_key, secret_key)
+}
+
+/// Sorgu dizgili istekler için imza. `query` kurallı biçimde olmalıdır: ada göre sıralı `ad=değer` çiftleri,
+/// ad ve değerler `uri_encode` ile kodlanmış, değersiz parametre `ad=` olarak.
+#[allow(clippy::too_many_arguments)]
+pub fn sigv4_query(method: &str, path: &str, query: &str, headers: &[(&str, &str)], payload_hash: &str, amz_date: &str, region: &str, access_key: &str, secret_key: &str) -> String {
     let date = &amz_date[..8];
     let canonical_headers: String = headers.iter().map(|(k, v)| format!("{k}:{}\n", v.trim())).collect();
     let signed = headers.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(";");
-    let canonical = format!("{method}\n{path}\n\n{canonical_headers}\n{signed}\n{payload_hash}");
+    let canonical = format!("{method}\n{path}\n{query}\n{canonical_headers}\n{signed}\n{payload_hash}");
     let scope = format!("{date}/{region}/s3/aws4_request");
     let to_sign = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}", hex(&Sha256::digest(canonical.as_bytes())));
     let key = ["s3", "aws4_request"].iter().fold(hmac(&hmac(format!("AWS4{secret_key}").as_bytes(), date), region), |k, part| hmac(&k, part));
@@ -490,6 +574,20 @@ pub fn decrypt(source: &mut dyn Read, passphrase: &str, out: &mut dyn Write, nam
 mod tests {
     use super::*;
 
+    #[test]
+    fn keep_days_makes_a_copy_target_an_archive() {
+        let base = format!("kind = dir
+path = {}
+", std::env::temp_dir().display());
+        let cfg = Config::parse(&format!("{base}keep_days = 30
+")).unwrap();
+        assert_eq!(cfg.keep_days, 30);
+        assert!(cfg.keeps(1_000_000, 1_000_000 + 29 * 86_400) && !cfg.keeps(1_000_000, 1_000_000 + 30 * 86_400));
+        assert!(!Config::parse(&base).unwrap().keeps(1_000_000, 1_000_001), "süre yoksa saklanmaz");
+        assert!(Config::parse(&format!("{base}keep_days = cok
+")).unwrap_err().contains("keep_days"));
+    }
+
     const PASS: &str = "dogru-at-pil-zimba";
     const NAME: &str = "vm-103-1.qcow2";
 
@@ -561,6 +659,31 @@ mod tests {
             auth,
             "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request,SignedHeaders=host;range;x-amz-content-sha256;x-amz-date,Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
         );
+    }
+
+    #[test]
+    fn query_signature_matches_the_aws_documentation_examples() {
+        const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let sign = |query: &str| {
+            sigv4_query(
+                "GET",
+                "/",
+                query,
+                &[("host", "examplebucket.s3.amazonaws.com"), ("x-amz-content-sha256", EMPTY), ("x-amz-date", "20130524T000000Z")],
+                EMPTY,
+                "20130524T000000Z",
+                "us-east-1",
+                "AKIAIOSFODNN7EXAMPLE",
+                "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            )
+        };
+        // "GET Bucket Lifecycle" (değersiz parametre) ve "Get Bucket (List Objects)" (iki parametre) örnekleri.
+        assert!(sign("lifecycle=").ends_with("Signature=fea454ca298b7da1c68078a5d1bdbfbbe0d65c699e0f91ac7a200a0136783543"), "{}", sign("lifecycle="));
+        assert!(sign("max-keys=2&prefix=J").ends_with("Signature=34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7"), "{}", sign("max-keys=2&prefix=J"));
+        assert_eq!(uri_encode("aZ09-_.~ /+="), "aZ09-_.~%20%2F%2B%3D");
+        assert_eq!(xml_value("<R><UploadId>ab&amp;c</UploadId></R>", "UploadId").as_deref(), Some("ab&c"));
+        assert_eq!(xml_value("<R></R>", "UploadId"), None);
+        assert_eq!(xml_escape("\"e1\""), "&quot;e1&quot;");
     }
 
     #[test]
@@ -673,7 +796,9 @@ mod tests {
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
                 let mut parts = line.split_whitespace();
-                let (method, path) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
+                let (method, target) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
+                let (path, query) = target.split_once('?').map(|(p, q)| (p.to_string(), q.to_string())).unwrap_or((target.clone(), String::new()));
+                let param = |name: &str| query.split('&').find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_string));
                 let (mut length, mut signed) = (0usize, false);
                 loop {
                     let mut header = String::new();
@@ -690,8 +815,40 @@ mod tests {
                 let mut body = vec![0u8; length];
                 reader.read_exact(&mut body).unwrap();
                 let mut map = objects.lock().unwrap();
+                // Parçalı yükleme: parçalar `yol#yükleme#numara` adıyla bekler, tamamlanınca birleştirilir.
+                let mut etag = None;
                 let (status, payload): (&str, Vec<u8>) = match (signed, method.as_str()) {
                     (false, _) => ("403 Forbidden", Vec::new()),
+                    (_, "POST") if query == "uploads=" => ("200 OK", b"<InitiateMultipartUploadResult><UploadId>yukleme/1+a=</UploadId></InitiateMultipartUploadResult>".to_vec()),
+                    (_, "PUT") if param("partNumber").is_some() => {
+                        let number = param("partNumber").unwrap();
+                        if param("uploadId").as_deref() != Some("yukleme%2F1%2Ba%3D") {
+                            ("404 Not Found", Vec::new())
+                        } else if path.contains("parca-hatasi") && number == "2" {
+                            ("500 Internal Server Error", Vec::new())
+                        } else {
+                            etag = Some(format!("\"e{number}\""));
+                            map.insert(format!("{path}#yukleme#{number}"), body);
+                            ("200 OK", Vec::new())
+                        }
+                    }
+                    (_, "POST") if param("uploadId").is_some() => {
+                        let listed = String::from_utf8_lossy(&body).to_string();
+                        let numbers: Vec<String> = listed.split("<PartNumber>").skip(1).filter_map(|p| p.split('<').next().map(str::to_string)).collect();
+                        let tags_ok = numbers.iter().all(|n| listed.contains(&format!("<ETag>&quot;e{n}&quot;</ETag>")));
+                        let mut whole = Vec::new();
+                        let all = numbers.iter().all(|n| map.remove(&format!("{path}#yukleme#{n}")).map(|part| whole.extend(part)).is_some());
+                        if all && tags_ok && !numbers.is_empty() && !path.contains("birlesme-hatasi") {
+                            map.insert(path, whole);
+                            ("200 OK", b"<CompleteMultipartUploadResult><ETag>\"tamam\"</ETag></CompleteMultipartUploadResult>".to_vec())
+                        } else {
+                            ("200 OK", b"<Error><Code>InvalidPart</Code></Error>".to_vec())
+                        }
+                    }
+                    (_, "DELETE") if param("uploadId").is_some() => {
+                        map.retain(|key, _| !key.starts_with(&format!("{path}#yukleme#")));
+                        ("204 No Content", Vec::new())
+                    }
                     (_, "PUT") => {
                         map.insert(path, body);
                         ("200 OK", Vec::new())
@@ -707,7 +864,8 @@ mod tests {
                     _ => ("405 Method Not Allowed", Vec::new()),
                 };
                 let mut socket = reader.into_inner();
-                let _ = write!(socket, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
+                let etag = etag.map(|tag| format!("ETag: {tag}\r\n")).unwrap_or_default();
+                let _ = write!(socket, "HTTP/1.1 {status}\r\n{etag}Content-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
                 if method != "HEAD" {
                     let _ = socket.write_all(&payload);
                 }
@@ -745,6 +903,52 @@ mod tests {
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let down = Config::parse(&format!("kind = s3\nendpoint = http://127.0.0.1:{closed}\nbucket = yedekler\naccess_key = a\nsecret_key = b\n")).unwrap();
         assert!(down.push(&local).unwrap_err().contains("erişilemiyor"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn large_files_are_uploaded_to_s3_in_parts() {
+        let (port, store) = fake_s3();
+        let dir = temp("s3-parca");
+        let mut cfg = Config::parse(&format!(
+            "kind = s3\nendpoint = http://127.0.0.1:{port}\nbucket = yedekler\nprefix = redox/\naccess_key = test-key\nsecret_key = test-secret\npassphrase = {PASS}\n"
+        ))
+        .unwrap();
+        assert_eq!(cfg.part_bytes, 64 * 1024 * 1024, "varsayılan parça 64 MiB");
+        assert_eq!(cfg.keep_days, 0);
+        cfg.part_bytes = 1000;
+        let local = dir.join("yerel/vm-103-7.qcow2");
+        let data: Vec<u8> = (0..2500u32).map(|i| (i * 7 % 251) as u8).collect();
+        std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+        std::fs::write(&local, &data).unwrap();
+
+        // 2500 bayt şifrelenince 2547 bayt: 1000 + 1000 + 547 olarak üç parça.
+        let sent = cfg.push(&local).unwrap();
+        assert_eq!(sent, encrypted_len(2500));
+        {
+            let map = store.lock().unwrap();
+            assert_eq!(map.keys().collect::<Vec<_>>(), ["/yedekler/redox/vm-103-7.qcow2.enc"], "parçalar birleşti, artık parça kalmadı");
+            assert_eq!(map["/yedekler/redox/vm-103-7.qcow2.enc"].len() as u64, sent);
+        }
+        std::fs::remove_file(&local).unwrap();
+        cfg.pull(&local).unwrap();
+        assert_eq!(std::fs::read(&local).unwrap(), data, "parçalı yüklenen dosya bayt bayt geri gelir");
+        // Sınırdaki dosya tek istekle gider (parçalı yükleme yalnızca sınır aşılınca).
+        cfg.part_bytes = sent;
+        cfg.delete(&local).unwrap();
+        cfg.push(&local).unwrap();
+        assert_eq!(store.lock().unwrap().len(), 1);
+
+        // Bir parça gönderilemezse ya da birleştirme reddedilirse yükleme iptal edilir: hedefte yarım parça kalmaz.
+        cfg.part_bytes = 1000;
+        for (name, needle) in [("parca-hatasi.qcow2", "2. parça gönderilemedi"), ("birlesme-hatasi.qcow2", "birleştiremedi: InvalidPart")] {
+            let bad = dir.join("yerel").join(name);
+            std::fs::write(&bad, &data).unwrap();
+            let err = cfg.push(&bad).unwrap_err();
+            assert!(err.contains(needle), "{name}: {err}");
+            let map = store.lock().unwrap();
+            assert!(map.keys().all(|key| !key.contains(name)), "{name}: {:?}", map.keys().collect::<Vec<_>>());
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

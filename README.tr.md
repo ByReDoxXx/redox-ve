@@ -38,8 +38,11 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 **Konuklar**
 
 - QEMU üzerinden KVM sanal makineleri ve yetkisiz LXC konteynerleri; ikisi de aynı sayfalardan yönetilir.
+- Konteynerler klonlanır ve çalışırken yedeklenir (arşiv süresince dondurulur).
 - BIOS, UEFI, güvenli önyüklemeli UEFI ve sanal TPM 2.0 (Windows 11 için yeterli).
 - ISO'dan kurulum ya da hazır bulut imajından cloud-init ile oluşturma (kullanıcı, SSH anahtarı, makine adı).
+  cloud-init ayarları, sabit adres dahil, sonradan panelden düzenlenir.
+- Sanal makine başına seçilebilen işlemci modeli ve hedefi çalışırken değişen bellek balonu.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
 - Şablonlar, tam klonlar ve bağlı klonlar (bağlı klon bir saniyenin altında hazır olur).
 - En fazla 8 ek veri diski ve 3 ek ağ kartı; ikisi de çalışan sanal makineye takılabilir.
@@ -47,17 +50,36 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
   sunucu açılışında başlatma sırası.
 - Çöken ya da içinden kapanan konuğun kendiliğinden yeniden başlatılması.
 - Sunucu ile sanal makine arasında paylaşılan klasörler (virtio-9p), USB ve PCI aygıt aktarımı.
+- Dinamik bellek (balon hedefi konuğun kullanımını izler) ve iç içe sanallaştırma.
+- Konuk başına kaynak ölçümü: faturalama ve planlama için birikimli çekirdek-saat, GB-saat ve disk G/Ç.
+- Köprüdeki kartlarda ağ kartı koruması: sahte MAC, sahte DHCP sunucusu ve yönlendirici duyurusu engellenir.
 
 **Depolama ve yedek**
 
 - Çalışan sanal makinede anlık görüntü (bellekle birlikte) ve yedek.
-- Saklama sayısıyla zamanlanmış yedek.
+- Saklama sayısıyla zamanlanmış yedek: konuk başına ya da birçok konuğu sırayla yedekleyen yedek işleriyle.
+- UEFI değişkenleri ve sanal TPM durumu yedekle birlikte saklanır ve geri yüklenir.
+- Yedeği yeni bir konuk olarak açma ya da konuğu doğrudan yedeğin üzerinde başlatma (anında kurtarma) ve sonradan ayırma.
+- Açarak sınama: yedek, yalıtılmış geçici bir konukta başlatılarak gerçekten açıldığı kanıtlanır; istenirse bir
+  TCP kapısının yanıt vermesi ve konuk içinde bir komutun başarıyla bitmesi de beklenir.
+- Üretim denetim noktası: çalışan sanal makinenin, dosya sistemleri konuk ajanıyla dondurularak alınan belleksiz
+  görüntüsü.
+- Artımlı yedekte olağandan çok fazla veri değiştiğinde uyarı (fidye yazılımı belirtisi olabilir).
+- Konuk başına yedek yaşı hedefi (RPO) ve arşiv: kopya hedefleri, yerelde silinen yedekleri belirlenen gün kadar
+  saklayabilir.
+- Dört göz ilkesi (isteğe bağlı): yedek ya da konuk silmek ikinci bir yöneticinin onayını ister.
+- Dosya düzeyinde geri yükleme: yedeğin içinde gezip tek dosya indirme (libguestfs ile).
+- Haftalık, aylık, yıllık saklama (GFS), kilitli (değiştirilemez) yedekler, yedek penceresi ve kopyalama hız sınırı.
+- Canlı yedekten önce ve sonra konuk ajanıyla konuğun içinde komut çalıştırma.
+- E-postayla günlük yedek raporu ve yakın zamanda yedeği alınmamış konukların listesi.
 - Artımlı yedek: içeriğe göre adlandırılan 4 MiB'lik parça deposu. Zincir yoktur; herhangi bir yedek silinebilir.
 - Değişen blok takibi: çalışan sanal makinenin artımlı yedeğinde yalnızca değişen bloklar okunur.
 - Bir dizine (ikinci disk, NFS, SMB) ya da S3 uyumlu bir depoya dış kopya; şifreleme istemci tarafındadır.
   Şifreli kopya yedeğin adına bağlıdır: hedefte yer değiştirilen dosyalar geri yüklemede reddedilir.
+  Büyük dosyalar S3'e parça parça yüklenir. Yedekler birden çok hedefe kopyalanabilir (3-2-1).
 - Yedek doğrulama ve yerelde bozulan parçanın dış kopyadan onarılması.
-- Sanal makine diskleri için ek depolama dizinleri.
+- Sanal makine diskleri için ek depolama dizinleri ve kapalı konuğun disklerini aralarında taşıma.
+- Çekirdek, bellek, disk ve konuk sayısına kota koyan kaynak havuzları.
 
 **Ağ**
 
@@ -72,7 +94,8 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Roller (yönetici, operatör, izleyici), etikete dayalı operatör kapsamı, TOTP ile iki adımlı giriş,
   OpenID Connect.
 - Denetim günlüğü, görev günlüğü, webhook ya da e-posta ile kaynak uyarıları, Prometheus ölçümleri.
-- Birkaç RedoX VE sunucusunun birleşik görünümü ve bir sanal makineyi bellek durumunu koruyarak aralarında taşıma.
+- Birkaç RedoX VE sunucusunun birleşik görünümü ve bir sanal makineyi bellek durumu, ek diskleri, UEFI
+  değişkenleri ve TPM durumuyla birlikte aralarında taşıma.
 
 ## RedoX VE ve Proxmox VE
 
@@ -253,12 +276,16 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 | `GET /guests`, `POST /guests` | Konukları listeleme ve oluşturma |
 | `GET`, `PATCH`, `DELETE /guests/{vmid}` | Gösterme, değiştirme, silme |
 | `POST /guests/{vmid}/{start,stop,reboot,pause,resume}` | Güç işlemleri |
-| `POST /guests/{vmid}/suspend`, `/discard-suspend` | Diske askıya alma |
+| `POST /guests/{vmid}/suspend`, `/discard-suspend`, `/detach` | Diske askıya alma, yedekten ayırma |
 | `POST /guests/{vmid}/snapshots`, `.../{name}/rollback` | Anlık görüntüler |
-| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics` | Klonlar ve donanım |
+| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/move` | Klonlar, donanım, depolar arası taşıma |
 | `GET /guests/{vmid}/export` | OVA dışa aktarma |
 | `POST /guests/{vmid}/backups`, `GET /backups` | Yedekler |
 | `POST /backups/{id}/restore`, `/push`, `/verify`, `GET .../download` | Geri yükleme, dış kopya, doğrulama, indirme |
+| `POST /backups/{id}/restore-new`, `/instant`, `/test`, `/lock` | Yeni konuk, anında kurtarma, açarak sınama, kilit |
+| `GET /backups/{id}/files`, `/file`, `GET /backups/report` | Yedeğin içindeki dosyalar, yedek raporu |
+| `GET /jobs`, `POST /jobs`, `DELETE /jobs/{name}`, `POST /jobs/{name}/run` | Yedek işleri |
+| `GET /pools`, `POST /pools`, `DELETE /pools/{name}` | Kaynak havuzları ve kotalar |
 | `GET /storage`, `GET /media`, `PUT /media/{name}`, `POST /media/fetch` | Depolama, kalıp ve imaj yükleme |
 | `GET /peers`, `POST /peers/{name}/import/{vmid}` | Öbür sunucular, sanal makine alma |
 | `GET /tasks`, `GET /tasks/{id}` | Görev günlüğü |
@@ -278,7 +305,7 @@ docs/img/         Bu belgedeki ekran görüntüleri.
 KURULUM.md        Ayrıntılı kurulum ve işletim kılavuzu.
 ```
 
-İki pakette yaklaşık 23.700 satır Rust vardır.
+İki pakette yaklaşık 28.500 satır Rust vardır.
 
 ### `redox-core`
 
@@ -286,6 +313,9 @@ KURULUM.md        Ayrıntılı kurulum ve işletim kılavuzu.
 |---|---|
 | `model`, `hw` | Konuklar, düğümler, depolama, anlık görüntüler, yedekler, görevler; konuğun donanım tanımı |
 | `cluster`, `ops` | Durum makinesi: hangi işlem hangi durumda yapılabilir, konuk kilitleme, görev kayıtları |
+| `jobs` | Yedek işleri: etiketle seçim, günler, konukların tek tek yedeklenmesi, işe özgü saklama sayısı |
+| `pools` | Kaynak havuzları: ayrılan çekirdek, bellek, disk ve konuk sayısına kota |
+| `retention` | Haftalık, aylık, yıllık saklama, yedek kilitleri, takvim hesabı |
 | `driver` | Her arka ucun uyguladığı `Hypervisor` arayüzü ve dış hedefler için `Remote` arayüzü |
 | `command` | Komut satırının ve paneldeki komut çubuğunun ortak komut dili |
 | `seed` | Simülasyon sürücüsünün gösterdiği örnek küme |
@@ -300,7 +330,7 @@ karar verir; *yapılıp yapılamayacağına* `redox-core` karar verir.
 | HTTP | `lib` (yönlendirici, güvenlik başlıkları), `api` (REST), `ui`, `ui_ops`, `ui_admin` (sayfa işleyicileri), `view*` ([maud](https://maud.lambda.xyz) ile HTML) |
 | Durum | `state` (uygulama durumu, görev yürütücü, zamanlayıcılar), `history` ve `metrics` (grafikler, Prometheus) |
 | Sürücüler | `qemu` (QMP üzerinden QEMU/KVM), `lxc`, `hostdriver` (ikisini birleştirir), `qga` (konuk ajanı) |
-| Yedek | `chunkstore` (artımlı depo), `offsite` (dizin ve S3 hedefleri, şifreleme), `ova` |
+| Yedek | `chunkstore` (artımlı depo), `offsite` (dizin ve S3 hedefleri, şifreleme), `ova`, `guestfs` (yedeğin içindeki dosyalar), `report` |
 | Ağ | `net`, `netlimit` (`tc`), `firewall` (nftables) |
 | Kimlik | `auth` (kullanıcılar, oturumlar, token'lar), `totp`, `oidc`, `audit` |
 | İşletim | `alerts`, `mail`, `ha` (yeniden başlatma gözcüsü), `peers` (öbür sunucular), `media` (kalıp ve imaj yükleme) |
@@ -345,6 +375,8 @@ Veri dizini (`/var/lib/redox`):
 - **Değişen blok takibi** (`--changed-block-tracking`): kalıcı bir QEMU değişiklik haritası. Yanlış
   olabileceği her durumda (geri yükleme, anlık görüntüye dönüş, büyütme, çökme) harita atılır ve sonraki
   yedek diski baştan sona okur.
+- **Makine durumu:** UEFI değişken deposu ve sanal TPM durumu yedeğin yanında küçük bir arşive
+  (`<yedek>.machine.tar`) yazılır ve dış hedefe onunla birlikte gider.
 - **Dış hedef:** 64 KiB'lik parçalarla ChaCha20-Poly1305; anahtar Argon2id ile türetilir. Dosyanın adı her
   parçayla birlikte doğrulanır.
 
@@ -379,16 +411,21 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 381, Windows'ta 336 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 469, Windows'ta 404 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
 Test takımının dışında QEMU sürücüsü, KVM'li gerçek QEMU 10.2 üzerinde denendi: anlık görüntüler, tam ve
 artımlı yedekler, değişen blok takibi, dış kopyalar, askıya alma ve dönüş, çalışırken takma, VLAN ve hız
-sınırları, canlı konsol ve çalışan bir sanal makinenin iki sunucu arasında taşınması.
+sınırları, canlı konsol, çalışan bir sanal makinenin iki sunucu arasında taşınması, yedek işleri, işlemci
+modelleri, balon aygıtı, UEFI değişkenleriyle TPM durumunun yedeklenip geri yüklenmesi, disklerin depolar
+arasında taşınması, havuz kotaları, ek diskli, UEFI'li ve TPM'li bir konuğun iki sunucu arasında taşınması, yedekten
+yeni konuk, anında kurtarma, açarak sınama, kilit, iki dış hedefe kopya, üretim denetim noktası, iç içe
+sanallaştırma, kaynak ölçümü, sınama kapısı yönlendirmesi, kopya hedefi arşivi ve dört göz onay akışı.
 
 Gerçek bir sunucuda henüz doğrulanmayanlar: systemd birimleri ve Caddy ayarı, köprü ağı, LXC
-konteynerleri, konuk güvenlik duvarı, gerçek bir S3 sağlayıcısı, gerçek bir SMTP ya da OpenID Connect
+konteynerleri, konuk güvenlik duvarı ve ağ kartı korumasının trafik altındaki davranışı, dinamik belleğin ve
+sınama denetimlerinin gerçek bir konuk işletim sistemiyle çalışması, gerçek bir S3 sağlayıcısı, gerçek bir SMTP ya da OpenID Connect
 sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlattığı yerde ayrıca belirtir.
 
 ## Sınırlar
@@ -397,8 +434,9 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 - Çalışan sanal makineyi taşımak belleğini korur, ancak disk ve bellek kopyalanırken konuk duraklar.
   Kesintisiz bir canlı taşıma değildir.
 - Sunucular arasında kendiliğinden devralma yoktur. Çöken konuk yalnızca aynı sunucuda yeniden başlatılır.
-- LVM ya da ZFS depolama havuzları, kaynak kotaları ve konteyner klonu yoktur.
-- Konuk, oluşturulduktan sonra başka bir depolama alanına taşınamaz.
+- LVM ya da ZFS depolama havuzları yoktur.
+- Çalışan sanal makineye işlemci ve bellek eklenemez (balon belleği yalnızca düşürür ve geri verir).
+- Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
 - Canlı konsolda pano ve ses yoktur.
 - Arayüz yalnızca Türkçedir.
 

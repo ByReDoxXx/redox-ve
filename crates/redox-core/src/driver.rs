@@ -15,6 +15,15 @@ pub struct Probe {
     pub mem_used_mb: Option<u64>,
 }
 
+/// Konuğun balon sürücüsünün bildirdiği bellek durumu (MB).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BalloonStats {
+    /// Konuğun o an gördüğü toplam bellek (balon şişikse ayrılandan azdır).
+    pub total_mb: u64,
+    /// Takasa başvurmadan kullanılabilecek bellek (boş + geri alınabilir önbellek).
+    pub available_mb: u64,
+}
+
 /// Sunucu dışındaki yedek hedefi: dosyaları adlarıyla koyar, alır ve siler.
 /// Ad en çok üç bileşenlidir (`chunks/ab/<özet>` gibi) ve yalnızca güvenli karakterler içerir.
 pub trait Remote: Send + Sync {
@@ -51,6 +60,12 @@ pub trait Hypervisor: Send + Sync {
 
     /// Yedeğin sunucudaki dosyası (var olsun ya da olmasın); dosya tutmayan sürücüde `None`.
     fn backup_file(&self, _id: &str) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    /// Yedeğin yanındaki makine durumu arşivi (UEFI değişkenleri, sanal TPM); var olsun ya da olmasın.
+    /// Makine durumu yedeklemeyen sürücüde `None`.
+    fn backup_machine_file(&self, _id: &str) -> Option<std::path::PathBuf> {
         None
     }
 
@@ -94,6 +109,64 @@ pub trait Hypervisor: Send + Sync {
         true
     }
 
+    /// Anında kurtarma: konuğun disklerini, yedeğin dosyalarını arkalık alan ince katmanlar olarak kurar
+    /// (kopyalama yok; konuk hemen başlatılabilir). Yalnızca tek dosyalı (tam) yedeklerle çalışır.
+    fn instant_from_backup(&self, _guest: &Guest, _backup: &str, _disks: &[u8]) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Anında kurtarılmış konuğun disklerini yedekten bağımsızlaştırır (yedekteki veri disklere kopyalanır).
+    /// Konuk çalışırken de yapılır.
+    fn detach_backing(&self, _guest: &Guest) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Kapalı konuğun bütün disklerini `target` depolama alanına taşır. Yarıda kalırsa kaynak diskler yerinde kalır.
+    fn move_storage(&self, _guest: &Guest, _target: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Başka sunucudan indirilen disk dosyasını (qcow2) konuğun `id` numaralı ek diski yapar.
+    fn import_disk(&self, _guest: &Guest, _id: u8, _source: &std::path::Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Makine durumu arşivini (UEFI değişkenleri, sanal TPM) konuğa uygular; konuk kapalı olmalıdır.
+    fn restore_machine(&self, _guest: &Guest, _archive: &std::path::Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Sunucunun işlemci üreticisi (`intel` / `amd`); bilinmiyorsa `None`.
+    fn host_cpu_vendor(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Çalışan konuğun bellek balonunu `target_mb` hedefine ayarlar (konukta balon aygıtı olmalıdır).
+    fn set_balloon(&self, _guest: &Guest, _target_mb: u64) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Çalışan konukta konuk ajanıyla bir program çalıştırır (kabuk yok: mutlak yol ve argümanlar). Program
+    /// 0 ile bitmezse ya da ajan yoksa hata döner.
+    fn guest_run(&self, _guest: &Guest, _command: &str) -> Result<(), String> {
+        Err("bu sürücüde konuk ajanıyla komut çalıştırma yok".to_string())
+    }
+
+    /// Sunucu iç içe sanallaştırmayı destekliyor mu (KVM modülünde açık mı)?
+    fn nested_virt(&self) -> bool {
+        true
+    }
+
+    /// Çalışan konuğun disklerinden açılıştan beri (okunan, yazılan) bayt; ölçülemiyorsa `None`.
+    fn io_counters(&self, _guest: &Guest) -> Option<(u64, u64)> {
+        None
+    }
+
+    /// Çalışan konuğun balon sürücüsünden bellek ölçümü; sürücü yoksa ya da henüz bildirmediyse `None`.
+    fn balloon_stats(&self, _guest: &Guest) -> Option<BalloonStats> {
+        None
+    }
+
     /// Çalışan konuğa disk ve ağ kartı takılabiliyor mu?
     fn hotplug(&self, _kind: GuestKind) -> bool {
         false
@@ -126,6 +199,12 @@ pub trait Hypervisor: Send + Sync {
 
     /// Bütün konukların güvenlik duvarı kurallarını tek seferde (atomik) yeniden yükler.
     fn apply_firewall(&self, _guests: &[Guest]) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Ağ kartı korumalarını günceller: konukların sunucudaki arayüzleri açılıp kapandıkça değişir. Kurallar
+    /// yalnızca değiştiyse yeniden yüklenir; düzenli aralıkla çağrılır.
+    fn refresh_guards(&self, _guests: &[Guest]) -> Result<(), String> {
         Ok(())
     }
 
@@ -198,6 +277,18 @@ pub trait Hypervisor: Send + Sync {
     /// Anlık görüntü ve yedek, konuk çalışırken de alınabiliyor mu?
     fn live_disk_ops(&self, _kind: GuestKind) -> bool {
         false
+    }
+
+    /// Üretim denetim noktası: çalışan konuğun yalnızca disklerinin, bellek durumu olmadan alınan anlık görüntüsü.
+    /// Konuk ajanı varsa dosya sistemleri dondurulur; dönen değer dondurmanın yapılıp yapılmadığıdır.
+    fn snapshot_disk_only(&self, _guest: &Guest, _name: &str) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    /// Yedek, konuk çalışırken de alınabiliyor mu? Varsayılan: anlık görüntüyle aynı.
+    /// (Konteynerde anlık görüntü kapalıyken alınır ama yedek, konteyner dondurularak çalışırken de alınır.)
+    fn live_backup(&self, kind: GuestKind) -> bool {
+        self.live_disk_ops(kind)
     }
 
     /// Disk üzerinde anlık görüntü işlemi. `live_disk_ops` yoksa konuk durdurulmuş olmalıdır.

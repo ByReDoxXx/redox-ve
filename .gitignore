@@ -8,3 +8,4 @@ redox-users.json
 # Tasarım çalışma dosyaları; yalnızca yazı logonun kaynağı depoda durur
 /design/*
 !/design/wordmark/
+graphify-out/

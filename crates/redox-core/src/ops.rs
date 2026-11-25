@@ -74,7 +74,11 @@ impl Cluster {
             || patch.disk_iops.is_some_and(|v| v != guest.hw.disk_iops)
             || patch.net_mbps.is_some_and(|v| v != guest.hw.net_mbps)
             || patch.vlan.is_some_and(|v| v != guest.hw.vlan)
-            || patch.shares.as_ref().is_some_and(|s| *s != guest.hw.shares);
+            || patch.shares.as_ref().is_some_and(|s| *s != guest.hw.shares)
+            || patch.apply_cloud_init(&mut guest.hw.clone())
+            || patch.cpu_type.as_ref().is_some_and(|c| *c != guest.hw.cpu_type)
+            || patch.balloon.is_some_and(|b| b != guest.hw.balloon)
+            || patch.nested.is_some_and(|n| n != guest.hw.nested);
         if hardware && guest.status != GuestStatus::Stopped {
             return Err(Error::RequiresStopped { vmid, what: "donanım ayarlarını değiştirmek".to_string() });
         }
@@ -112,11 +116,26 @@ impl Cluster {
         if let Some(time) = patch.backup_time.as_deref().filter(|t| !t.is_empty() && parse_time(t).is_none()) {
             return Err(Error::InvalidSpec(format!("geçersiz yedek saati \"{time}\"; SS:DD biçiminde yazın, örn. 03:30")));
         }
+        if patch.rpo_hours.is_some_and(|h| h > crate::hw::MAX_RPO_HOURS) {
+            return Err(Error::InvalidSpec(format!("yedek yaşı hedefi en fazla {} saat olabilir (0: genel ayar)", crate::hw::MAX_RPO_HOURS)));
+        }
         if patch.backup_keep.is_some_and(|k| k == 0 || k > MAX_KEEP) {
             return Err(Error::InvalidSpec(format!("saklanacak yedek sayısı 1 ile {MAX_KEEP} arasında olmalı")));
         }
-        if patch.firewall.is_some() || patch.fw_rules.is_some() || patch.firmware.is_some() || patch.secure_boot.is_some() || patch.tpm.is_some() || patch.nics.is_some() || patch.usb.is_some() || patch.pci.is_some() || patch.boot_order.is_some() || patch.boot_delay.is_some() || patch.schedules.is_some() || patch.disk_mbps.is_some() || patch.disk_iops.is_some() || patch.net_mbps.is_some() || patch.vlan.is_some() || patch.shares.is_some() || patch.bridge.is_some() {
+        if [patch.backup_weekly, patch.backup_monthly, patch.backup_yearly].iter().flatten().any(|n| *n > crate::retention::MAX_GFS) {
+            return Err(Error::InvalidSpec(format!("haftalık, aylık ve yıllık yedek sayıları en fazla {} olabilir", crate::retention::MAX_GFS)));
+        }
+        if patch.test_port.is_some() || patch.test_cmd.is_some() || patch.nested.is_some() || patch.nic_guard.is_some() || patch.firewall.is_some() || patch.fw_rules.is_some() || patch.firmware.is_some() || patch.secure_boot.is_some() || patch.tpm.is_some() || patch.nics.is_some() || patch.usb.is_some() || patch.pci.is_some() || patch.boot_order.is_some() || patch.boot_delay.is_some() || patch.schedules.is_some() || patch.disk_mbps.is_some() || patch.disk_iops.is_some() || patch.net_mbps.is_some() || patch.vlan.is_some() || patch.shares.is_some() || patch.bridge.is_some() || patch.apply_cloud_init(&mut guest.hw.clone()) || patch.cpu_type.is_some() || patch.balloon.is_some() || patch.backup_pre.is_some() || patch.backup_post.is_some() {
             let mut hw = guest.hw.clone();
+            hw.backup_pre = patch.backup_pre.clone().map(|c| c.trim().to_string()).unwrap_or(hw.backup_pre);
+            hw.backup_post = patch.backup_post.clone().map(|c| c.trim().to_string()).unwrap_or(hw.backup_post);
+            hw.cpu_type = patch.cpu_type.clone().unwrap_or(hw.cpu_type);
+            hw.balloon = patch.balloon.unwrap_or(hw.balloon);
+            hw.nic_guard = patch.nic_guard.unwrap_or(hw.nic_guard);
+            hw.nested = patch.nested.unwrap_or(hw.nested);
+            hw.test_port = patch.test_port.unwrap_or(hw.test_port);
+            hw.test_cmd = patch.test_cmd.clone().map(|c| c.trim().to_string()).unwrap_or(hw.test_cmd);
+            patch.apply_cloud_init(&mut hw);
             hw.nics = patch.nics.clone().unwrap_or(hw.nics);
             hw.usb = patch.usb.clone().unwrap_or(hw.usb);
             hw.pci = patch.pci.clone().unwrap_or(hw.pci);
@@ -139,6 +158,16 @@ impl Cluster {
             }
             if !hw.net_limit_applies(patch.bridge.as_deref().unwrap_or(&guest.bridge)) {
                 return Err(Error::InvalidSpec("ağ hız sınırı yalnızca köprüye bağlı kartlarda uygulanır; bu konuğun bütün kartları NAT'ta. Sınırı 0 yapın ya da bir kartı köprüye bağlayın".to_string()));
+            }
+        }
+        // Havuz kotası: konuk havuza giriyorsa ya da havuzdayken çekirdeği/belleği değişiyorsa denetlenir.
+        let pool_after = match &patch.pool {
+            Some(name) => Some(name.as_str()).filter(|n| !n.is_empty()),
+            None => guest.pool.as_deref(),
+        };
+        if let Some(pool) = pool_after {
+            if patch.pool.is_some() || patch.cores.is_some() || patch.memory_mb.is_some() {
+                self.pool_allows(pool, Some(vmid), patch.cores.unwrap_or(guest.cores), patch.memory_mb.unwrap_or(guest.mem_total_mb), guest.total_disk_gb())?;
             }
         }
         if let Some(tags) = &patch.tags {
@@ -208,6 +237,24 @@ impl Cluster {
         if let Some(keep) = patch.backup_keep {
             g.backup_keep = keep;
         }
+        if let Some(hours) = patch.rpo_hours {
+            g.hw.rpo_hours = hours;
+        }
+        if let Some(port) = patch.test_port {
+            g.hw.test_port = port;
+        }
+        if let Some(command) = &patch.test_cmd {
+            g.hw.test_cmd = command.trim().to_string();
+        }
+        if let Some(command) = &patch.backup_pre {
+            g.hw.backup_pre = command.trim().to_string();
+        }
+        if let Some(command) = &patch.backup_post {
+            g.hw.backup_post = command.trim().to_string();
+        }
+        g.backup_gfs.weekly = patch.backup_weekly.unwrap_or(g.backup_gfs.weekly);
+        g.backup_gfs.monthly = patch.backup_monthly.unwrap_or(g.backup_gfs.monthly);
+        g.backup_gfs.yearly = patch.backup_yearly.unwrap_or(g.backup_gfs.yearly);
         if let Some(firewall) = patch.firewall {
             g.hw.firewall = firewall;
         }
@@ -246,6 +293,30 @@ impl Cluster {
         }
         if let Some(v) = patch.restart {
             g.hw.restart = v;
+        }
+        patch.apply_cloud_init(&mut g.hw);
+        if let Some(pool) = &patch.pool {
+            g.pool = Some(pool.clone()).filter(|p| !p.is_empty());
+        }
+        if let Some(cpu) = &patch.cpu_type {
+            g.hw.cpu_type = cpu.clone();
+        }
+        if let Some(balloon) = patch.balloon {
+            g.hw.balloon = balloon;
+        }
+        if let Some(guard) = patch.nic_guard {
+            g.hw.nic_guard = guard;
+        }
+        if let Some(nested) = patch.nested {
+            g.hw.nested = nested;
+        }
+        // Balon kaldırıldıysa ya da bellek hedefin altına indiyse hedef sıfırlanır (konuk belleğin tamamını kullanır).
+        if !g.hw.balloon || g.hw.balloon_mb >= g.mem_total_mb {
+            g.hw.balloon_mb = 0;
+        }
+        // Dinamik bellek balonsuz çalışmaz; bellek alt sınırın altına indirildiyse de kapanır.
+        if !g.hw.balloon || g.hw.mem_min_mb > g.mem_total_mb {
+            g.hw.mem_min_mb = 0;
         }
         if let Some(shares) = &patch.shares {
             g.hw.shares = shares.clone();
@@ -299,9 +370,24 @@ impl Cluster {
     }
 
     pub fn add_snapshot(&mut self, vmid: VmId, name: &str, now: u64) {
+        self.add_snapshot_kind(vmid, name, now, false, false);
+    }
+
+    /// `disk_only`: bellek durumu olmadan alınmış (üretim) denetim noktası; `quiesced`: dosya sistemleri dondurulmuştu.
+    pub fn add_snapshot_kind(&mut self, vmid: VmId, name: &str, now: u64, disk_only: bool, quiesced: bool) {
         if let Ok(g) = self.guest_mut(vmid) {
-            g.snapshots.push(Snapshot { name: name.to_string(), created: now });
+            g.snapshots.push(Snapshot { name: name.to_string(), created: now, disk_only, quiesced });
         }
+    }
+
+    /// Belleksiz görüntüye, konuk çalışırken dönülemez: QEMU'nun yükleyeceği bir bellek durumu yoktur.
+    pub fn check_rollback_state(&self, vmid: VmId, name: &str) -> Result<(), Error> {
+        let g = self.guest(vmid)?;
+        let disk_only = g.snapshots.iter().any(|s| s.name == name && s.disk_only);
+        if disk_only && g.status != GuestStatus::Stopped {
+            return Err(Error::RequiresStopped { vmid, what: "bellek durumu olmayan (üretim) denetim noktasına dönmek".to_string() });
+        }
+        Ok(())
     }
 
     pub fn remove_snapshot(&mut self, vmid: VmId, name: &str) {
@@ -319,6 +405,7 @@ impl Cluster {
                 guest.disk_gb
             )));
         }
+        self.pool_allows_disk(vmid, new_gb - guest.disk_gb)?;
         let storage = self.storage_for(&guest.storage, &guest.node)?;
         let extra = new_gb - guest.disk_gb;
         if extra > storage.free_gb() {
@@ -339,6 +426,46 @@ impl Cluster {
         }
         if let Ok(g) = self.guest_mut(vmid) {
             g.disk_gb = new_gb;
+        }
+    }
+
+    /// Konuğun diskleri `target` depolama alanına taşınabilir mi? Konuk kapalı olmalıdır (`begin_op` denetler).
+    /// Şablonun bağlı klonları ve bağlı klonun kendisi disk yoluna bağlı olduğu için taşınmaz.
+    pub fn check_storage_move(&self, vmid: VmId, target: &str) -> Result<(), Error> {
+        let g = self.guest(vmid)?;
+        if g.storage == target {
+            return Err(Error::InvalidSpec(format!("konuk zaten {target} alanında")));
+        }
+        let to = self.storage_for(target, &g.node)?;
+        if !to.content.iter().any(|c| c == "disk") {
+            return Err(Error::InvalidSpec(format!("{target} alanı konuk diski tutmuyor")));
+        }
+        self.not_suspended(vmid)?;
+        if g.hw.base.is_some() {
+            return Err(Error::InvalidSpec("bağlı klon taşınamaz: diski şablonun diskine dayanır".to_string()));
+        }
+        if self.guests.iter().any(|c| c.hw.base == Some(vmid)) {
+            return Err(Error::InvalidSpec("bağlı klonları olan şablon taşınamaz: klonların diskleri bu diskin yerine bağlıdır".to_string()));
+        }
+        let needed_gb = g.total_disk_gb();
+        if needed_gb > to.free_gb() {
+            return Err(Error::InsufficientStorage { storage: target.to_string(), needed_gb, free_gb: to.free_gb() });
+        }
+        Ok(())
+    }
+
+    /// Taşıma bitti: konuğun payı eski alandan düşülür, yenisine eklenir.
+    pub fn apply_storage_move(&mut self, vmid: VmId, target: &str) {
+        let Ok(g) = self.guest(vmid) else { return };
+        let (node, from, size) = (g.node.clone(), g.storage.clone(), g.total_disk_gb());
+        if let Ok(si) = self.storage_index(&from, &node) {
+            self.storages[si].used_gb = self.storages[si].used_gb.saturating_sub(size);
+        }
+        if let Ok(si) = self.storage_index(target, &node) {
+            self.storages[si].used_gb += size;
+        }
+        if let Ok(g) = self.guest_mut(vmid) {
+            g.storage = target.to_string();
         }
     }
 
@@ -434,6 +561,10 @@ impl Cluster {
         if !valid_name(name) {
             return Err(Error::InvalidName(name.to_string()));
         }
+        // Klon kaynağın havuzunu devralır; kota doluysa klonlanmaz.
+        if let Some(pool) = &src.pool {
+            self.pool_allows(pool, None, src.cores, src.mem_total_mb, src.total_disk_gb())?;
+        }
         let si = self.storage_index(&src.storage, &src.node)?;
         let free_gb = self.storages[si].free_gb();
         let needed_gb = src.total_disk_gb();
@@ -473,6 +604,7 @@ impl Cluster {
             self.storages[si].used_gb = self.storages[si].used_gb.saturating_sub(disk_gb);
         }
         self.guests.retain(|g| g.vmid != vmid);
+        self.usage.retain(|u| u.vmid != vmid);
     }
 
     /// İçe aktarılan konuğun kaydını tamamlamak için değiştirilebilir erişim.
@@ -518,6 +650,7 @@ impl Cluster {
         if size_gb == 0 {
             return Err(Error::InvalidSpec("disk boyutu en az 1 GB olmalı".to_string()));
         }
+        self.pool_allows_disk(vmid, size_gb)?;
         if guest.hw.disks.len() >= crate::hw::MAX_EXTRA_DISKS {
             return Err(Error::InvalidSpec(format!("en fazla {} ek disk eklenebilir", crate::hw::MAX_EXTRA_DISKS)));
         }
@@ -534,6 +667,27 @@ impl Cluster {
         g.hw.disks.push(crate::hw::ExtraDisk { id, size_gb, serial: g.hw.disk_seq });
         g.hw.disks.sort_by_key(|d| d.id);
         Ok(id)
+    }
+
+    /// Başka sunucudan gelen ek diski numarası ve seri numarasıyla aynen kaydeder (taşıma). Bellek durumuyla
+    /// gelen konukta aygıtların yeri kaynaktakiyle aynı olmalıdır; bu yüzden numara yeniden verilmez.
+    pub fn add_disk_exact(&mut self, vmid: VmId, disk: &crate::hw::ExtraDisk) -> Result<(), Error> {
+        let guest = self.guest(vmid)?;
+        if !(1..=crate::hw::MAX_EXTRA_DISKS as u8).contains(&disk.id) || disk.size_gb == 0 || guest.hw.disks.iter().any(|d| d.id == disk.id) {
+            return Err(Error::InvalidSpec(format!("ek disk {} bu konuğa eklenemez (numara geçersiz ya da kullanılıyor)", disk.id)));
+        }
+        let (storage, node) = (guest.storage.clone(), guest.node.clone());
+        let si = self.storage_index(&storage, &node)?;
+        let free_gb = self.storages[si].free_gb();
+        if disk.size_gb > free_gb {
+            return Err(Error::InsufficientStorage { storage, needed_gb: disk.size_gb, free_gb });
+        }
+        self.storages[si].used_gb += disk.size_gb;
+        let g = self.guest_mut(vmid)?;
+        g.hw.disk_seq = g.hw.disk_seq.max(disk.serial);
+        g.hw.disks.push(disk.clone());
+        g.hw.disks.sort_by_key(|d| d.id);
+        Ok(())
     }
 
     /// Ek disk kaydını siler ve ayrılan yeri iade eder.
@@ -566,6 +720,69 @@ impl Cluster {
         let g = self.guest_mut(vmid)?;
         g.hw.nics.push(network.to_string());
         Ok(g.hw.nics.len() as u8)
+    }
+
+    /// Balonla hedeflenen belleği kaydeder; önceki hedefi döndürür (sürücü uygulayamazsa geri konur).
+    /// 0 ya da belleğin tamamı "balonu boşalt" demektir. Konuk çalışırken de değişir.
+    pub fn set_balloon_target(&mut self, vmid: VmId, target_mb: u64) -> Result<u64, Error> {
+        let g = self.guest(vmid)?;
+        if let Some(task) = g.lock {
+            return Err(Error::Locked { vmid, task });
+        }
+        if g.kind != GuestKind::Vm || !g.hw.balloon {
+            return Err(Error::InvalidSpec("bu konukta bellek balonu yok; önce Donanım sekmesinden açın (konuk kapalıyken)".to_string()));
+        }
+        if g.hw.mem_min_mb > 0 {
+            return Err(Error::InvalidSpec("dinamik bellek açık: hedef kendiliğinden ayarlanıyor. Elle hedef vermek için önce dinamik belleği kapatın (en az bellek 0)".to_string()));
+        }
+        let total = g.mem_total_mb;
+        if target_mb != 0 && !(crate::hw::MIN_BALLOON_MB..=total).contains(&target_mb) {
+            return Err(Error::InvalidSpec(format!("bellek hedefi {} MB ile {total} MB arasında olmalı (0: tamamı)", crate::hw::MIN_BALLOON_MB)));
+        }
+        let g = self.guest_mut(vmid)?;
+        let before = g.hw.balloon_mb;
+        g.hw.balloon_mb = if target_mb >= total { 0 } else { target_mb };
+        Ok(before)
+    }
+
+    /// Dinamik belleği açar (`min_mb` alt sınır) ya da kapatır (0). Konuk çalışırken de değişir.
+    pub fn set_dynamic_memory(&mut self, vmid: VmId, min_mb: u64) -> Result<(), Error> {
+        let g = self.guest(vmid)?;
+        if let Some(task) = g.lock {
+            return Err(Error::Locked { vmid, task });
+        }
+        if g.kind != GuestKind::Vm || !g.hw.balloon {
+            return Err(Error::InvalidSpec("bu konukta bellek balonu yok; önce Donanım sekmesinden açın (konuk kapalıyken)".to_string()));
+        }
+        let total = g.mem_total_mb;
+        if min_mb != 0 && !(crate::hw::MIN_BALLOON_MB..=total).contains(&min_mb) {
+            return Err(Error::InvalidSpec(format!("en az bellek {} MB ile {total} MB arasında olmalı (0: dinamik bellek kapalı)", crate::hw::MIN_BALLOON_MB)));
+        }
+        self.guest_mut(vmid)?.hw.mem_min_mb = min_mb;
+        Ok(())
+    }
+
+    /// Dinamik belleğin hesapladığı hedefi kaydeder (sürücü uyguladıktan sonra).
+    pub fn set_dynamic_target(&mut self, vmid: VmId, target_mb: u64) {
+        if let Ok(g) = self.guest_mut(vmid) {
+            if g.hw.mem_min_mb > 0 {
+                g.hw.balloon_mb = if target_mb >= g.mem_total_mb { 0 } else { target_mb };
+            }
+        }
+    }
+
+    /// Sınama konuğunun denetlenecek kapısına açılan sunucu tarafı kapıyı kaydeder (konuk başlatılmadan önce).
+    pub fn set_test_forward(&mut self, vmid: VmId, host_port: u16) {
+        if let Ok(g) = self.guest_mut(vmid) {
+            g.hw.test_fwd = host_port;
+        }
+    }
+
+    /// Uygulanamayan bellek hedefini eski değerine döndürür.
+    pub fn restore_balloon_target(&mut self, vmid: VmId, target_mb: u64) {
+        if let Ok(g) = self.guest_mut(vmid) {
+            g.hw.balloon_mb = target_mb;
+        }
     }
 
     /// Son eklenen ağ kartının kaydını geri alır (takılamayan kart için).
@@ -624,18 +841,112 @@ impl Cluster {
     }
 
     /// Saklama sayısını aşan otomatik yedekler (en eskiler). Elle alınan yedeklere ve
-    /// silinmiş konukların yedeklerine dokunulmaz.
-    pub fn prunable_backups(&self) -> Vec<String> {
+    /// silinmiş konukların yedeklerine dokunulmaz. Konuğun kendi zamanlamasıyla alınanlar konuğun,
+    /// bir yedek işinin aldıkları o işin saklama sayısına uyar; işi silinmiş yedekler kalır.
+    ///
+    /// "Son N"e ek olarak haftalık, aylık ve yıllık yedekler (GFS) saklanır; kilitli yedekler süresi dolana kadar
+    /// budanmaz (ama sayıya dahildir: kilit bitince fazlalıksa silinir).
+    pub fn prunable_backups(&self, now: u64) -> Vec<String> {
+        let mut doomed = Vec::new();
+        let mut prune = |group: Vec<&Backup>, keep: u32, gfs: crate::retention::Gfs| {
+            // `self.backups` en yeni başta tutulur; yine de alınma anına göre sıralanır.
+            let mut group = group;
+            group.sort_by_key(|b| std::cmp::Reverse(b.created));
+            let created: Vec<u64> = group.iter().map(|b| b.created).collect();
+            let kept = crate::retention::kept(&created, keep, gfs);
+            // Kilitli ve üzerinde anında kurtarılmış bir konuk çalışan yedekler budanmaz.
+            let in_use = |id: &str| self.guests.iter().any(|g| g.hw.instant.as_deref() == Some(id));
+            doomed.extend(group.iter().zip(kept).filter(|(b, kept)| !kept && !b.is_locked(now) && !in_use(&b.id)).map(|(b, _)| b.id.clone()));
+        };
+        for g in &self.guests {
+            prune(self.backups.iter().filter(|b| b.vmid == g.vmid && b.auto && b.job.is_none()).collect(), g.backup_keep, g.backup_gfs);
+            for j in &self.jobs {
+                prune(self.backups.iter().filter(|b| b.vmid == g.vmid && b.auto && b.job.as_deref() == Some(j.name.as_str())).collect(), j.keep, j.gfs);
+            }
+        }
+        doomed
+    }
+
+    /// Yedeği `days` gün boyunca silinemez yapar. Kilit yalnızca uzatılabilir: var olan kilit kısaltılamaz
+    /// ve kaldırılamaz (yanlışlıkla ya da kötü niyetle silmeye karşı korumanın anlamı budur).
+    pub fn lock_backup(&mut self, id: &str, days: u32, now: u64) -> Result<u64, Error> {
+        if days == 0 || days > crate::retention::MAX_LOCK_DAYS {
+            return Err(Error::InvalidSpec(format!("kilit süresi 1 ile {} gün arasında olmalı", crate::retention::MAX_LOCK_DAYS)));
+        }
+        let until = now + u64::from(days) * crate::retention::DAY_SECS;
+        let backup = self.backups.iter_mut().find(|b| b.id == id).ok_or_else(|| Error::BackupNotFound(id.to_string()))?;
+        if backup.locked_until.is_some_and(|old| old >= until) {
+            return Err(Error::InvalidSpec(format!("yedek zaten {} tarihine kadar kilitli; kilit kısaltılamaz", crate::retention::date_label(backup.locked_until.unwrap_or(0)))));
+        }
+        backup.locked_until = Some(until);
+        Ok(until)
+    }
+
+    /// Korumasız konuklar: son `max_age_days` gün içinde hiç yedeği alınmamış olanlar (şablonlar hariç).
+    /// `(kimlik, ad, son yedeğin anı)`; hiç yedeği yoksa an `None`. Kimlik sırasıyla döner.
+    ///
+    /// Konuğun kendi yedek yaşı hedefi (RPO, saat) varsa o geçerlidir; yoksa `max_age_days`. İkisi de 0 ise
+    /// konuk bu denetimin dışındadır.
+    pub fn unprotected(&self, now: u64, max_age_days: u32) -> Vec<(VmId, String, Option<u64>)> {
         self.guests
             .iter()
-            .flat_map(|g| {
-                self.backups
-                    .iter()
-                    .filter(move |b| b.vmid == g.vmid && b.auto)
-                    .skip(g.backup_keep.max(1) as usize)
-                    .map(|b| b.id.clone())
+            .filter(|g| !g.hw.template)
+            .filter_map(|g| {
+                let allowed = match g.hw.rpo_hours {
+                    0 => u64::from(max_age_days) * crate::retention::DAY_SECS,
+                    hours => u64::from(hours) * 3600,
+                };
+                if allowed == 0 {
+                    return None;
+                }
+                let limit = now.saturating_sub(allowed);
+                let last = self.backups.iter().filter(|b| b.vmid == g.vmid).map(|b| b.created).max();
+                (last.is_none_or(|ts| ts < limit)).then(|| (g.vmid, g.name.clone(), last))
             })
             .collect()
+    }
+
+    /// Konuk yedekten ayrılabilir mi (anında kurtarılmış mı)?
+    pub fn check_detach(&self, vmid: VmId) -> Result<(), Error> {
+        match self.guest(vmid)?.hw.instant {
+            Some(_) => Ok(()),
+            None => Err(Error::InvalidSpec("bu konuk bir yedeğin üzerinde çalışmıyor".to_string())),
+        }
+    }
+
+    /// Diskler bağımsızlaştı: konuk artık yedeğe dayanmıyor.
+    pub fn apply_detach(&mut self, vmid: VmId) {
+        if let Ok(g) = self.guest_mut(vmid) {
+            g.hw.instant = None;
+        }
+    }
+
+    /// Ek dış hedeflerdeki kopya sayısını kaydeder; yedek silinmişse sessizce geçer.
+    pub fn set_backup_copies(&mut self, id: &str, copies: u8) {
+        if let Some(b) = self.backups.iter_mut().find(|b| b.id == id) {
+            b.copies = copies;
+        }
+    }
+
+    /// Sınama sonucunu yedeğe yazar; yedek o arada silinmişse sessizce geçer.
+    pub fn set_backup_test(&mut self, id: &str, test: BackupTest) {
+        if let Some(b) = self.backups.iter_mut().find(|b| b.id == id) {
+            b.tested = Some(test);
+        }
+    }
+
+    /// Yedek silinebilir mi? Kilitliyse ne zamana kadar kilitli olduğunu söyleyen bir hata döner.
+    pub fn backup_deletable(&self, id: &str, now: u64) -> Result<(), Error> {
+        if let Some(user) = self.guests.iter().find(|g| g.hw.instant.as_deref() == Some(id)) {
+            return Err(Error::InvalidSpec(format!(
+                "{} {} konuğu bu yedeğin üzerinde çalışıyor (anında kurtarma); önce konuğu yedekten ayırın ya da silin",
+                user.vmid, user.name
+            )));
+        }
+        match self.backup(id)?.locked_until {
+            Some(until) if until > now => Err(Error::InvalidSpec(format!("yedek {} tarihine kadar kilitli; o güne kadar silinemez", crate::retention::date_label(until)))),
+            _ => Ok(()),
+        }
     }
 
     pub fn backup(&self, id: &str) -> Result<&Backup, Error> {
@@ -647,7 +958,12 @@ impl Cluster {
     }
 
     /// Yedeği kaydeder (en yeni başta).
-    pub fn add_backup(&mut self, backup: Backup) {
+    pub fn add_backup(&mut self, mut backup: Backup) {
+        // Artımlı yedekte değişen veri önceki yedeklere göre olağan dışıysa yedek işaretlenir.
+        if let (None, Some(new_mb)) = (&backup.suspicious, backup.new_mb) {
+            let history: Vec<u64> = self.backups.iter().filter(|b| b.vmid == backup.vmid).filter_map(|b| b.new_mb).take(7).collect();
+            backup.suspicious = crate::retention::change_anomaly(&history, new_mb, backup.size_mb);
+        }
         self.backups.insert(0, backup);
     }
 
@@ -663,6 +979,33 @@ impl Cluster {
     pub fn remove_backup(&mut self, id: &str) -> Result<Backup, Error> {
         let at = self.backups.iter().position(|b| b.id == id).ok_or_else(|| Error::BackupNotFound(id.to_string()))?;
         Ok(self.backups.remove(at))
+    }
+
+    /// Yerelde silinen yedeği arşive alır: dosyaları kopya hedefinde durmaya devam eder.
+    pub fn archive_backup(&mut self, backup: Backup) {
+        self.archive.retain(|b| b.id != backup.id);
+        self.archive.push(backup);
+        self.archive.sort_by_key(|b| std::cmp::Reverse(b.created));
+    }
+
+    /// Arşivdeki yedeği yeniden yedek listesine alır. Dosyaları yerelde yoktur: geri yüklenirken kopya
+    /// hedefinden iner. Kayıt "elle alınmış" sayılır (otomatik budama onu yeniden silmesin) ve asıl dış
+    /// hedefte kopyası olmadığı işaretlenir (orada silinmişti).
+    pub fn unarchive_backup(&mut self, id: &str) -> Result<(), Error> {
+        let at = self.archive.iter().position(|b| b.id == id).ok_or_else(|| Error::BackupNotFound(id.to_string()))?;
+        if self.backups.iter().any(|b| b.id == id) {
+            return Err(Error::InvalidSpec(format!("{id} zaten yedek listesinde")));
+        }
+        let mut backup = self.archive.remove(at);
+        (backup.auto, backup.offsite, backup.job, backup.locked_until) = (false, false, None, None);
+        let pos = self.backups.iter().position(|b| b.created <= backup.created).unwrap_or(self.backups.len());
+        self.backups.insert(pos, backup);
+        Ok(())
+    }
+
+    /// Saklama süresi dolan arşiv kaydını düşürür.
+    pub fn drop_archived(&mut self, id: &str) {
+        self.archive.retain(|b| b.id != id);
     }
 
     /// Geri yüklemede yerine konacak ek diskler: yedekte bulunan ve konuğa hâlâ takılı olanlar.
@@ -974,7 +1317,7 @@ mod tests {
     #[test]
     fn backup_registry() {
         let mut c = cluster();
-        let b = |id: &str, vmid| Backup { id: id.into(), vmid, guest_name: "x".into(), created: NOW, size_mb: 5, auto: false, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false };
+        let b = |id: &str, vmid| Backup { id: id.into(), vmid, guest_name: "x".into(), created: NOW, size_mb: 5, auto: false, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 };
         c.add_backup(b("vm-103-1", 103));
         c.add_backup(b("vm-100-1", 100));
         c.add_backup(b("vm-103-2", 103));
@@ -1024,7 +1367,7 @@ mod tests {
         let disk = |id, size_gb| ExtraDisk { id, size_gb, serial: id as u64 };
         let with = |c: &mut Cluster, disks: Vec<ExtraDisk>| c.guest_mut_for_import(103).unwrap().hw.disks = disks;
         with(&mut c, vec![disk(1, 10), disk(2, 20)]);
-        c.add_backup(Backup { id: "b".into(), vmid: 103, guest_name: "x".into(), created: NOW, size_mb: 1, auto: false, offsite: false, new_mb: None, disks: vec![disk(1, 10), disk(2, 20)], disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false });
+        c.add_backup(Backup { id: "b".into(), vmid: 103, guest_name: "x".into(), created: NOW, size_mb: 1, auto: false, offsite: false, new_mb: None, disks: vec![disk(1, 10), disk(2, 20)], disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
         assert_eq!(c.restore_disks("b").unwrap(), [1, 2]);
         // Yedekten sonra kaldırılan disk geri getirilmez; sonradan eklenen (3) listeye girmez.
         with(&mut c, vec![disk(2, 20), disk(3, 5)]);
@@ -1034,7 +1377,7 @@ mod tests {
         assert_eq!(c.restore_disks("b").unwrap(), [2]);
         // Sıra numarası tutmayan eski kayıtlar ayırt edilemez: boyut farklıysa açık hata.
         let old = |id, size_gb| ExtraDisk { id, size_gb, serial: 0 };
-        c.add_backup(Backup { id: "eski".into(), vmid: 103, guest_name: "x".into(), created: NOW, size_mb: 1, auto: false, offsite: false, new_mb: None, disks: vec![old(1, 10)], disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false });
+        c.add_backup(Backup { id: "eski".into(), vmid: 103, guest_name: "x".into(), created: NOW, size_mb: 1, auto: false, offsite: false, new_mb: None, disks: vec![old(1, 10)], disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
         with(&mut c, vec![old(1, 10)]);
         assert_eq!(c.restore_disks("eski").unwrap(), [1]);
         with(&mut c, vec![old(1, 50)]);
@@ -1131,7 +1474,7 @@ mod tests {
     fn retention_prunes_only_old_automatic_backups() {
         let mut c = cluster();
         c.update_guest(103, &GuestPatch { backup_keep: Some(2), ..patch() }, "u", NOW).unwrap();
-        let mut add = |id: &str, vmid, auto| c.add_backup(Backup { id: id.into(), vmid, guest_name: "x".into(), created: NOW, size_mb: 1, auto, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false });
+        let mut add = |id: &str, vmid, auto| c.add_backup(Backup { id: id.into(), vmid, guest_name: "x".into(), created: NOW, size_mb: 1, auto, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
         add("a1", 103, true);
         add("elle", 103, false);
         add("a2", 103, true);
@@ -1140,10 +1483,56 @@ mod tests {
         add("baska", 100, true);
         add("yetim", 999, true);
         // En yeni iki otomatik yedek (a4, a3) kalır; elle alınan, başka konuğunki ve yetim olan korunur.
-        assert_eq!(c.prunable_backups(), ["a2", "a1"]);
+        assert_eq!(c.prunable_backups(NOW), ["a2", "a1"]);
         c.remove_backup("a2").unwrap();
         c.remove_backup("a1").unwrap();
-        assert!(c.prunable_backups().is_empty());
+        assert!(c.prunable_backups(NOW).is_empty());
+    }
+
+    #[test]
+    fn gfs_and_locks_shape_what_is_pruned() {
+        use crate::retention::{Gfs, DAY_SECS};
+        let mut c = cluster();
+        c.update_guest(103, &GuestPatch { backup_keep: Some(2), backup_weekly: Some(3), ..patch() }, "u", NOW).unwrap();
+        assert_eq!(c.guest(103).unwrap().backup_gfs, Gfs { weekly: 3, monthly: 0, yearly: 0 });
+        assert!(c.update_guest(103, &GuestPatch { backup_yearly: Some(100_000), ..patch() }, "u", NOW).is_err());
+        // 30 gün boyunca her gün bir otomatik yedek (g0 en yeni).
+        for day in (0..30u64).rev() {
+            c.add_backup(Backup { id: format!("g{day}"), vmid: 103, guest_name: "x".into(), created: NOW - day * DAY_SECS, size_mb: 1, auto: true, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
+        }
+        let kept = |c: &Cluster| {
+            let doomed = c.prunable_backups(NOW);
+            c.backups.iter().filter(|b| !doomed.contains(&b.id)).map(|b| b.id.clone()).collect::<Vec<_>>()
+        };
+        let survivors = kept(&c);
+        // Son 2 yedek + yedeği olan son 3 haftanın en yenileri (en yeni hafta zaten ilk ikide).
+        assert_eq!(survivors.len(), 4, "{survivors:?}");
+        assert!(survivors.starts_with(&["g0".to_string(), "g1".to_string()]));
+        let weekly: Vec<u64> = survivors[2..].iter().map(|id| id[1..].parse().unwrap()).collect();
+        assert_eq!(weekly[1] - weekly[0], 7, "haftalık yedekler birer hafta arayla: {weekly:?}");
+        // Kilitli yedek, fazlalık olsa da süresi dolana kadar budanmaz; kilit bitince budanır.
+        assert!(c.prunable_backups(NOW).contains(&"g20".to_string()));
+        let until = c.lock_backup("g20", 10, NOW).unwrap();
+        assert_eq!(until, NOW + 10 * DAY_SECS);
+        assert!(!c.prunable_backups(NOW).contains(&"g20".to_string()));
+        assert!(c.prunable_backups(until + 1).contains(&"g20".to_string()));
+        // Kilit yalnızca uzatılır; silme kilitliyken reddedilir.
+        assert!(c.lock_backup("g20", 5, NOW).unwrap_err().to_string().contains("kısaltılamaz"));
+        assert_eq!(c.lock_backup("g20", 20, NOW).unwrap(), NOW + 20 * DAY_SECS);
+        assert!(c.lock_backup("g20", 0, NOW).is_err() && c.lock_backup("g20", 99_999, NOW).is_err() && c.lock_backup("yok", 1, NOW).is_err());
+        assert!(c.backup_deletable("g20", NOW).unwrap_err().to_string().contains("tarihine kadar kilitli"));
+        c.backup_deletable("g20", NOW + 21 * DAY_SECS).unwrap();
+        c.backup_deletable("g0", NOW).unwrap();
+        assert!(c.backup("g20").unwrap().is_locked(NOW) && !c.backup("g0").unwrap().is_locked(NOW));
+        // İşin aldığı yedekler işin kurallarına uyar.
+        c.put_job(crate::jobs::BackupJob::new("gece", "03:00", crate::hw::EVERY_DAY, Vec::new(), 1).with_retention(Gfs { weekly: 0, monthly: 2, yearly: 0 }, 0).unwrap()).unwrap();
+        for day in [0u64, 1, 40, 41, 80] {
+            c.add_backup(Backup { id: format!("j{day}"), vmid: 100, guest_name: "x".into(), created: NOW - day * DAY_SECS, size_mb: 1, auto: true, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: Some("gece".into()), machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
+        }
+        let doomed = c.prunable_backups(NOW);
+        let job_kept: Vec<&str> = c.backups.iter().filter(|b| b.job.is_some() && !doomed.contains(&b.id)).map(|b| b.id.as_str()).collect();
+        assert_eq!(job_kept.len(), 2, "en yeni yedek ve önceki ayın en yenisi: {job_kept:?}");
+        assert!(job_kept.contains(&"j0"));
     }
 
     #[test]
@@ -1291,6 +1680,283 @@ mod tests {
         assert!(c.add_nic(ct, "nat", true).is_err() && c.add_nic(paused, "nat", true).is_err());
         c.set_template(stopped, true).unwrap();
         assert!(c.add_nic(stopped, "nat", false).is_err(), "şablonun donanımı değişmez");
+    }
+
+    #[test]
+    fn guests_move_between_storages_with_their_share() {
+        use crate::model::{Storage, StorageKind};
+        let mut c = cluster();
+        let node = c.guest(103).unwrap().node.clone();
+        c.storages.push(Storage { id: "hizli".into(), node: Some(node.clone()), kind: StorageKind::Dir, content: vec!["disk".into()], used_gb: 10, total_gb: 1000 });
+        c.storages.push(Storage { id: "dar".into(), node: Some(node.clone()), kind: StorageKind::Dir, content: vec!["disk".into()], used_gb: 0, total_gb: 50 });
+        c.storages.push(Storage { id: "baska-dugum".into(), node: Some("yok".into()), kind: StorageKind::Dir, content: vec!["disk".into()], used_gb: 0, total_gb: 1000 });
+        c.add_disk(103, 20).unwrap();
+        let size = c.guest(103).unwrap().total_disk_gb();
+        let from = c.guest(103).unwrap().storage.clone();
+        let used = |c: &Cluster, id: &str| c.storages.iter().find(|s| s.id == id && s.available_on(&node)).unwrap().used_gb;
+        let before = used(&c, &from);
+
+        assert!(c.check_storage_move(103, &from).unwrap_err().to_string().contains("zaten"));
+        assert!(c.check_storage_move(103, "nfs-yedek").unwrap_err().to_string().contains("konuk diski tutmuyor"));
+        assert!(matches!(c.check_storage_move(103, "dar"), Err(Error::InsufficientStorage { .. })));
+        assert!(c.check_storage_move(103, "baska-dugum").is_err() && c.check_storage_move(103, "yok").is_err());
+        c.check_storage_move(103, "hizli").unwrap();
+        c.apply_storage_move(103, "hizli");
+        assert_eq!((c.guest(103).unwrap().storage.as_str(), used(&c, "hizli"), used(&c, &from)), ("hizli", 10 + size, before - size), "ek diskler dahil bütün pay taşınır");
+
+        // Şablon ve bağlı klon: disk yolları birbirine bağlı olduğu için taşınmaz; askıdaki konuk da taşınmaz.
+        c.set_template(103, true).unwrap();
+        let linked = c.clone_guest_as(103, "bagli", true).unwrap();
+        assert!(c.check_storage_move(103, &from).unwrap_err().to_string().contains("bağlı klonları olan şablon"));
+        assert!(c.check_storage_move(linked, &from).unwrap_err().to_string().contains("bağlı klon taşınamaz"));
+        let full = c.clone_guest_as(103, "tam", false).unwrap();
+        c.check_storage_move(full, &from).unwrap();
+        c.guest_mut_for_import(full).unwrap().hw.suspended = true;
+        assert!(c.check_storage_move(full, &from).is_err(), "askıdaki konuğun bellek durumu şimdiki diskine aittir");
+    }
+
+    #[test]
+    fn guests_without_a_recent_backup_are_unprotected() {
+        use crate::retention::DAY_SECS;
+        let mut c = cluster();
+        let all = c.guests.len();
+        assert_eq!(c.unprotected(NOW, 7).len(), all, "hiç yedeği olmayan her konuk korumasızdır");
+        let add = |c: &mut Cluster, id: &str, vmid, age_days: u64| c.add_backup(Backup { id: id.into(), vmid, guest_name: "x".into(), created: NOW - age_days * DAY_SECS, size_mb: 1, auto: false, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
+        add(&mut c, "yeni", 100, 1);
+        add(&mut c, "eski", 101, 30);
+        add(&mut c, "daha-eski", 101, 60);
+        let list = c.unprotected(NOW, 7);
+        assert!(!list.iter().any(|(vmid, _, _)| *vmid == 100), "bir gün önce yedeklenen konuk korunuyor");
+        assert_eq!(list.iter().find(|(vmid, _, _)| *vmid == 101).unwrap().2, Some(NOW - 30 * DAY_SECS), "en yeni yedeğin anı döner");
+        assert!(!c.unprotected(NOW, 45).iter().any(|(vmid, _, _)| *vmid == 101), "süre uzayınca korunuyor sayılır");
+        c.set_template(103, true).unwrap();
+        assert!(!c.unprotected(NOW, 7).iter().any(|(vmid, _, _)| *vmid == 103), "şablonlar sayılmaz");
+    }
+
+    #[test]
+    fn archived_backups_return_as_manual_backups() {
+        let mut c = cluster();
+        let b = |id: &str, created| Backup { id: id.into(), vmid: 103, guest_name: "x".into(), created, size_mb: 5, auto: true, offsite: true, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: true, job: Some("gece".into()), machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 1 };
+        c.add_backup(b("yeni", NOW));
+        c.archive_backup(b("eski", NOW - 100));
+        c.archive_backup(b("daha-eski", NOW - 200));
+        c.archive_backup(b("eski", NOW - 100));
+        assert_eq!(c.archive.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["eski", "daha-eski"], "yinelenmez, en yeni başta");
+        c.unarchive_backup("daha-eski").unwrap();
+        let back = c.backup("daha-eski").unwrap();
+        assert_eq!((back.auto, back.offsite, back.job.clone(), back.copies, back.offsite_bound), (false, false, None, 1, true));
+        assert_eq!(c.backups.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["yeni", "daha-eski"], "tarih sırası korunur");
+        assert!(matches!(c.unarchive_backup("yok"), Err(Error::BackupNotFound(_))));
+        c.drop_archived("eski");
+        assert!(c.archive.is_empty());
+    }
+
+    #[test]
+    fn boot_test_checks_are_validated_and_change_while_running() {
+        let mut c = cluster();
+        c.update_guest(100, &GuestPatch { test_port: Some(22), test_cmd: Some(" /usr/local/bin/saglik.sh --hizli ".into()), ..patch() }, "u", NOW).unwrap();
+        let hw = c.guest(100).unwrap().hw.clone();
+        assert_eq!((hw.test_port, hw.test_cmd.as_str(), hw.test_fwd), (22, "/usr/local/bin/saglik.sh --hizli", 0));
+        assert!(c.update_guest(100, &GuestPatch { test_cmd: Some("saglik.sh".into()), ..patch() }, "u", NOW).unwrap_err().to_string().contains("mutlak bir program yoluyla"));
+        let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct).unwrap().vmid;
+        assert!(c.update_guest(ct, &GuestPatch { test_port: Some(22), ..patch() }, "u", NOW).is_err());
+        c.set_test_forward(100, 40123);
+        assert_eq!(c.guest(100).unwrap().hw.test_fwd, 40123);
+        c.update_guest(100, &GuestPatch { test_port: Some(0), test_cmd: Some(String::new()), ..patch() }, "u", NOW).unwrap();
+    }
+
+    #[test]
+    fn rpo_overrides_the_general_backup_age_and_anomalies_are_flagged() {
+        use crate::retention::DAY_SECS;
+        let mut c = cluster();
+        let total = c.guests.iter().filter(|g| !g.hw.template).count();
+        assert_eq!(c.unprotected(NOW, 0).len(), 0, "genel ayar kapalı, hedefi olan konuk yok");
+        // 100'ün hedefi 4 saat: genel ayar kapalıyken de denetlenir.
+        c.update_guest(100, &GuestPatch { rpo_hours: Some(4), ..patch() }, "u", NOW).unwrap();
+        assert_eq!(c.unprotected(NOW, 0).iter().map(|u| u.0).collect::<Vec<_>>(), [100]);
+        assert!(c.update_guest(100, &GuestPatch { rpo_hours: Some(9000), ..patch() }, "u", NOW).is_err());
+        let add = |c: &mut Cluster, id: &str, vmid, age_secs: u64, new_mb: Option<u64>| {
+            c.add_backup(Backup { id: id.into(), vmid, guest_name: "x".into(), created: NOW - age_secs, size_mb: 20_000, auto: false, offsite: false, new_mb, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
+        };
+        // 5 saatlik yedek 4 saatlik hedefi kaçırır, 7 günlük genel ayarı kaçırmaz.
+        add(&mut c, "a", 100, 5 * 3600, None);
+        add(&mut c, "b", 103, 5 * 3600, None);
+        assert!(c.unprotected(NOW, 7).iter().any(|u| u.0 == 100) && !c.unprotected(NOW, 7).iter().any(|u| u.0 == 103));
+        assert_eq!(c.unprotected(NOW, 7).len(), total - 1);
+        add(&mut c, "c", 100, 3600, None);
+        assert!(!c.unprotected(NOW, 0).iter().any(|u| u.0 == 100));
+
+        // Olağan dışı değişim: üç olağan artımlı yedekten sonra diskin yarısı değişir.
+        for (i, mb) in [100u64, 140, 90].iter().enumerate() {
+            add(&mut c, &format!("n{i}"), 103, 4000 - i as u64 * DAY_SECS / 100, Some(*mb));
+        }
+        assert!(c.backups.iter().all(|b| b.suspicious.is_none()));
+        add(&mut c, "sifreli", 103, 10, Some(10_000));
+        let flagged = c.backups.iter().find(|b| b.id == "sifreli").unwrap();
+        assert!(flagged.suspicious.as_deref().is_some_and(|n| n.contains("fidye yazılımı")), "{:?}", flagged.suspicious);
+        add(&mut c, "baska", 100, 5, Some(10_000));
+        assert!(c.backups[0].suspicious.is_none(), "başka konuğun geçmişi sayılmaz");
+    }
+
+    #[test]
+    fn nested_virtualization_is_a_hardware_change() {
+        let mut c = cluster();
+        let on = GuestPatch { nested: Some(true), ..patch() };
+        assert!(matches!(c.update_guest(100, &on, "u", NOW), Err(Error::RequiresStopped { .. })), "çalışan konukta değişmez");
+        c.update_guest(103, &on, "u", NOW).unwrap();
+        assert!(c.guest(103).unwrap().hw.nested);
+        assert!(c.update_guest(103, &GuestPatch { cpu_type: Some("qemu64".into()), ..patch() }, "u", NOW).is_err(), "uzantıyı taşıyamayan model reddedilir");
+        c.update_guest(103, &GuestPatch { cpu_type: Some("qemu64".into()), nested: Some(false), ..patch() }, "u", NOW).unwrap();
+    }
+
+    #[test]
+    fn nic_guard_is_a_vm_option_that_changes_while_running() {
+        let mut c = cluster();
+        // 100 çalışıyor: koruma donanım değişikliği değildir, kapatmadan açılır.
+        c.update_guest(100, &GuestPatch { nic_guard: Some(true), ..patch() }, "u", NOW).unwrap();
+        assert!(c.guest(100).unwrap().hw.nic_guard);
+        c.update_guest(100, &GuestPatch { nic_guard: Some(false), ..patch() }, "u", NOW).unwrap();
+        assert!(!c.guest(100).unwrap().hw.nic_guard);
+        let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct).unwrap().vmid;
+        assert!(c.update_guest(ct, &GuestPatch { nic_guard: Some(true), ..patch() }, "u", NOW).unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
+    }
+
+    #[test]
+    fn dynamic_memory_needs_a_balloon_and_sane_bounds() {
+        let mut c = cluster();
+        assert!(c.set_dynamic_memory(103, 1024).unwrap_err().to_string().contains("bellek balonu yok"));
+        c.update_guest(103, &GuestPatch { balloon: Some(true), ..patch() }, "u", NOW).unwrap();
+        let total = c.guest(103).unwrap().mem_total_mb;
+        assert!(c.set_dynamic_memory(103, 100).is_err() && c.set_dynamic_memory(103, total + 1).is_err());
+        c.set_dynamic_memory(103, 1024).unwrap();
+        assert!(c.set_balloon_target(103, 2048).unwrap_err().to_string().contains("dinamik bellek açık"));
+        c.set_dynamic_target(103, 1536);
+        assert_eq!(c.guest(103).unwrap().hw.balloon_mb, 1536);
+        c.set_dynamic_target(103, total);
+        assert_eq!(c.guest(103).unwrap().hw.balloon_mb, 0, "tamamı 0 olarak saklanır");
+        // Kapatınca elle hedef yeniden verilebilir; kapalıyken hesaplanan hedef kaydedilmez.
+        c.set_dynamic_memory(103, 0).unwrap();
+        c.set_dynamic_target(103, 1536);
+        assert_eq!(c.guest(103).unwrap().hw.balloon_mb, 0);
+        c.set_balloon_target(103, 2048).unwrap();
+        // Balon çıkarılınca dinamik bellek de kapanır.
+        c.set_balloon_target(103, 0).unwrap();
+        c.set_dynamic_memory(103, 1024).unwrap();
+        c.update_guest(103, &GuestPatch { balloon: Some(false), ..patch() }, "u", NOW).unwrap();
+        assert_eq!(c.guest(103).unwrap().hw.mem_min_mb, 0);
+    }
+
+    #[test]
+    fn production_checkpoints_need_a_stopped_guest_to_roll_back() {
+        let mut c = cluster();
+        c.add_snapshot(100, "bellekli", NOW);
+        c.add_snapshot_kind(100, "uretim", NOW, true, true);
+        let snaps = c.guest(100).unwrap().snapshots.clone();
+        assert_eq!(snaps.iter().map(|s| (s.name.as_str(), s.disk_only, s.quiesced)).collect::<Vec<_>>(), [("bellekli", false, false), ("uretim", true, true)]);
+        // 100 çalışıyor: bellekli görüntüye dönülebilir, belleksize dönmek için kapatmak gerekir.
+        c.check_rollback_state(100, "bellekli").unwrap();
+        assert!(matches!(c.check_rollback_state(100, "uretim"), Err(Error::RequiresStopped { .. })));
+        c.add_snapshot_kind(103, "uretim", NOW, true, false);
+        c.check_rollback_state(103, "uretim").unwrap();
+        // Eski kayıtlar (alanlar yok) bellekli sayılır.
+        let old: Snapshot = serde_json::from_str(r#"{"name":"eski","created":1}"#).unwrap();
+        assert!(!old.disk_only && !old.quiesced);
+    }
+
+    #[test]
+    fn instantly_recovered_guests_pin_their_backup() {
+        let mut c = cluster();
+        c.update_guest(103, &GuestPatch { backup_keep: Some(1), ..patch() }, "u", NOW).unwrap();
+        for (i, id) in ["eski", "yeni"].iter().enumerate() {
+            c.add_backup(Backup { id: id.to_string(), vmid: 103, guest_name: "x".into(), created: NOW + i as u64, size_mb: 1, auto: true, offsite: false, new_mb: None, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 });
+        }
+        assert_eq!(c.prunable_backups(NOW), ["eski"]);
+        assert!(c.check_detach(100).unwrap_err().to_string().contains("üzerinde çalışmıyor"));
+        // 100 numaralı konuk "eski" yedeğinin üzerinde çalışıyor: yedek silinemez ve budanmaz.
+        c.guest_mut_for_import(100).unwrap().hw.instant = Some("eski".into());
+        assert!(c.backup_deletable("eski", NOW).unwrap_err().to_string().contains("bu yedeğin üzerinde çalışıyor"));
+        assert!(c.prunable_backups(NOW).is_empty());
+        c.backup_deletable("yeni", NOW).unwrap();
+        c.check_detach(100).unwrap();
+        c.apply_detach(100);
+        assert_eq!(c.guest(100).unwrap().hw.instant, None);
+        c.backup_deletable("eski", NOW).unwrap();
+        assert_eq!(c.prunable_backups(NOW), ["eski"]);
+    }
+
+    #[test]
+    fn imported_disks_keep_their_numbers_and_serials() {
+        use crate::hw::ExtraDisk;
+        let mut c = cluster();
+        let used = |c: &Cluster| c.storages.iter().map(|s| s.used_gb).sum::<u64>();
+        let before = used(&c);
+        c.add_disk_exact(103, &ExtraDisk { id: 5, size_gb: 10, serial: 9 }).unwrap();
+        c.add_disk_exact(103, &ExtraDisk { id: 2, size_gb: 4, serial: 3 }).unwrap();
+        let hw = c.guest(103).unwrap().hw.clone();
+        assert_eq!(hw.disks.iter().map(|d| (d.id, d.serial)).collect::<Vec<_>>(), [(2, 3), (5, 9)], "numara ve seri korunur, sıralı durur");
+        assert_eq!((hw.disk_seq, used(&c) - before), (9, 14), "sonraki disk çakışmayan bir seri alır; yer ayrılır");
+        assert_eq!(c.add_disk(103, 1).unwrap(), 1);
+        assert_eq!(c.guest(103).unwrap().hw.disks.iter().find(|d| d.id == 1).unwrap().serial, 10);
+        for bad in [ExtraDisk { id: 5, size_gb: 1, serial: 1 }, ExtraDisk { id: 0, size_gb: 1, serial: 1 }, ExtraDisk { id: 99, size_gb: 1, serial: 1 }, ExtraDisk { id: 3, size_gb: 0, serial: 1 }] {
+            assert!(c.add_disk_exact(103, &bad).is_err(), "{bad:?}");
+        }
+        assert!(matches!(c.add_disk_exact(103, &ExtraDisk { id: 3, size_gb: 1_000_000, serial: 1 }), Err(Error::InsufficientStorage { .. })));
+    }
+
+    #[test]
+    fn cpu_type_and_balloon_follow_hardware_rules() {
+        let mut c = cluster();
+        let set = |cpu: &str, balloon: bool| GuestPatch { cpu_type: Some(cpu.into()), balloon: Some(balloon), ..patch() };
+        assert!(matches!(c.update_guest(100, &set("Haswell", true), "u", NOW), Err(Error::RequiresStopped { .. })), "çalışan konukta değişmez");
+        c.update_guest(100, &set("", false), "u", NOW).unwrap();
+        assert!(c.update_guest(103, &set("Pentium9", false), "u", NOW).unwrap_err().to_string().contains("bilinmeyen işlemci türü"));
+        assert!(c.set_balloon_target(103, 4096).unwrap_err().to_string().contains("bellek balonu yok"));
+        c.update_guest(103, &set("Haswell", true), "u", NOW).unwrap();
+        let total = c.guest(103).unwrap().mem_total_mb;
+        assert_eq!((c.guest(103).unwrap().hw.cpu_type.as_str(), c.guest(103).unwrap().hw.balloon), ("Haswell", true));
+        // Hedef: alt sınır ile bellek arasında; 0 ya da belleğin tamamı balonu boşaltır.
+        assert_eq!(c.set_balloon_target(103, 4096).unwrap(), 0);
+        assert_eq!(c.set_balloon_target(103, 8192).unwrap(), 4096, "önceki hedef döner");
+        assert!(c.set_balloon_target(103, 100).is_err() && c.set_balloon_target(103, total + 1).is_err());
+        c.set_balloon_target(103, total).unwrap();
+        assert_eq!(c.guest(103).unwrap().hw.balloon_mb, 0);
+        c.set_balloon_target(103, 4096).unwrap();
+        c.restore_balloon_target(103, 8192);
+        assert_eq!(c.guest(103).unwrap().hw.balloon_mb, 8192);
+        // Bellek hedefin altına inerse ya da balon kaldırılırsa hedef sıfırlanır.
+        c.update_guest(103, &GuestPatch { memory_mb: Some(4096), ..patch() }, "u", NOW).unwrap();
+        assert_eq!(c.guest(103).unwrap().hw.balloon_mb, 0);
+        c.set_balloon_target(103, 2048).unwrap();
+        c.update_guest(103, &set("", false), "u", NOW).unwrap();
+        let hw = c.guest(103).unwrap().hw.clone();
+        assert_eq!((hw.cpu_type.as_str(), hw.balloon, hw.balloon_mb), ("", false, 0));
+        let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct && g.status == GuestStatus::Stopped).unwrap().vmid;
+        assert!(c.update_guest(ct, &set("Haswell", false), "u", NOW).unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
+        assert!(c.set_balloon_target(ct, 512).is_err());
+    }
+
+    #[test]
+    fn cloud_init_is_edited_on_a_stopped_vm() {
+        const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtMF0qv2yBAZ8lfmTtk1mKkZHjPl7Yj8d0Lr0oQ1X2w ali@dizustu";
+        let mut c = cluster();
+        let ci = |key: &str, ip: &str| GuestPatch { ci_user: Some("ali".into()), ci_ssh_key: Some(key.into()), ci_ip: Some(ip.into()), ci_gw: Some(String::new()), ci_dns: Some(String::new()), ..patch() };
+        assert!(matches!(c.update_guest(100, &ci(KEY, ""), "u", NOW), Err(Error::RequiresStopped { .. })), "çalışan konukta değişmez");
+        c.update_guest(103, &ci(KEY, "10.0.0.5/24"), "u", NOW).unwrap();
+        let hw = c.guest(103).unwrap().hw.clone();
+        assert_eq!((hw.ci_user.as_deref(), hw.ci_ip.as_deref(), hw.ci_gen, hw.cloud_init()), (Some("ali"), Some("10.0.0.5/24"), 1, true));
+        // Aynı değerleri yeniden kaydetmek sürümü artırmaz; başka bir ayar değişikliği de artırmaz.
+        c.update_guest(103, &ci(KEY, "10.0.0.5/24"), "u", NOW).unwrap();
+        c.update_guest(103, &GuestPatch { cores: Some(2), ..patch() }, "u", NOW).unwrap();
+        assert_eq!(c.guest(103).unwrap().hw.ci_gen, 1);
+        assert!(c.update_guest(103, &ci(KEY, "10.0.0.500/24"), "u", NOW).unwrap_err().to_string().contains("geçersiz cloud-init adresi"));
+        assert!(c.update_guest(103, &ci("ssh-rsa kisa", ""), "u", NOW).unwrap_err().to_string().contains("geçersiz SSH"));
+        assert_eq!(c.guest(103).unwrap().hw.ci_gen, 1, "reddedilen değişiklik kaydı bozmaz");
+        // Anahtarı boşaltmak cloud-init'i kapatır.
+        c.update_guest(103, &ci("", "10.0.0.5/24"), "u", NOW).unwrap();
+        let hw = c.guest(103).unwrap().hw.clone();
+        assert_eq!((hw.cloud_init(), hw.ci_user, hw.ci_ip, hw.ci_gen), (false, None, None, 2));
+        let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct && g.status == GuestStatus::Stopped).unwrap().vmid;
+        assert!(c.update_guest(ct, &ci(KEY, ""), "u", NOW).unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
     }
 
     #[test]

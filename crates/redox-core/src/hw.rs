@@ -19,8 +19,52 @@ pub struct Hardware {
     pub ci_user: Option<String>,
     /// O kullanıcıya yetkili SSH açık anahtarı. Doluysa konuğa `cidata` sürücüsü takılır.
     pub ci_ssh_key: Option<String>,
+    /// cloud-init'in birinci karta vereceği sabit IPv4 adresi (`10.0.0.5/24`); `None` ise DHCP.
+    pub ci_ip: Option<String>,
+    /// Varsayılan ağ geçidi (yalnızca sabit adresle).
+    pub ci_gw: Option<String>,
+    /// Ad sunucuları (yalnızca sabit adresle; en fazla `MAX_CI_DNS`).
+    pub ci_dns: Vec<String>,
+    /// cloud-init ayarları her değiştiğinde artar; konuğun kimliğine (`instance-id`) eklenir ki cloud-init
+    /// yeni ayarları bir sonraki açılışta yeniden uygulasın.
+    pub ci_gen: u32,
+    /// Konuk çalışırken alınan yedekten önce ve sonra konuğun içinde çalıştırılacak komutlar (konuk ajanıyla).
+    /// Örn. veritabanını tutarlı duruma getirip sonra serbest bırakmak için. Boşsa çalıştırılmaz.
+    pub backup_pre: String,
+    pub backup_post: String,
+    /// Anında kurtarma: konuğun diskleri bu yedeğin üzerine kurulu ince katmanlardır (yedek, diskin arkalığıdır).
+    /// Konuk yedekten ayrılana kadar yedek silinemez.
+    pub instant: Option<String>,
+    /// Ağdan yalıtılmış: bütün kartlar dışarıya kapalı kullanıcı kipi ağına bağlanır (yedek sınama konukları).
+    pub isolated: bool,
+    /// Konuğa gösterilen işlemci modeli; boşsa sunucunun kendi işlemcisi (`host`). Farklı işlemcili sunucular
+    /// arasında taşınacak konuklar için ortak bir model seçilir.
+    pub cpu_type: String,
+    /// İç içe sanallaştırma: konuğa sanallaştırma uzantıları (VT-x / AMD-V) gösterilir; konuk kendi sanal
+    /// makinelerini (KVM, Hyper-V, WSL2, Docker Desktop) çalıştırabilir.
+    pub nested: bool,
+    /// Bellek balonu aygıtı takılı mı? Takılıysa konuğun belleği çalışırken küçültülüp büyütülebilir.
+    pub balloon: bool,
+    /// Balonla hedeflenen bellek (MB); 0 ise konuk belleğinin tamamını kullanır.
+    pub balloon_mb: u64,
+    /// Dinamik bellek: 0'dan büyükse bellek hedefi konuğun kullanımına göre bu alt sınır ile belleğin tamamı
+    /// arasında kendiliğinden ayarlanır (balon aygıtı ve konukta balon sürücüsü gerekir).
+    pub mem_min_mb: u64,
+    /// Yedek sınamasında denetlenecek TCP kapısı (0: denetlenmez). Yedekten açılan geçici konukta bu kapıdaki
+    /// hizmetin yanıt vermesi beklenir.
+    pub test_port: u16,
+    /// Yedek sınamasında konuk ajanıyla çalıştırılacak komut (boş: çalıştırılmaz); 0 ile bitmelidir.
+    pub test_cmd: String,
+    /// Sınama konuğunda `test_port` kapısına açılan sunucu tarafı kapı (yalnızca 127.0.0.1); RedoX atar.
+    pub test_fwd: u16,
+    /// Yedek yaşı hedefi (RPO, saat): son yedeği bundan eskiyse konuk "korumasız" sayılır. 0 ise sunucunun
+    /// genel ayarı (`--backup-age-days`) geçerlidir.
+    pub rpo_hours: u32,
     /// Güvenlik duvarı açık mı? Açıksa yalnızca `fw_rules` içindeki gelen trafiğe izin verilir.
     pub firewall: bool,
+    /// Ağ kartı koruması: konuk yalnızca kendi MAC adresiyle konuşabilir (sahtecilik engeli), DHCP sunucusu
+    /// gibi davranamaz ve yönlendirici duyurusu (RA) gönderemez. Köprüye bağlı kartlarda etkilidir.
+    pub nic_guard: bool,
     pub fw_rules: Vec<FwRule>,
     /// Sanal makinenin açılış donanım yazılımı.
     pub firmware: Firmware,
@@ -185,12 +229,7 @@ impl Schedule {
 
     /// Günlerin okunur hali: `her gün`, `hafta içi`, `Pzt, Çar`.
     pub fn days_label(&self) -> String {
-        match self.days {
-            EVERY_DAY => "her gün".to_string(),
-            0b001_1111 => "hafta içi".to_string(),
-            0b110_0000 => "hafta sonu".to_string(),
-            days => (0..7).filter(|d| days & (1 << d) != 0).map(|d| DAY_NAMES[d as usize]).collect::<Vec<_>>().join(", "),
-        }
+        days_label(self.days)
     }
 
     /// Günlerin komut satırı biçimi: `1-5`, `67`, `135`.
@@ -207,6 +246,16 @@ impl std::fmt::Display for Schedule {
             write!(f, "@{}", self.days_text())?;
         }
         Ok(())
+    }
+}
+
+/// Gün maskesinin okunur hali: `her gün`, `hafta içi`, `Pzt, Çar`.
+pub fn days_label(days: u8) -> String {
+    match days {
+        EVERY_DAY => "her gün".to_string(),
+        0b001_1111 => "hafta içi".to_string(),
+        0b110_0000 => "hafta sonu".to_string(),
+        days => (0..7).filter(|d| days & (1 << d) != 0).map(|d| DAY_NAMES[d as usize]).collect::<Vec<_>>().join(", "),
     }
 }
 
@@ -422,6 +471,122 @@ pub fn valid_image_name(name: &str) -> bool {
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
 
+pub const MAX_CI_DNS: usize = 3;
+
+/// Seçilebilen işlemci modelleri (QEMU adlarıyla), eskiden yeniye. Boş değer sunucunun kendi işlemcisidir.
+pub const CPU_TYPES: [&str; 17] = [
+    "qemu64", "kvm64", "Nehalem", "Westmere", "SandyBridge", "IvyBridge", "Haswell", "Broadwell", "Skylake-Client", "Skylake-Server",
+    "Cascadelake-Server", "Icelake-Server", "EPYC", "EPYC-Rome", "EPYC-Milan", "EPYC-Genoa", "max",
+];
+
+/// Modelin üreticisi: `intel`, `amd` ya da üreticiden bağımsız modellerde (`qemu64`, `kvm64`, `max`, boş) `None`.
+pub fn cpu_vendor_of(model: &str) -> Option<&'static str> {
+    match model {
+        "" | "qemu64" | "kvm64" | "max" => None,
+        m if m.starts_with("EPYC") => Some("amd"),
+        m if CPU_TYPES.contains(&m) => Some("intel"),
+        _ => None,
+    }
+}
+
+/// `/proc/cpuinfo` içeriğinden sunucunun işlemci üreticisi.
+pub fn parse_cpu_vendor(cpuinfo: &str) -> Option<&'static str> {
+    let vendor = cpuinfo.lines().find_map(|l| l.strip_prefix("vendor_id")).and_then(|v| v.split_once(':')).map(|(_, v)| v.trim())?;
+    match vendor {
+        "GenuineIntel" => Some("intel"),
+        "AuthenticAMD" | "HygonGenuine" => Some("amd"),
+        _ => None,
+    }
+}
+
+/// QEMU'nun `-cpu` değeri. `model` çözülmüş addır (`host`, `max` ya da bir model). İç içe sanallaştırmada
+/// adı belli modellere sanallaştırma uzantısı eklenir; `host` ve `max` onu zaten taşır.
+pub fn cpu_arg(model: &str, nested: bool) -> String {
+    match cpu_vendor_of(model).filter(|_| nested) {
+        Some("amd") => format!("{model},+svm"),
+        Some(_) => format!("{model},+vmx"),
+        None => model.to_string(),
+    }
+}
+
+/// Seçilen model bu sunucunun işlemcisinde çalıştırılabilir mi? Üretici bilinmiyorsa engellenmez.
+pub fn check_cpu_vendor(model: &str, host: Option<&str>) -> Result<(), String> {
+    match (cpu_vendor_of(model), host) {
+        (Some(wanted), Some(have)) if wanted != have => Err(format!(
+            "{model} bir {} modeli, bu sunucunun işlemcisi {}: konuk eksik özelliklerle açılır ya da hiç açılmaz. Sunucunun kendi üreticisinden bir model ya da host seçin",
+            vendor_label(wanted),
+            vendor_label(have)
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn vendor_label(vendor: &str) -> &'static str {
+    if vendor == "amd" { "AMD" } else { "Intel" }
+}
+
+pub const MAX_HOOK_LEN: usize = 256;
+
+/// Yedek öncesi/sonrası komutu: boş ya da mutlak yolla başlayan, denetim karakteri içermeyen kısa bir satır.
+/// Kabuk kullanılmaz: ilk sözcük programın yolu, kalanlar argümanlarıdır (boşlukla ayrılır).
+pub fn valid_hook(command: &str) -> bool {
+    command.is_empty() || (command.len() <= MAX_HOOK_LEN && !command.chars().any(|c| c.is_control()) && (command.starts_with('/') || command.as_bytes().get(1) == Some(&b':')))
+}
+
+/// Komutu program yolu ve argümanlarına böler.
+pub fn split_hook(command: &str) -> Option<(String, Vec<String>)> {
+    let mut words = command.split_whitespace().map(str::to_string);
+    let path = words.next()?;
+    Some((path, words.collect()))
+}
+
+pub fn valid_cpu_type(name: &str) -> bool {
+    name.is_empty() || CPU_TYPES.contains(&name)
+}
+
+/// Balonla inilebilecek en küçük bellek (MB).
+pub const MIN_BALLOON_MB: u64 = 256;
+/// Yedek yaşı hedefinin üst sınırı (saat): bir yıl.
+pub const MAX_RPO_HOURS: u32 = 8760;
+
+/// Dinamik bellekte konuğun kullandığının üstüne bırakılan pay (yüzde) ve bu payın alt sınırı (MB).
+pub const DYNAMIC_BUFFER_PCT: u64 = 20;
+pub const DYNAMIC_BUFFER_MIN_MB: u64 = 256;
+/// Hedefler bu adıma yuvarlanır; daha küçük değişiklikler uygulanmaz.
+pub const DYNAMIC_STEP_MB: u64 = 64;
+
+/// Dinamik bellek için yeni balon hedefi (MB); değişiklik gerekmiyorsa `None`.
+///
+/// Hedef, konuğun kullandığı bellek + paydır; `min_mb` ile `total_mb` arasında tutulur. Büyütme hemen yapılır
+/// (konuk bellek darlığı çekmesin), küçültme ise yalnızca fark belirginse: hedef sürekli oynamasın.
+/// `current_mb` kayıtlı hedeftir (0: belleğin tamamı).
+pub fn dynamic_memory_target(total_mb: u64, min_mb: u64, current_mb: u64, stats: crate::driver::BalloonStats) -> Option<u64> {
+    if min_mb == 0 || min_mb > total_mb || stats.total_mb == 0 {
+        return None;
+    }
+    let current = if current_mb == 0 { total_mb } else { current_mb.min(total_mb) };
+    let used = stats.total_mb.saturating_sub(stats.available_mb);
+    let wanted = used + (used * DYNAMIC_BUFFER_PCT / 100).max(DYNAMIC_BUFFER_MIN_MB);
+    let wanted = wanted.div_ceil(DYNAMIC_STEP_MB) * DYNAMIC_STEP_MB;
+    let target = wanted.clamp(min_mb, total_mb);
+    if target > current {
+        return Some(target);
+    }
+    let slack = (total_mb / 20).max(2 * DYNAMIC_STEP_MB);
+    (current - target >= slack).then_some(target)
+}
+
+/// `a.b.c.d/önek` biçiminde IPv4 adresi (önek zorunlu, 1-32).
+pub fn valid_ci_address(text: &str) -> bool {
+    let Some((ip, prefix)) = text.split_once('/') else { return false };
+    valid_ipv4(ip) && prefix.len() <= 2 && prefix.bytes().all(|b| b.is_ascii_digit()) && prefix.parse::<u8>().is_ok_and(|p| (1..=32).contains(&p))
+}
+
+/// Noktalı IPv4 adresi; `0.0.0.0` kabul edilmez.
+pub fn valid_ipv4(text: &str) -> bool {
+    text.parse::<std::net::Ipv4Addr>().is_ok_and(|ip| !ip.is_unspecified()) && text.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+}
+
 /// Linux kullanıcı adı: küçük harf ya da alt çizgiyle başlar, en çok 32 karakter.
 pub fn valid_ci_user(name: &str) -> bool {
     let mut bytes = name.bytes();
@@ -505,7 +670,7 @@ impl Hardware {
         if (self.vlan > 0 || self.nics.iter().any(|n| n.contains(':'))) && kind != GuestKind::Vm {
             return Err("VLAN etiketi yalnızca sanal makinelerde kullanılır".to_string());
         }
-        let cloud = self.image.is_some() || self.ci_user.is_some() || self.ci_ssh_key.is_some();
+        let cloud = self.image.is_some() || self.ci_user.is_some() || self.ci_ssh_key.is_some() || self.ci_ip.is_some() || self.ci_gw.is_some() || !self.ci_dns.is_empty();
         let machine = self.firmware != Firmware::Bios || self.secure_boot || self.tpm || !self.usb.is_empty() || !self.pci.is_empty();
         if (cloud || machine) && kind != GuestKind::Vm {
             return Err("disk imajı, cloud-init, UEFI, TPM ve aygıt aktarımı yalnızca sanal makinelerde kullanılır".to_string());
@@ -534,6 +699,61 @@ impl Hardware {
             if self.ci_ssh_key.is_none() {
                 return Err("cloud-init kullanıcısı için SSH açık anahtarı gerekli".to_string());
             }
+        }
+        if self.nested {
+            if kind != GuestKind::Vm {
+                return Err("iç içe sanallaştırma yalnızca sanal makinelerde kullanılır".to_string());
+            }
+            if matches!(self.cpu_type.as_str(), "qemu64" | "kvm64") {
+                return Err(format!("iç içe sanallaştırma {} modeliyle kullanılamaz: sunucunun işlemcisini (host) ya da üreticiye özgü bir model seçin", self.cpu_type));
+            }
+        }
+        if self.nic_guard && kind != GuestKind::Vm {
+            return Err("ağ kartı koruması yalnızca sanal makinelerde kullanılır".to_string());
+        }
+        if (!self.cpu_type.is_empty() || self.balloon) && kind != GuestKind::Vm {
+            return Err("işlemci türü ve bellek balonu yalnızca sanal makinelerde kullanılır".to_string());
+        }
+        if self.test_port > 0 || !self.test_cmd.is_empty() {
+            if kind != GuestKind::Vm {
+                return Err("yedek sınaması denetimleri yalnızca sanal makinelerde kullanılır".to_string());
+            }
+            if !valid_hook(&self.test_cmd) {
+                return Err(format!("sınama komutu mutlak bir program yoluyla başlamalı, tek satır ve en fazla {MAX_HOOK_LEN} karakter olmalı (örn. /usr/local/bin/saglik.sh)"));
+            }
+        }
+        if !self.backup_pre.is_empty() || !self.backup_post.is_empty() {
+            if kind != GuestKind::Vm {
+                return Err("yedek öncesi ve sonrası komutları yalnızca sanal makinelerde kullanılır (konuk ajanıyla çalışır)".to_string());
+            }
+            if !valid_hook(&self.backup_pre) || !valid_hook(&self.backup_post) {
+                return Err(format!("yedek komutu mutlak bir program yoluyla başlamalı, tek satır ve en fazla {MAX_HOOK_LEN} karakter olmalı (örn. /usr/local/bin/yedek-oncesi.sh)"));
+            }
+        }
+        if !valid_cpu_type(&self.cpu_type) {
+            return Err(format!("bilinmeyen işlemci türü: {} (geçerli olanlar: host, {})", self.cpu_type, CPU_TYPES.join(", ")));
+        }
+        if let Some(ip) = &self.ci_ip {
+            if !valid_ci_address(ip) {
+                return Err(format!("geçersiz cloud-init adresi: {ip} (örn. 10.0.0.5/24)"));
+            }
+            if self.ci_ssh_key.is_none() {
+                return Err("cloud-init ağ ayarı için SSH açık anahtarı gerekli".to_string());
+            }
+        }
+        if let Some(gw) = &self.ci_gw {
+            if !valid_ipv4(gw) {
+                return Err(format!("geçersiz ağ geçidi: {gw}"));
+            }
+        }
+        if let Some(bad) = self.ci_dns.iter().find(|d| !valid_ipv4(d)) {
+            return Err(format!("geçersiz ad sunucusu: {bad}"));
+        }
+        if self.ci_dns.len() > MAX_CI_DNS {
+            return Err(format!("en fazla {MAX_CI_DNS} ad sunucusu yazılabilir"));
+        }
+        if self.ci_ip.is_none() && (self.ci_gw.is_some() || !self.ci_dns.is_empty()) {
+            return Err("ağ geçidi ve ad sunucusu yalnızca sabit adresle birlikte verilir (adres boşsa konuk DHCP kullanır)".to_string());
         }
         if let Some(key) = &self.ci_ssh_key {
             if !valid_ssh_key(key) {
@@ -564,6 +784,55 @@ impl Hardware {
         self.ci_ssh_key.is_some()
     }
 
+    /// cloud-init ayarlarını uygular (`None`: dokunma; boş metin: temizle). Anahtar boşaltılırsa cloud-init
+    /// kapanır ve öbür ayarlar da silinir. Bir şey değiştiyse `true` döner ve sürüm numarasını artırır.
+    pub fn apply_cloud_init(&mut self, user: Option<&str>, key: Option<&str>, ip: Option<&str>, gw: Option<&str>, dns: Option<&str>) -> bool {
+        let before = (self.ci_user.clone(), self.ci_ssh_key.clone(), self.ci_ip.clone(), self.ci_gw.clone(), self.ci_dns.clone());
+        let text = |v: &str| Some(v.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty());
+        if let Some(v) = user {
+            self.ci_user = text(v);
+        }
+        if let Some(v) = key {
+            self.ci_ssh_key = text(v);
+        }
+        if let Some(v) = ip {
+            self.ci_ip = text(v);
+        }
+        if let Some(v) = gw {
+            self.ci_gw = text(v);
+        }
+        if let Some(v) = dns {
+            self.ci_dns = v.split([',', ' ', '\n']).map(str::trim).filter(|d| !d.is_empty()).map(str::to_string).collect();
+        }
+        if key.is_some() && self.ci_ssh_key.is_none() {
+            (self.ci_user, self.ci_ip, self.ci_gw) = (None, None, None);
+            self.ci_dns.clear();
+        }
+        let changed = before != (self.ci_user.clone(), self.ci_ssh_key.clone(), self.ci_ip.clone(), self.ci_gw.clone(), self.ci_dns.clone());
+        if changed {
+            self.ci_gen = self.ci_gen.saturating_add(1);
+        }
+        changed
+    }
+
+    /// NoCloud `network-config` dosyası (sürüm 2); sabit adres verilmemişse `None` (konuk DHCP kullanır).
+    /// Kart, konuğun birinci kartının değişmeyen MAC adresiyle eşleştirilir.
+    pub fn network_config(&self, vmid: VmId) -> Option<String> {
+        let ip = self.ci_ip.as_deref().filter(|ip| valid_ci_address(ip))?;
+        let mut out = format!(
+            "version: 2\nethernets:\n  nic0:\n    match:\n      macaddress: \"{}\"\n    dhcp4: false\n    addresses:\n      - {ip}\n",
+            crate::model::mac_for(vmid)
+        );
+        if let Some(gw) = self.ci_gw.as_deref().filter(|gw| valid_ipv4(gw)) {
+            out.push_str(&format!("    gateway4: {gw}\n"));
+        }
+        let dns: Vec<&str> = self.ci_dns.iter().map(String::as_str).filter(|d| valid_ipv4(d)).collect();
+        if !dns.is_empty() {
+            out.push_str(&format!("    nameservers:\n      addresses: [{}]\n", dns.join(", ")));
+        }
+        Some(out)
+    }
+
     /// NoCloud `user-data` dosyası; cloud-init kullanılmıyorsa `None`.
     pub fn user_data(&self, hostname: &str) -> Option<String> {
         let key = self.ci_ssh_key.as_deref().filter(|k| valid_ssh_key(k))?;
@@ -577,8 +846,12 @@ impl Hardware {
 
 /// NoCloud `meta-data` dosyası. Kimlik değişirse cloud-init ilk kurulumu yeniden yapar;
 /// klonun kimliği farklı olduğu için kendi adını ve anahtarlarını alır.
-pub fn meta_data(vmid: VmId, hostname: &str) -> String {
-    format!("instance-id: redox-{vmid}\nlocal-hostname: {hostname}\n")
+/// `generation` (ayar sürümü) 0'dan büyükse kimliğe eklenir: ayarlar değişince cloud-init yeniden çalışır.
+pub fn meta_data(vmid: VmId, hostname: &str, generation: u32) -> String {
+    match generation {
+        0 => format!("instance-id: redox-{vmid}\nlocal-hostname: {hostname}\n"),
+        n => format!("instance-id: redox-{vmid}-{n}\nlocal-hostname: {hostname}\n"),
+    }
 }
 
 #[cfg(test)]
@@ -650,7 +923,124 @@ mod tests {
         assert!(hw(None, None, Some(KEY)).user_data("x").unwrap().contains("  - name: redox\n"));
         // Doğrulamadan kaçmış bozuk anahtar YAML'a yazılmaz.
         assert_eq!(hw(None, None, Some("ssh-ed25519 AAAA\"\nruncmd: [reboot]")).user_data("x"), None);
-        assert_eq!(meta_data(103, "web-01"), "instance-id: redox-103\nlocal-hostname: web-01\n");
+        assert_eq!(meta_data(103, "web-01", 0), "instance-id: redox-103\nlocal-hostname: web-01\n");
+        assert_eq!(meta_data(103, "web-01", 2), "instance-id: redox-103-2\nlocal-hostname: web-01\n");
+    }
+
+    #[test]
+    fn backup_hooks_are_validated_and_split() {
+        for ok in ["", "/usr/local/bin/once.sh", "/usr/bin/pg_ctl -D /var/lib/pg checkpoint", "C:\\betik\\once.cmd /sessiz"] {
+            assert!(valid_hook(ok), "{ok}");
+        }
+        for bad in ["once.sh", "sh -c reboot", "/bin/x\nrm -rf /", "; reboot"] {
+            assert!(!valid_hook(bad), "{bad:?}");
+        }
+        assert!(!valid_hook(&format!("/{}", "a".repeat(300))));
+        assert_eq!(split_hook("/usr/bin/pg_ctl  -D /veri checkpoint"), Some(("/usr/bin/pg_ctl".to_string(), vec!["-D".to_string(), "/veri".to_string(), "checkpoint".to_string()])));
+        assert_eq!(split_hook("   "), None);
+        let with = Hardware { backup_pre: "/usr/local/bin/once.sh".into(), ..Default::default() };
+        with.validate(GuestKind::Vm).unwrap();
+        assert!(with.validate(GuestKind::Ct).unwrap_err().contains("yalnızca sanal makinelerde"));
+        assert!(Hardware { backup_post: "sonra.sh".into(), ..Default::default() }.validate(GuestKind::Vm).unwrap_err().contains("mutlak bir program yoluyla"));
+    }
+
+    #[test]
+    fn nested_virtualization_adds_the_vendor_extension() {
+        assert_eq!(cpu_arg("host", true), "host");
+        assert_eq!(cpu_arg("max", true), "max");
+        assert_eq!(cpu_arg("Haswell", true), "Haswell,+vmx");
+        assert_eq!(cpu_arg("EPYC-Milan", true), "EPYC-Milan,+svm");
+        assert_eq!(cpu_arg("Haswell", false), "Haswell");
+        let hw = |cpu: &str| Hardware { cpu_type: cpu.into(), nested: true, ..Default::default() };
+        hw("").validate(GuestKind::Vm).unwrap();
+        hw("EPYC").validate(GuestKind::Vm).unwrap();
+        assert!(hw("kvm64").validate(GuestKind::Vm).unwrap_err().contains("kvm64 modeliyle kullanılamaz"));
+        assert!(hw("").validate(GuestKind::Ct).unwrap_err().contains("yalnızca sanal makinelerde"));
+    }
+
+    #[test]
+    fn dynamic_memory_follows_guest_usage_within_bounds() {
+        use crate::driver::BalloonStats;
+        let stats = |total_mb, available_mb| BalloonStats { total_mb, available_mb };
+        // 8 GB'lık konuk 1 GB kullanıyor: hedef kullanım + pay (en az 256 MB), 64'e yuvarlanır.
+        assert_eq!(dynamic_memory_target(8192, 1024, 0, stats(8192, 7168)), Some(1280));
+        // Alt sınırın altına inilmez.
+        assert_eq!(dynamic_memory_target(8192, 2048, 0, stats(8192, 7168)), Some(2048));
+        // Kullanım artınca hedef hemen büyür (pay %20: 3000 + 600 = 3600 → 3648).
+        assert_eq!(dynamic_memory_target(8192, 1024, 1280, stats(1280, 0)), Some(1536));
+        assert_eq!(dynamic_memory_target(8192, 1024, 3072, stats(3072, 72)), Some(3648));
+        // Belleğin tamamı aşılmaz.
+        assert_eq!(dynamic_memory_target(4096, 1024, 2048, stats(4096, 96)), Some(4096));
+        // Küçük farklar için küçültme yapılmaz; hedef zaten yerindeyse değişmez.
+        assert_eq!(dynamic_memory_target(8192, 1024, 1536, stats(1536, 400)), None);
+        assert_eq!(dynamic_memory_target(8192, 1024, 1280, stats(1280, 256)), None);
+        // Kapalıyken, tutarsız sınırla ya da ölçüm yokken dokunulmaz.
+        assert_eq!(dynamic_memory_target(8192, 0, 0, stats(8192, 7168)), None);
+        assert_eq!(dynamic_memory_target(1024, 2048, 0, stats(1024, 900)), None);
+        assert_eq!(dynamic_memory_target(8192, 1024, 0, stats(0, 0)), None);
+    }
+
+    #[test]
+    fn cpu_type_and_balloon_are_validated() {
+        let ok = Hardware { cpu_type: "Haswell".into(), balloon: true, ..Default::default() };
+        ok.validate(GuestKind::Vm).unwrap();
+        assert!(ok.validate(GuestKind::Ct).unwrap_err().contains("yalnızca sanal makinelerde"));
+        Hardware::default().validate(GuestKind::Ct).unwrap();
+        for bad in ["haswell", "Pentium9", "host,+vmx", "Haswell -device x"] {
+            assert!(Hardware { cpu_type: bad.into(), ..Default::default() }.validate(GuestKind::Vm).unwrap_err().contains("bilinmeyen işlemci türü"), "{bad}");
+        }
+        assert!(valid_cpu_type("") && valid_cpu_type("max") && !valid_cpu_type("host"), "host boş değerle seçilir");
+        // Üretici: başka üreticinin modeli reddedilir; bağımsız modeller ve bilinmeyen sunucu engellenmez.
+        assert_eq!((cpu_vendor_of("Haswell"), cpu_vendor_of("EPYC-Milan"), cpu_vendor_of("kvm64"), cpu_vendor_of("")), (Some("intel"), Some("amd"), None, None));
+        assert_eq!(parse_cpu_vendor("processor\t: 0\nvendor_id\t: GenuineIntel\ncpu family\t: 6\n"), Some("intel"));
+        assert_eq!((parse_cpu_vendor("vendor_id\t: AuthenticAMD\n"), parse_cpu_vendor("vendor_id\t: Baska\n"), parse_cpu_vendor("")), (Some("amd"), None, None));
+        assert!(check_cpu_vendor("EPYC", Some("intel")).unwrap_err().contains("bir AMD modeli, bu sunucunun işlemcisi Intel"));
+        assert!(check_cpu_vendor("Haswell", Some("amd")).is_err());
+        for (model, host) in [("Haswell", Some("intel")), ("EPYC", Some("amd")), ("max", Some("intel")), ("", Some("amd")), ("EPYC", None)] {
+            check_cpu_vendor(model, host).unwrap();
+        }
+    }
+
+    #[test]
+    fn cloud_init_settings_are_edited_validated_and_versioned() {
+        let mut h = Hardware::default();
+        assert!(!h.apply_cloud_init(Some(""), Some(""), Some(""), Some(""), Some("")), "boş alanlar değişiklik sayılmaz");
+        assert_eq!(h.ci_gen, 0);
+        assert!(h.apply_cloud_init(Some("ali"), Some(&format!("  {KEY}\n")), Some("10.0.0.5/24"), Some("10.0.0.1"), Some("1.1.1.1, 9.9.9.9")));
+        assert_eq!((h.ci_user.as_deref(), h.ci_ssh_key.as_deref(), h.ci_ip.as_deref(), h.ci_gw.as_deref(), h.ci_dns.len(), h.ci_gen), (Some("ali"), Some(KEY), Some("10.0.0.5/24"), Some("10.0.0.1"), 2, 1));
+        h.validate(GuestKind::Vm).unwrap();
+        assert!(!h.apply_cloud_init(Some("ali"), None, Some("10.0.0.5/24"), None, None), "aynı değerler sürümü artırmaz");
+        assert!(h.apply_cloud_init(None, None, Some("10.0.0.6/24"), None, None));
+        assert_eq!(h.ci_gen, 2);
+        assert_eq!(
+            h.network_config(103).unwrap(),
+            "version: 2\nethernets:\n  nic0:\n    match:\n      macaddress: \"52:54:00:00:00:67\"\n    dhcp4: false\n    addresses:\n      - 10.0.0.6/24\n    gateway4: 10.0.0.1\n    nameservers:\n      addresses: [1.1.1.1, 9.9.9.9]\n"
+        );
+        // Geçersiz değerler.
+        for (ip, gw, dns, want) in [
+            ("10.0.0.5", "", "", "geçersiz cloud-init adresi"),
+            ("10.0.0.5/33", "", "", "geçersiz cloud-init adresi"),
+            ("10.0.0.5/24\n    x: y", "", "", "geçersiz cloud-init adresi"),
+            ("10.0.0.5/24", "10.0.0", "", "geçersiz ağ geçidi"),
+            ("10.0.0.5/24", "", "1.1.1.1, dns.example", "geçersiz ad sunucusu"),
+            ("10.0.0.5/24", "", "1.1.1.1 2.2.2.2 3.3.3.3 4.4.4.4", "en fazla 3"),
+            ("", "10.0.0.1", "", "yalnızca sabit adresle"),
+        ] {
+            let mut bad = h.clone();
+            bad.apply_cloud_init(None, None, Some(ip), Some(gw), Some(dns));
+            assert!(bad.validate(GuestKind::Vm).unwrap_err().contains(want), "{ip} {gw} {dns}");
+        }
+        let mut no_key = Hardware::default();
+        no_key.apply_cloud_init(None, None, Some("10.0.0.5/24"), None, None);
+        assert!(no_key.validate(GuestKind::Vm).unwrap_err().contains("SSH açık anahtarı gerekli"));
+        assert!(no_key.validate(GuestKind::Ct).unwrap_err().contains("yalnızca sanal makinelerde"));
+        // Adres boşaltılınca DHCP'ye dönülür; anahtar boşaltılınca cloud-init tümüyle kapanır.
+        let mut dhcp = h.clone();
+        dhcp.apply_cloud_init(None, None, Some(""), Some(""), Some(""));
+        assert_eq!((dhcp.network_config(103), dhcp.cloud_init()), (None, true));
+        assert!(h.apply_cloud_init(None, Some(""), None, None, None));
+        assert_eq!((h.cloud_init(), h.ci_user.clone(), h.ci_ip.clone(), h.ci_dns.len(), h.ci_gen), (false, None, None, 0, 3));
+        assert_eq!(h.user_data("x"), None);
     }
 
     #[test]

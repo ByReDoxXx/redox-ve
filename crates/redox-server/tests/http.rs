@@ -740,6 +740,9 @@ impl Hypervisor for RealLike {
     fn hotplug(&self, kind: GuestKind) -> bool {
         kind == GuestKind::Vm
     }
+    fn host_cpu_vendor(&self) -> Option<&'static str> {
+        Some("intel")
+    }
     // Çalışan sanal makinenin canlı konsolu var (soketin kendisi bu testlerde açılmaz).
     fn vnc_socket(&self, g: &Guest) -> Option<std::path::PathBuf> {
         (g.kind == GuestKind::Vm && g.status == GuestStatus::Running).then(|| std::path::PathBuf::from(format!("/olmayan/{}.vnc", g.vmid)))
@@ -765,6 +768,10 @@ impl Hypervisor for RealLike {
     }
     fn probe(&self, g: &Guest) -> Option<Probe> {
         Some(Probe { status: g.status, cpu_pct: Some(37), mem_used_mb: Some(g.mem_total_mb / 2) })
+    }
+    // Konuk 1 GB kullanıyor görünür (balon sürücüsü ölçümü).
+    fn balloon_stats(&self, g: &Guest) -> Option<redox_core::BalloonStats> {
+        Some(redox_core::BalloonStats { total_mb: g.mem_total_mb, available_mb: g.mem_total_mb - 1024 })
     }
 }
 
@@ -1325,7 +1332,7 @@ async fn real_driver_forms_offer_bridges_and_templates() {
     let edit = settings(&app, "/guests/103").await;
     assert!(edit.contains(r#"<select id="bridge" form="hw" name="bridge""#) && edit.contains("Klonla"));
     let ct_edit = settings(&app, "/guests/202").await;
-    assert!(!ct_edit.contains("Klonla") && !ct_edit.contains("Büyüt"), "konteynerde disk işlemleri sunulmaz");
+    assert!(ct_edit.contains("Klonla") && !ct_edit.contains("Büyüt") && !ct_edit.contains("Şablona Çevir"), "konteynerde klon var; büyütme ve şablon yok");
 }
 
 #[tokio::test]
@@ -1427,6 +1434,15 @@ async fn live_snapshot_and_backup_follow_driver_capability() {
     assert!(post_ok(&app, "/guests/102/backups", "").await.contains("notice="));
     let c = state.snapshot();
     assert_eq!((c.guest(102).unwrap().snapshots.len(), c.backups.len(), c.guest(102).unwrap().status), (1, 1, GuestStatus::Running));
+
+    // Üretim denetim noktası: belleksiz; çalışan konukta ona dönülemez.
+    assert!(tab.contains(r#"name="production""#));
+    assert!(post_ok(&app, "/guests/102/snapshots", "name=uretim&production=1").await.contains("notice="));
+    let snaps = state.snapshot().guest(102).unwrap().snapshots.clone();
+    assert!(snaps[1].disk_only && !snaps[0].disk_only);
+    assert!(page(&app, "/guests/102?tab=goruntuler").await.contains("yalnızca disk"));
+    assert!(post_ok(&app, "/guests/102/snapshots/uretim/rollback", "").await.contains("error="), "belleksiz görüntüye dönmek için konuk kapatılır");
+    assert!(post_ok(&app, "/guests/102/snapshots/canli/rollback", "").await.contains("notice="));
 
     let backups = page(&app, "/guests/102?tab=yedekler").await;
     assert!(backups.contains("Şimdi Yedekle") && !backups.contains("Geri Yükle"), "geri yükleme çalışan konukta sunulmaz");
@@ -2083,7 +2099,7 @@ async fn page_anon(app: &Router, uri: &str) -> String {
 async fn incremental_backups_are_labelled_and_verification_is_admin_only() {
     let mut cluster = Cluster::demo(now());
     let guest_name = cluster.guest(103).unwrap().name.clone();
-    let backup = |id: &str, new_mb| redox_core::Backup { id: id.into(), vmid: 103, guest_name: guest_name.clone(), created: now(), size_mb: 900, auto: false, offsite: false, new_mb, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false };
+    let backup = |id: &str, new_mb| redox_core::Backup { id: id.into(), vmid: 103, guest_name: guest_name.clone(), created: now(), size_mb: 900, auto: false, offsite: false, new_mb, disks: Vec::new(), disk_gb: 0, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 };
     cluster.add_backup(backup("vm-103-tam", None));
     cluster.add_backup(backup("vm-103-artimli", Some(12)));
     let state = AppState::new(cluster, Box::new(RealLike), Duration::ZERO, None, Auth::new(users(), None, false, Cost::Test));
@@ -2294,12 +2310,21 @@ async fn guest_header_menu_and_suspend_notice() {
 }
 
 #[tokio::test]
-async fn real_container_offers_no_clone_tab() {
-    let (app, _) = setup_real();
+async fn real_container_clone_tab_offers_only_cloning() {
+    let (app, state) = setup_real();
+    // Gerçek konteynerde çoğaltma sekmesi yalnızca klonu sunar: şablon, bağlı klon ve OVA sanal makinelere özgüdür.
     let ct = page(&app, "/guests/202").await;
-    assert!(!ct.contains("tab=cogalt") && !ct.contains("Klonla"));
-    let forced = page(&app, "/guests/202?tab=cogalt").await;
-    assert!(forced.contains("Bu konuğun etkinliği") && !forced.contains("Şablona Çevir"), "olmayan sekme özete düşer");
+    assert!(ct.contains(r#"href="/guests/202?tab=cogalt""#) && ct.contains(">Çoğalt<") && !ct.contains("Çoğalt ve Taşı"));
+    let tab = page(&app, "/guests/202?tab=cogalt").await;
+    assert!(tab.contains("Bu konteynerin kopyası") && tab.contains(r#"action="/guests/202/clone""#), "{tab}");
+    assert!(!tab.contains("Şablona Çevir") && !tab.contains("OVA") && !tab.contains(r#"name="linked""#));
+    assert!(post_ok(&app, "/guests/202/clone", "name=ci-kopya").await.contains("notice="));
+    let c = state.snapshot();
+    let copy = c.guests.iter().find(|g| g.name == "ci-kopya").expect("klon kaydı");
+    assert_eq!((copy.kind, copy.status), (GuestKind::Ct, GuestStatus::Stopped));
+    // Çalışan konteynerde klon kapalıdır.
+    let running = page(&app, "/guests/200?tab=cogalt").await;
+    assert!(running.contains("önce konteyneri kapatın") && running.contains(r#"<button class="btn primary" type="submit" disabled>"#));
     let vm = page(&app, "/guests/103?tab=cogalt").await;
     assert!(vm.contains("Şablona Çevir") && vm.contains(r#"href="/guests/103/export""#) && vm.contains(r#"action="/guests/103/clone""#));
     // Çalışan konukta bağlantı ve düğmeler kapalıdır.
@@ -2728,4 +2753,709 @@ async fn shared_folders_are_edited_from_the_hardware_tab() {
     let (status, body) = api(&app, patch(103, json!({"shares": []}))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert!(body["error"].as_str().unwrap().contains("askıda"));
+}
+
+// ---------- Yedek işleri ----------
+
+#[tokio::test]
+async fn backup_jobs_are_managed_from_the_backups_page_and_the_api() {
+    let (app, state) = setup();
+    let empty = page(&app, "/backups").await;
+    assert!(empty.contains("Yedek işi yok") && empty.contains(r#"action="/backups/jobs""#), "boş liste ve form");
+
+    // Form: adı, saati, günleri, etiketi ve saklama sayısıyla iş eklenir.
+    let weekdays = "day=1&day=2&day=3&day=4&day=5";
+    assert!(post_ok(&app, "/backups/jobs", &format!("name=gece&time=03%3A30&{weekdays}&tags=yedekli&keep=2")).await.contains("notice="));
+    for bad in ["name=gece&time=03%3A30&tags=&keep=2", "name=Gece+Yedegi&time=03%3A30&day=1&tags=&keep=2", "name=x&time=03%3A30&day=1&tags=&keep=cok", "name=x&time=25%3A00&day=1&tags=&keep=2"] {
+        assert!(post_ok(&app, "/backups/jobs", bad).await.contains("error="), "{bad}");
+    }
+    let job = state.snapshot().job("gece").unwrap().clone();
+    assert_eq!((job.time.as_str(), job.days, job.tags.as_slice(), job.keep), ("03:30", 0b001_1111, &["yedekli".to_string()][..], 2));
+
+    // Kapsam: 102 çalışıyor (simülasyon çalışan konuğu yedekleyemez), 103 ve 202 kapalı.
+    for vmid in [102, 103, 202] {
+        state.update_guest(vmid, &redox_core::GuestPatch { tags: Some(vec!["yedekli".into()]), ..Default::default() }, "admin").unwrap();
+    }
+    let listed = page(&app, "/backups").await;
+    assert!(listed.contains("hafta içi") && listed.contains("etiket: yedekli") && listed.contains("(3 konuk)") && listed.contains("son 2"), "{listed}");
+    assert!(listed.contains(r#"action="/backups/jobs/gece/run""#) && listed.contains(r#"action="/backups/jobs/gece/delete""#));
+
+    // Zamanlayıcı: saati gelince tur başlar, konuklar tek tek yedeklenir; alınamayan günlüğe yazılır, tur sürer.
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 200), 0, "saati gelmedi");
+    assert!(!state.snapshot().job("gece").unwrap().active());
+    assert_eq!(state.jobs_tick("2026-11-28", 5, 300), 0, "cumartesi çalışmaz");
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 215), 0, "ilk konuk (102) çalışıyor: yedeği alınamaz");
+    assert!(state.snapshot().job("gece").unwrap().active(), "tur sürüyor");
+    assert!(page(&app, "/backups").await.contains("Sürüyor"));
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 216), 1, "103");
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 217), 1, "202");
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 218), 0);
+    let c = state.snapshot();
+    assert!(!c.job("gece").unwrap().active());
+    let mut done: Vec<_> = c.backups.iter().map(|b| (b.vmid, b.auto, b.job.as_deref())).collect();
+    done.sort();
+    assert_eq!(done, [(103, true, Some("gece")), (202, true, Some("gece"))]);
+    assert!(c.tasks.iter().any(|t| t.command.contains("backup 102 (iş: gece)") && t.user == redox_server::state::SCHEDULER), "alınamayan yedek günlükte");
+    let after = page(&app, "/backups").await;
+    assert!(after.contains(r#"<span class="tag">iş: gece</span>"#) && after.contains("son: 2026-11-25"), "{after}");
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 900), 0, "aynı gün ikinci kez başlamaz");
+
+    // Şimdi Çalıştır: günü işaretlemeden turu başlatır; kapsamı boş işte hata verir.
+    assert!(post_ok(&app, "/backups/jobs/gece/run", "").await.contains("notice="));
+    assert_eq!(state.snapshot().job("gece").unwrap().queue.len(), 3);
+    assert!(post_ok(&app, "/backups/jobs/gece/run", "").await.contains("error="), "tur sürerken yeniden başlatılamaz");
+    assert!(post_ok(&app, "/backups/jobs", &format!("name=bos&time=01%3A00&{weekdays}&tags=kimsede-yok&keep=1")).await.contains("notice="));
+    assert!(post_ok(&app, "/backups/jobs/bos/run", "").await.contains("error="));
+    assert!(post_ok(&app, "/backups/jobs/yok/delete", "").await.contains("error="));
+    assert!(post_ok(&app, "/backups/jobs/bos/delete", "").await.contains("notice="));
+
+    // API.
+    let (status, list) = api(&app, get("/api/v1/jobs")).await;
+    assert_eq!((status, list.as_array().map(Vec::len), list[0]["name"].as_str()), (StatusCode::OK, Some(1), Some("gece")));
+    let (status, _) = api(&app, post_json("/api/v1/jobs", &json!({ "name": "hepsi", "time": "01:00" }))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, v) = api(&app, post_json("/api/v1/jobs", &json!({ "name": "hepsi", "time": "01:00", "days": "9" }))).await;
+    assert_eq!((status, v["code"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("invalid_spec")), "{v}");
+    let (status, v) = api(&app, request(Method::POST, "/api/v1/jobs/hepsi/run").body(Body::empty()).unwrap()).await;
+    assert_eq!((status, v["queued"].as_u64()), (StatusCode::ACCEPTED, Some(state.snapshot().guests.len() as u64)));
+    let viewer = as_viewer(Method::POST, "/api/v1/jobs/gece/run").body(Body::empty()).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN, "izleyici iş başlatamaz");
+    let delete = || request(Method::DELETE, "/api/v1/jobs/hepsi").body(Body::empty()).unwrap();
+    assert_eq!(send(&app, delete()).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(send(&app, delete()).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn job_backups_follow_the_jobs_own_retention() {
+    let (_, state) = setup();
+    state.update_guest(103, &redox_core::GuestPatch { tags: Some(vec!["yedekli".into()]), backup_keep: Some(5), ..Default::default() }, "admin").unwrap();
+    state.job_put(redox_core::BackupJob::from_text("gece", "03:00", "", "yedekli", Some(2)).unwrap()).unwrap();
+    for day in ["2026-11-25", "2026-11-26", "2026-11-27"] {
+        assert_eq!(state.jobs_tick(day, 0, 300), 1, "{day}");
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+    }
+    let manual = state.backup_create(103, "admin").unwrap();
+    state.scheduler_tick("2026-11-27", 301);
+    let c = state.snapshot();
+    assert_eq!(c.backups.iter().filter(|b| b.job.as_deref() == Some("gece")).count(), 2, "işin saklama sayısı (2) uygulanır, konuğunki (5) değil");
+    assert!(c.backup(&manual).is_ok(), "elle alınan yedek silinmez");
+    // İş silinince aldığı yedekler kalır ve artık budanmaz.
+    state.job_remove("gece").unwrap();
+    state.scheduler_tick("2026-11-27", 302);
+    assert_eq!(state.snapshot().backups.len(), 3);
+}
+
+// ---------- cloud-init düzenleme ----------
+
+#[tokio::test]
+async fn cloud_init_is_edited_from_the_hardware_tab_and_the_api() {
+    const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtMF0qv2yBAZ8lfmTtk1mKkZHjPl7Yj8d0Lr0oQ1X2w ali@dizustu";
+    let (app, state) = setup();
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    for field in ["ci_user", "ci_ssh_key", "ci_ip", "ci_gw", "ci_dns"] {
+        assert!(tab.contains(&format!(r#"form="hw" name="{field}""#)), "{field}");
+    }
+    assert!(tab.contains("cloud-init") && tab.contains("kapalı"));
+    assert!(!page(&app, "/guests/202?tab=donanim").await.contains(r#"name="ci_ssh_key""#), "konteynerde yok");
+
+    let base = "part=donanim&cores=8&memory_mb=16384&iso=&bridge=vmbr0&forwards=&firmware=bios&nics=";
+    let key = KEY.replace(' ', "+");
+    let to = post_ok(&app, "/guests/103/edit", &format!("{base}&ci_user=ali&ci_ssh_key={key}&ci_ip=10.0.0.5%2F24&ci_gw=10.0.0.1&ci_dns=1.1.1.1%2C+9.9.9.9")).await;
+    assert!(to.contains("notice="), "{to}");
+    let hw = state.snapshot().guest(103).unwrap().hw.clone();
+    assert_eq!((hw.ci_user.as_deref(), hw.ci_ssh_key.as_deref(), hw.ci_ip.as_deref(), hw.ci_gw.as_deref(), hw.ci_dns.len(), hw.ci_gen), (Some("ali"), Some(KEY), Some("10.0.0.5/24"), Some("10.0.0.1"), 2, 1));
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains("açık · sürüm 1") && tab.contains(r#"name="ci_ip" type="text" value="10.0.0.5/24""#) && tab.contains(r#"value="1.1.1.1, 9.9.9.9""#));
+    // Aynı formu yeniden kaydetmek sürümü artırmaz; hatalı adres reddedilir ve kayıt değişmez.
+    post_ok(&app, "/guests/103/edit", &format!("{base}&ci_user=ali&ci_ssh_key={key}&ci_ip=10.0.0.5%2F24&ci_gw=10.0.0.1&ci_dns=1.1.1.1%2C+9.9.9.9")).await;
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.ci_gen, 1);
+    for bad in ["ci_ip=10.0.0.5&ci_gw=&ci_dns=", "ci_ip=10.0.0.5%2F24&ci_gw=gecit&ci_dns=", "ci_ip=&ci_gw=10.0.0.1&ci_dns="] {
+        assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&ci_user=ali&ci_ssh_key={key}&{bad}")).await.contains("error="), "{bad}");
+    }
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.ci_ip.as_deref(), Some("10.0.0.5/24"));
+    // Seçenekler sekmesinden kaydetmek cloud-init'e dokunmaz.
+    post_ok(&app, "/guests/103/edit", "part=secenekler&name=win-build&os=windows-2022&tags=&backup_time=&backup_keep=7&boot_order=0&boot_delay=0&fw_rules=").await;
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.ci_gen, 1);
+    // Çalışan konukta değişmez.
+    assert!(post_ok(&app, "/guests/102/edit", &format!("part=donanim&cores=8&memory_mb=32768&iso=&bridge=vmbr0&forwards=&firmware=bios&nics=&ci_ssh_key={key}")).await.contains("error="));
+
+    // API: adresi boşaltmak DHCP'ye döndürür, anahtarı boşaltmak cloud-init'i kapatır.
+    let patch = |body: Value| request(Method::PATCH, "/api/v1/guests/103").header(CONTENT_TYPE, "application/json").body(Body::from(body.to_string())).unwrap();
+    assert!(api(&app, patch(json!({ "ci_ip": "", "ci_gw": "", "ci_dns": "" }))).await.0.is_success());
+    let hw = state.snapshot().guest(103).unwrap().hw.clone();
+    assert_eq!((hw.ci_ip.clone(), hw.cloud_init(), hw.ci_gen), (None, true, 2));
+    let (status, v) = api(&app, patch(json!({ "ci_ip": "10.0.0.9/99" }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(api(&app, patch(json!({ "ci_ssh_key": "" }))).await.0.is_success());
+    let hw = state.snapshot().guest(103).unwrap().hw.clone();
+    assert_eq!((hw.cloud_init(), hw.ci_user.clone(), hw.ci_gen), (false, None, 3));
+}
+
+// ---------- İşlemci türü ve bellek balonu ----------
+
+#[tokio::test]
+async fn cpu_type_and_memory_balloon_are_set_from_the_hardware_tab() {
+    let (app, state) = setup();
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains(r#"<select id="cpu_type" form="hw" name="cpu_type""#) && tab.contains(r#"<option value="" selected>Sunucunun işlemcisi (host)</option>"#), "{tab}");
+    assert!(tab.contains(r#"<option value="Haswell">Haswell</option>"#) && tab.contains(r#"name="balloon" value="1""#));
+    assert!(!tab.contains("Bellek hedefi"), "balon takılı değilken hedef formu yok");
+    assert!(!page(&app, "/guests/202?tab=donanim").await.contains(r#"name="cpu_type""#), "konteynerde yok");
+
+    let base = "part=donanim&cores=8&memory_mb=16384&iso=&bridge=vmbr0&forwards=&firmware=bios&nics=";
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&cpu_type=Haswell&balloon=1")).await.contains("notice="));
+    let hw = state.snapshot().guest(103).unwrap().hw.clone();
+    assert_eq!((hw.cpu_type.as_str(), hw.balloon, hw.balloon_mb), ("Haswell", true, 0));
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&cpu_type=Pentium9&balloon=1")).await.contains("error="));
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains(r#"<option value="Haswell" selected>Haswell</option>"#) && tab.contains(r#"action="/guests/103/balloon""#) && tab.contains("tamamı (16384 MB)"));
+
+    // Bellek hedefi: sınırlar içinde kabul edilir, görev günlüğüne yazılır; 0 balonu boşaltır.
+    assert!(post_ok(&app, "/guests/103/balloon", "mb=4096").await.contains("notice="));
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.balloon_mb, 4096);
+    assert_eq!(state.snapshot().tasks[0].command, "vm balloon 103 4096");
+    assert!(page(&app, "/guests/103?tab=donanim").await.contains("4096 / 16384 MB"));
+    for bad in ["mb=100", "mb=99999", "mb=cok", "mb="] {
+        assert!(post_ok(&app, "/guests/103/balloon", bad).await.contains("error="), "{bad}");
+    }
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.balloon_mb, 4096, "reddedilen hedef kaydı değiştirmez");
+    assert!(post_ok(&app, "/guests/103/balloon", "mb=0").await.contains("notice="));
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.balloon_mb, 0);
+    // Balonu olmayan konukta ve izleyici için reddedilir; operatöre açık değildir.
+    assert!(post_ok(&app, "/guests/102/balloon", "mb=4096").await.contains("error="));
+    let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, "/guests/103/balloon"), "mb=4096")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(redox_server::operator_target("/guests/103/balloon"), None);
+
+    // API.
+    let (status, _) = api(&app, post_json("/api/v1/guests/103/balloon", &json!({ "mb": 8192 }))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.balloon_mb, 8192);
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/balloon", &json!({ "mb": 1 }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    // Başka üreticinin modeli, üreticisi bilinen sunucuda reddedilir.
+    let (real, real_state) = setup_real();
+    assert!(post_ok(&real, "/guests/103/edit", &format!("{base}&cpu_type=EPYC-Milan")).await.contains("error="));
+    assert_eq!(real_state.snapshot().guest(103).unwrap().hw.cpu_type, "");
+    assert!(post_ok(&real, "/guests/103/edit", &format!("{base}&cpu_type=Skylake-Server")).await.contains("notice="));
+    assert!(post_ok(&real, "/guests/103/edit", &format!("{base}&cpu_type=kvm64")).await.contains("notice="));
+    // Balon kaldırılınca hedef sıfırlanır; işlemci türü "host"a döner.
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&cpu_type=")).await.contains("notice="));
+    let hw = state.snapshot().guest(103).unwrap().hw.clone();
+    assert_eq!((hw.cpu_type.as_str(), hw.balloon, hw.balloon_mb), ("", false, 0));
+}
+
+// ---------- Kaynak havuzları ve kotalar ----------
+
+#[tokio::test]
+async fn resource_pools_group_guests_and_enforce_quotas() {
+    let (app, state) = setup();
+    let empty = page(&app, "/pools").await;
+    assert!(empty.contains("Havuz yok") && empty.contains(r#"<form class="inline" method="post" action="/pools">"#));
+    assert!(page(&app, "/").await.contains(r#"href="/pools""#), "sol menüde bağlantı var");
+    assert!(!empty.contains("<script"), "sayfa betiksizdir");
+
+    // Form: boş alan sınırsızdır; hatalı ad ve sayı reddedilir.
+    assert!(post_ok(&app, "/pools", "name=web&cores=12&memory_mb=&disk_gb=&guests=").await.contains("notice="));
+    for bad in ["name=B%C3%BCy%C3%BCk&cores=1", "name=x&cores=cok", "name=&cores=1"] {
+        assert!(post_ok(&app, "/pools", bad).await.contains("error="), "{bad}");
+    }
+    let pool = state.snapshot().pool("web").unwrap().clone();
+    assert_eq!((pool.cores, pool.memory_mb, pool.disk_gb, pool.guests), (12, 0, 0, 0));
+
+    // Konuk, Seçenekler sekmesinden havuza alınır (103: 8 çekirdek).
+    let options = page(&app, "/guests/103?tab=secenekler").await;
+    assert!(options.contains(r#"<select id="pool" name="pool">"#) && options.contains(r#"<option value="web">web</option>"#), "{options}");
+    let base = "part=secenekler&name=win-build&os=windows-2022&tags=&backup_time=&backup_keep=7&boot_order=0&boot_delay=0&fw_rules=";
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&pool=web")).await.contains("notice="));
+    assert_eq!(state.snapshot().guest(103).unwrap().pool.as_deref(), Some("web"));
+    assert!(page(&app, "/guests/103?tab=secenekler").await.contains(r#"<option value="web" selected>web</option>"#));
+    let listed = page(&app, "/pools").await;
+    assert!(listed.contains("8 / 12") && listed.contains("1 / sınırsız") && listed.contains(r#"style="width:66%""#), "{listed}");
+    assert!(listed.contains(r#"action="/pools/web/delete""#) && listed.contains(r#"aria-label="web havuzunu sil""#));
+
+    // Kota: 12 çekirdeklik havuza 8 çekirdekli ikinci konuk sığmaz; 103'ün çekirdeği 13'e çıkarılamaz.
+    let other = "part=secenekler&name=db-postgres&os=ubuntu-24.04&tags=&backup_time=&backup_keep=7&boot_order=0&boot_delay=0&fw_rules=";
+    let to = post_ok(&app, "/guests/102/edit", &format!("{other}&pool=web")).await;
+    assert!(to.contains("error=") && state.snapshot().guest(102).unwrap().pool.is_none(), "{to}");
+    let hardware = "part=donanim&memory_mb=16384&iso=&bridge=vmbr0&forwards=&firmware=bios&nics=";
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{hardware}&cores=13")).await.contains("error="));
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{hardware}&cores=12")).await.contains("notice="));
+    assert_eq!(state.snapshot().guest(103).unwrap().cores, 12);
+    // Dolu havuzdaki konuk klonlanamaz.
+    assert!(post_ok(&app, "/guests/103/clone", "name=kopya").await.contains("error="));
+    // Seçenekler sekmesini yeniden kaydetmek konuğu havuzda tutar; donanım sekmesi havuza dokunmaz.
+    assert_eq!(state.snapshot().guest(103).unwrap().pool.as_deref(), Some("web"));
+
+    // İçinde konuk olan havuz silinmez; kota kullanımın altına indirilemez.
+    assert!(post_ok(&app, "/pools/web/delete", "").await.contains("error="));
+    assert!(post_ok(&app, "/pools", "name=web&cores=4").await.contains("error="));
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&pool=")).await.contains("notice="));
+    assert_eq!(state.snapshot().guest(103).unwrap().pool, None);
+    assert!(post_ok(&app, "/pools/web/delete", "").await.contains("notice="));
+    assert!(post_ok(&app, "/pools/web/delete", "").await.contains("error="));
+
+    // API: liste kullanımı da verir; izleyici değiştiremez.
+    let (status, _) = api(&app, post_json("/api/v1/pools", &json!({ "name": "db", "disk_gb": 600, "guests": 2 }))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let patch = |vmid: u32, body: Value| request(Method::PATCH, &format!("/api/v1/guests/{vmid}")).header(CONTENT_TYPE, "application/json").body(Body::from(body.to_string())).unwrap();
+    assert!(api(&app, patch(102, json!({ "pool": "db" }))).await.0.is_success());
+    let (status, list) = api(&app, get("/api/v1/pools")).await;
+    assert_eq!((status, list[0]["name"].as_str(), list[0]["used"]["guests"].as_u64(), list[0]["used"]["disk_gb"].as_u64()), (StatusCode::OK, Some("db"), Some(1), Some(500)));
+    // 500 GB'lik konuk havuzdayken 200 GB'lik ikinci konuk 600 GB kotaya sığmaz.
+    let (status, v) = api(&app, patch(103, json!({ "pool": "db" }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("GB disk"), "{v}");
+    let viewer = as_viewer(Method::POST, "/api/v1/pools").header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "name": "x" }).to_string())).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN);
+    let delete = |name: &str| request(Method::DELETE, &format!("/api/v1/pools/{name}")).body(Body::empty()).unwrap();
+    assert_eq!(send(&app, delete("db")).await.0, StatusCode::UNPROCESSABLE_ENTITY, "içinde konuk var");
+    assert!(api(&app, patch(102, json!({ "pool": "" }))).await.0.is_success());
+    assert_eq!(send(&app, delete("db")).await.0, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn unbound_offsite_copies_are_marked() {
+    let (app, state) = setup();
+    let backup = |id: &str, offsite: bool, bound: bool| redox_core::Backup {
+        id: id.into(), vmid: 103, guest_name: "win-build".into(), created: now(), size_mb: 5, auto: false, offsite, new_mb: None, disks: Vec::new(), disk_gb: 200,
+        quiesced: None, cbt: false, offsite_bound: bound, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0,
+    };
+    state.mutate(|c| {
+        c.add_backup(backup("vm-103-1", true, false));
+        c.add_backup(backup("vm-103-2", true, true));
+        c.add_backup(backup("vm-103-3", false, false));
+    });
+    let all = page(&app, "/backups").await;
+    assert_eq!(all.matches("ada bağlı değil").count() - all.matches("dış kopya ada bağlı değil").count(), 1, "yalnızca eski biçimli dış kopya işaretlenir");
+    let tab = page(&app, "/guests/103?tab=yedekler").await;
+    assert_eq!(tab.matches(">dış kopya ada bağlı değil<").count(), 1, "{tab}");
+}
+
+// ---------- Depolama alanları arasında taşıma ----------
+
+#[tokio::test]
+async fn guest_disks_are_moved_to_another_storage_from_the_clone_tab() {
+    let (app, state) = setup();
+    // 103, pve-ist-02 düğümünde ve local-zfs alanında; aynı düğüme disk tutan ikinci bir alan eklenir.
+    state.mutate(|c| {
+        c.storages.push(redox_core::Storage { id: "hizli".into(), node: Some("pve-ist-02".into()), kind: redox_core::StorageKind::Dir, content: vec!["disk".into()], used_gb: 0, total_gb: 1000 });
+        c.storages.push(redox_core::Storage { id: "dar".into(), node: Some("pve-ist-02".into()), kind: redox_core::StorageKind::Dir, content: vec!["disk".into()], used_gb: 0, total_gb: 10 });
+    });
+    let tab = page(&app, "/guests/103?tab=cogalt").await;
+    assert!(tab.contains(r#"action="/guests/103/move""#) && tab.contains(r#"<option value="hizli">hizli · 1000 GB boş</option>"#), "{tab}");
+    assert!(tab.contains(r#"<option value="dar" disabled>dar · 10 GB boş</option>"#), "yeri yetmeyen alan seçilemez");
+    assert!(!tab.contains(r#"value="nfs-yedek""#) && !tab.contains(r#"value="local-lvm""#), "disk tutmayan ve başka düğümdeki alanlar sunulmaz");
+    // Çalışan konukta form kapalıdır ve istek reddedilir.
+    let running = page(&app, "/guests/102?tab=cogalt").await;
+    assert!(running.contains(r#"<select name="storage" aria-label="Hedef depolama alanı" disabled>"#));
+    assert!(post_ok(&app, "/guests/102/move", "storage=hizli").await.contains("error="));
+    for bad in ["storage=", "storage=dar", "storage=nfs-yedek", "storage=local-zfs", "storage=yok"] {
+        assert!(post_ok(&app, "/guests/103/move", bad).await.contains("error="), "{bad}");
+    }
+
+    let before = state.snapshot();
+    let used = |c: &Cluster, id: &str| c.storages.iter().find(|s| s.id == id && s.available_on("pve-ist-02")).unwrap().used_gb;
+    assert!(post_ok(&app, "/guests/103/move", "storage=hizli").await.contains("notice="));
+    let after = state.snapshot();
+    assert_eq!(after.guest(103).unwrap().storage, "hizli");
+    assert_eq!((used(&after, "hizli"), used(&before, "local-zfs") - used(&after, "local-zfs")), (200, 200));
+    assert_eq!(after.tasks[0].command, "vm move 103 hizli");
+    assert!(page(&app, "/guests/103?tab=cogalt").await.contains(r#"<option value="local-zfs">"#), "geri taşınabilir");
+
+    // API ve yetki.
+    let (status, task) = api(&app, post_json("/api/v1/guests/103/move", &json!({ "storage": "local-zfs" }))).await;
+    assert_eq!((status, task["command"].as_str()), (StatusCode::ACCEPTED, Some("vm move 103 local-zfs")));
+    assert_eq!(state.snapshot().guest(103).unwrap().storage, "local-zfs");
+    let viewer = as_viewer(Method::POST, "/api/v1/guests/103/move").header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "storage": "hizli" }).to_string())).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(redox_server::operator_target("/guests/103/move"), None, "operatöre açık değil");
+}
+
+// ---------- Yedekten yeni konuk ----------
+
+#[tokio::test]
+async fn backups_can_be_opened_as_new_guests_from_the_pages_and_the_api() {
+    let (app, state) = setup();
+    let id = state.backup_create(103, "admin").unwrap();
+    let tab = page(&app, "/guests/103?tab=yedekler").await;
+    assert!(tab.contains(&format!(r#"action="/backups/{id}/restore-new""#)) && tab.contains("Yeni konuk olarak aç"), "{tab}");
+    let all = page(&app, "/backups").await;
+    assert!(all.contains(&format!(r#"aria-label="{id} yedeğinden yeni konuk aç""#)));
+
+    let before = state.snapshot().guests.len();
+    let to = post_ok(&app, &format!("/backups/{id}/restore-new"), "").await;
+    let c = state.snapshot();
+    let copy = c.guests.iter().find(|g| g.name == "win-build-yedekten").expect("yeni konuk");
+    assert!(to.starts_with(&format!("/guests/{}?notice=", copy.vmid)), "{to}");
+    assert_eq!((c.guests.len(), copy.kind, copy.status, copy.cores), (before + 1, GuestKind::Vm, GuestStatus::Stopped, 8));
+    assert_eq!(c.tasks[0].command, format!("vm restore-new {} {id}", copy.vmid));
+    // Aynı ad ikinci kez reddedilmez (adlar tekil olmak zorunda değil) ama izleyici açamaz; konteyner yedeği açılmaz.
+    let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, &format!("/backups/{id}/restore-new")), "")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let ct = state.backup_create(202, "admin").unwrap();
+    assert!(post_ok(&app, &format!("/backups/{ct}/restore-new"), "").await.contains("error="));
+    assert!(!page(&app, "/guests/202?tab=yedekler").await.contains("Yeni konuk olarak aç"));
+    assert!(post_ok(&app, "/backups/vm-999-1/restore-new", "").await.contains("error="));
+
+    // API: ad verilir, yeni kimlik döner.
+    let (status, v) = api(&app, post_json(&format!("/api/v1/backups/{id}/restore-new"), &json!({ "name": "api-kopyasi" }))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{v}");
+    assert_eq!(state.snapshot().guest(v["vmid"].as_u64().unwrap() as u32).unwrap().name, "api-kopyasi");
+    let (status, _) = api(&app, post_json(&format!("/api/v1/backups/{id}/restore-new"), &json!({ "name": "Geçersiz Ad" }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(redox_core::restored_name("web"), "web-yedekten");
+    assert!(redox_core::restored_name(&"a".repeat(80)).len() <= 63);
+}
+
+// ---------- Dosya düzeyinde geri yükleme ----------
+
+#[tokio::test]
+async fn files_inside_a_backup_need_guestfish_and_an_admin() {
+    let (app, state) = setup_real();
+    let id = state.backup_create(103, "admin").unwrap();
+    // guestfish yokken: bağlantı sunulmaz, istek açık bir hatayla döner.
+    assert!(!page(&app, "/guests/103?tab=yedekler").await.contains("Dosyalara göz at"));
+    let listing = page(&app, &format!("/backups/{id}/files?path=/")).await;
+    assert!(listing.contains("guestfish gerekir") && listing.contains("libguestfs-tools"), "{listing}");
+    let (status, v) = api(&app, get(&format!("/api/v1/backups/{id}/files?path=/"))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    let (status, _, body) = send(&app, get(&format!("/backups/{id}/file?path=/etc/hostname"))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && body.contains("guestfish"), "{status} {body}");
+
+    // Yol denetimi ve yetki, araçtan önce gelir.
+    for bad in ["etc", "/etc/../shadow", "-a"] {
+        let (status, _) = api(&app, get(&format!("/api/v1/backups/{id}/files?path={bad}"))).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    assert_eq!(send(&app, get(&format!("/backups/{id}/file?path=/"))).await.0, StatusCode::UNPROCESSABLE_ENTITY, "kök tek dosya olarak indirilemez");
+    let viewer = |uri: String| as_viewer(Method::GET, &uri).body(Body::empty()).unwrap();
+    assert_eq!(send(&app, viewer(format!("/backups/{id}/file?path=/etc/hostname"))).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(send(&app, viewer(format!("/backups/{id}/files?path=/"))).await.0, StatusCode::NOT_FOUND, "izleyiciye sayfa gösterilmez");
+    let (status, v) = api(&app, viewer(format!("/api/v1/backups/{id}/files?path=/"))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("yalnızca yönetici"), "{v}");
+    assert_eq!(send(&app, get("/backups/vm-999-1/files?path=/")).await.0, StatusCode::NOT_FOUND);
+
+    // guestfish tanımlıyken bağlantı görünür; her erişim denetim günlüğüne yazılır.
+    state.set_guestfish(Some("/yok/guestfish".into()));
+    assert!(page(&app, "/guests/103?tab=yedekler").await.contains(&format!(r#"href="/backups/{id}/files?path=/""#)));
+    assert!(!page(&app, "/guests/202?tab=yedekler").await.contains("Dosyalara göz at"), "konteyner yedeği tar arşividir");
+    let _ = page(&app, &format!("/backups/{id}/files?path=/etc")).await;
+    let audit = format!("{:?}", state.auth().audit.recent("", 20));
+    assert!(audit.contains(&format!("backup ls {id} /etc")) && audit.contains(&format!("backup get {id} /etc/hostname")), "{audit}");
+}
+
+// ---------- GFS saklama ve değiştirilemez yedek ----------
+
+#[tokio::test]
+async fn backups_can_be_locked_and_keep_weekly_monthly_yearly_points() {
+    let (app, state) = setup();
+    // Konuğun kendi zamanlamasında haftalık/aylık/yıllık sayıları.
+    let options = page(&app, "/guests/103?tab=secenekler").await;
+    assert!(options.contains(r#"name="backup_weekly" type="text" inputmode="numeric" value="0""#) && options.contains(r#"name="backup_yearly""#));
+    let base = "part=secenekler&name=win-build&os=windows-2022&tags=&backup_time=03%3A30&backup_keep=7&boot_order=0&boot_delay=0&fw_rules=&pool=";
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&backup_weekly=4&backup_monthly=12&backup_yearly=2")).await.contains("notice="));
+    assert_eq!(state.snapshot().guest(103).unwrap().backup_gfs, redox_core::Gfs { weekly: 4, monthly: 12, yearly: 2 });
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&backup_weekly=99999")).await.contains("error="));
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&backup_weekly=x")).await.contains("error="));
+
+    // İş formu: dönem yedekleri ve kilit süresi.
+    let days = "day=1&day=2&day=3&day=4&day=5&day=6&day=7";
+    assert!(post_ok(&app, "/backups/jobs", &format!("name=gece&time=03%3A00&{days}&tags=&keep=7&weekly=4&monthly=6&yearly=&lock=14")).await.contains("notice="));
+    let job = state.snapshot().job("gece").unwrap().clone();
+    assert_eq!((job.gfs, job.lock_days), (redox_core::Gfs { weekly: 4, monthly: 6, yearly: 0 }, 14));
+    assert!(page(&app, "/backups").await.contains("son 7 · 4H 6A · kilit 14 gün"));
+    assert!(post_ok(&app, "/backups/jobs", &format!("name=x&time=03%3A00&{days}&tags=&keep=7&lock=cok")).await.contains("error="));
+
+    // İşin aldığı yedek kilitli doğar: silinemez, silme bağlantısı sunulmaz, budanmaz.
+    state.update_guest(103, &redox_core::GuestPatch { backup_time: Some(String::new()), ..Default::default() }, "admin").unwrap();
+    state.job_put(redox_core::BackupJob::from_text("tek", "01:00", "", "kilitli-is", Some(1)).unwrap().with_retention(redox_core::Gfs::default(), 14).unwrap()).unwrap();
+    state.update_guest(103, &redox_core::GuestPatch { tags: Some(vec!["kilitli-is".into()]), ..Default::default() }, "admin").unwrap();
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 100), 1);
+    let locked = state.snapshot().backups[0].clone();
+    assert_eq!(locked.locked_until, Some(locked.created + 14 * 86_400));
+    assert!(post_ok(&app, &format!("/backups/{}/delete", locked.id), "").await.contains("error="));
+    assert!(state.snapshot().backup(&locked.id).is_ok(), "kilitli yedek durur");
+    let tab = page(&app, "/guests/103?tab=yedekler").await;
+    assert!(tab.contains("kilitli: ") && tab.contains("Kilitli yedek silinemez") && !tab.contains(&format!("op=delbackup&amp;name={}", locked.id)), "{tab}");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(state.jobs_tick("2026-11-26", 3, 100), 1);
+    state.scheduler_tick("2026-11-26", 200);
+    assert_eq!(state.snapshot().backups.iter().filter(|b| b.job.as_deref() == Some("tek")).count(), 2, "saklama sayısı 1 olsa da kilitli yedek budanmaz");
+
+    // Elle kilit: panelden 30 gün, API'den istenen gün; kilit kısaltılamaz.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let manual = state.backup_create(103, "admin").unwrap();
+    assert!(post_ok(&app, &format!("/backups/{manual}/lock"), "").await.contains("notice="));
+    let until = state.snapshot().backup(&manual).unwrap().locked_until.unwrap();
+    assert!(until > now() + 29 * 86_400 && until <= now() + 30 * 86_400);
+    let (status, v) = api(&app, post_json(&format!("/api/v1/backups/{manual}/lock"), &json!({ "days": 60 }))).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert!(v["locked_until"].as_u64().unwrap() > until);
+    let (status, v) = api(&app, post_json(&format!("/api/v1/backups/{manual}/lock"), &json!({ "days": 5 }))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("kısaltılamaz"), "{v}");
+    let delete = request(Method::DELETE, &format!("/api/v1/backups/{manual}")).body(Body::empty()).unwrap();
+    let (status, v) = api(&app, delete).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("kilitli"), "{v}");
+    let viewer = as_viewer(Method::POST, &format!("/api/v1/backups/{manual}/lock")).header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "days": 1 }).to_string())).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN);
+    assert!(state.snapshot().tasks.iter().any(|t| t.command == format!("backup lock {manual} 60")));
+}
+
+// ---------- Yedeği açarak sınama ----------
+
+#[tokio::test]
+async fn backups_are_boot_tested_from_the_menu_and_the_api() {
+    let (app, state) = setup();
+    state.set_boot_test_wait(Duration::from_millis(50));
+    let id = state.backup_create(103, "admin").unwrap();
+    let tab = page(&app, "/guests/103?tab=yedekler").await;
+    assert!(tab.contains(&format!(r#"action="/backups/{id}/test""#)) && tab.contains("Açarak sına") && !tab.contains("sınandı:"));
+    let before = state.snapshot().guests.len();
+    assert!(post_ok(&app, &format!("/backups/{id}/test"), "").await.contains("notice="));
+    let c = state.snapshot();
+    let test = c.backup(&id).unwrap().tested.clone().expect("sonuç");
+    assert!(test.ok, "{}", test.note);
+    assert_eq!(c.guests.len(), before, "geçici konuk silindi");
+    assert!(c.tasks.iter().any(|t| t.command == format!("backup test {id}") && t.status == TaskStatus::Ok));
+    assert!(page(&app, "/guests/103?tab=yedekler").await.contains("sınandı: "));
+    assert!(page(&app, "/backups").await.contains("sınandı: "));
+    // Konteyner yedeği açılarak sınanmaz; izleyici başlatamaz.
+    let ct = state.backup_create(202, "admin").unwrap();
+    assert!(post_ok(&app, &format!("/backups/{ct}/test"), "").await.contains("error="));
+    assert!(!page(&app, "/guests/202?tab=yedekler").await.contains("Açarak sına"));
+    let viewer = as_viewer(Method::POST, &format!("/api/v1/backups/{id}/test")).body(Body::empty()).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN);
+    let (status, _) = api(&app, request(Method::POST, &format!("/api/v1/backups/{id}/test")).body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+}
+
+// ---------- Anında kurtarma ----------
+
+#[tokio::test]
+async fn instant_recovery_is_offered_for_full_backups_and_pins_them() {
+    let (app, state) = setup();
+    let id = state.backup_create(103, "admin").unwrap();
+    let tab = page(&app, "/guests/103?tab=yedekler").await;
+    assert!(tab.contains(&format!(r#"action="/backups/{id}/instant""#)) && tab.contains("Anında aç"));
+    let to = post_ok(&app, &format!("/backups/{id}/instant"), "").await;
+    let c = state.snapshot();
+    let new = c.guests.iter().find(|g| g.hw.instant.as_deref() == Some(id.as_str())).expect("anında açılan konuk").clone();
+    assert!(to.starts_with(&format!("/guests/{}?notice=", new.vmid)), "{to}");
+    assert!(c.tasks.iter().any(|t| t.command == format!("vm instant {} {id}", new.vmid) && t.status == TaskStatus::Ok));
+    // Yedek sabitlenir: silme reddedilir; konuğun sayfası ayırma kartını gösterir.
+    assert!(post_ok(&app, &format!("/backups/{id}/delete"), "").await.contains("error="));
+    let clone_tab = page(&app, &format!("/guests/{}?tab=cogalt", new.vmid)).await;
+    assert!(clone_tab.contains("Yedeğin üzerinde çalışıyor") && clone_tab.contains(&format!(r#"action="/guests/{}/detach""#, new.vmid)), "{clone_tab}");
+    assert!(!page(&app, "/guests/103?tab=cogalt").await.contains("Yedeğin üzerinde çalışıyor"));
+    assert!(post_ok(&app, "/guests/103/detach", "").await.contains("error="), "yedeğe dayanmayan konuk ayrılamaz");
+    assert!(post_ok(&app, &format!("/guests/{}/detach", new.vmid), "").await.contains("notice="));
+    assert_eq!(state.snapshot().guest(new.vmid).unwrap().hw.instant, None);
+    assert!(post_ok(&app, &format!("/backups/{id}/delete"), "").await.contains("notice="), "ayrıldıktan sonra yedek silinebilir");
+
+    // Artımlı yedek anında açılamaz; menüde de sunulmaz. API ve yetki.
+    let (real, real_state) = setup_real();
+    real_state.mutate(|c| c.add_backup(redox_core::Backup { id: "vm-103-9".into(), vmid: 103, guest_name: "win-build".into(), created: now(), size_mb: 5, auto: false, offsite: false, new_mb: Some(3), disks: Vec::new(), disk_gb: 200, quiesced: None, cbt: false, offsite_bound: false, job: None, machine: false, spec: None, suspicious: None, locked_until: None, tested: None, copies: 0 }));
+    assert!(!page(&real, "/guests/103?tab=yedekler").await.contains("Anında aç"));
+    let (status, v) = api(&real, post_json("/api/v1/backups/vm-103-9/instant", &json!({ "name": "x" }))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("artımlı"), "{v}");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let second = state.backup_create(103, "admin").unwrap();
+    let (status, v) = api(&app, post_json(&format!("/api/v1/backups/{second}/instant"), &json!({ "name": "api-acil" }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let vmid = v["vmid"].as_u64().unwrap();
+    let (status, task) = api(&app, request(Method::POST, &format!("/api/v1/guests/{vmid}/detach")).body(Body::empty()).unwrap()).await;
+    assert_eq!((status, task["command"].as_str()), (StatusCode::ACCEPTED, Some(format!("vm detach {vmid}").as_str())));
+    let viewer = as_viewer(Method::POST, &format!("/api/v1/backups/{second}/instant")).header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "name": "x" }).to_string())).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN);
+}
+
+// ---------- Yedek raporu ve korumasız konuklar ----------
+
+#[tokio::test]
+async fn unprotected_guests_and_the_backup_report_are_shown() {
+    let (app, state) = setup();
+    let all = state.snapshot().guests.len();
+    let listed = page(&app, "/backups").await;
+    assert!(listed.contains("Korumasız konuklar") && listed.contains(&format!("{all} konuk")) && listed.contains("hiç yedeği yok") && listed.contains("zamanlanmamış"), "{listed}");
+    // Yedeği alınan konuk listeden düşer; zamanlaması olan konuk öyle gösterilir.
+    state.backup_create(103, "admin").unwrap();
+    state.update_guest(202, &redox_core::GuestPatch { backup_time: Some("03:30".into()), ..Default::default() }, "admin").unwrap();
+    let listed = page(&app, "/backups").await;
+    assert!(listed.contains(&format!("{} konuk", all - 1)) && listed.contains("kendi zamanlaması var"), "{listed}");
+    assert!(!listed.contains(r#"href="/guests/103?tab=yedekler"><span class="mono dim">103</span>"#) || listed.matches("win-build").count() >= 1);
+    // Süre 0: kart çizilmez.
+    state.set_backup_age_days(0);
+    assert!(!page(&app, "/backups").await.contains("Korumasız konuklar"));
+    state.set_backup_age_days(7);
+
+    // API ve izleyici: rapor salt okunurdur.
+    let (status, v) = api(&app, get("/api/v1/backups/report")).await;
+    assert_eq!((status, v["taken"].as_u64(), v["unprotected"].as_u64()), (StatusCode::OK, Some(1), Some(all as u64 - 1)), "{v}");
+    assert!(v["body"].as_str().unwrap().contains("Son 24 saat: 1 yedek alındı") && v["subject"].as_str().unwrap().contains("yedek raporu"));
+    let viewer = as_viewer(Method::GET, "/api/v1/backups/report").body(Body::empty()).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::OK);
+
+    // Zamanlama: saat ayarlı değilken hiçbir şey olmaz; ayarlıyken günde bir kez dener. E-posta ayarı yoksa neden görevde yazar.
+    assert!(state.report_tick("2026-11-25", 600).is_none());
+    state.set_backup_report(7 * 60 + 30);
+    assert!(state.report_tick("2026-11-25", 7 * 60).is_none(), "saati gelmedi");
+    let outcome = state.report_tick("2026-11-25", 7 * 60 + 31).expect("saati geldi");
+    assert!(outcome.unwrap_err().contains("e-posta ayarı yok"));
+    assert!(state.report_tick("2026-11-25", 900).is_none(), "aynı gün ikinci kez denenmez");
+    assert!(state.report_tick("2026-11-26", 7 * 60 + 30).is_some(), "ertesi gün yeniden");
+    let task = state.snapshot().tasks.iter().find(|t| t.command == "backup report").cloned().expect("görev kaydı");
+    assert_eq!((task.status, task.user.as_str()), (TaskStatus::Failed, redox_server::state::SCHEDULER));
+}
+
+// ---------- Yedek penceresi ve iş sonrası doğrulama ----------
+
+#[tokio::test]
+async fn job_windows_and_verification_are_set_from_the_form() {
+    let (app, state) = setup();
+    let form = page(&app, "/backups").await;
+    assert!(form.contains(r#"name="until" type="time""#) && form.contains(r#"name="verify" value="1""#));
+    let days = "day=1&day=2&day=3&day=4&day=5&day=6&day=7";
+    assert!(post_ok(&app, "/backups/jobs", &format!("name=gece&time=22%3A00&{days}&tags=pencereli&keep=7&until=06%3A00&verify=1")).await.contains("notice="));
+    let job = state.snapshot().job("gece").unwrap().clone();
+    assert_eq!((job.until.as_deref(), job.verify), (Some("06:00"), true));
+    let listed = page(&app, "/backups").await;
+    assert!(listed.contains("22:00–06:00") && listed.contains("doğrulamalı"), "{listed}");
+    assert!(post_ok(&app, "/backups/jobs", &format!("name=x&time=22%3A00&{days}&tags=&keep=7&until=22%3A00")).await.contains("error="), "pencere sonu başlangıçla aynı olamaz");
+
+    // Üç kapalı konuk kapsamda; tur 22:00'de başlar, her turda bir konuk yedeklenir.
+    for vmid in [103, 202] {
+        state.update_guest(vmid, &redox_core::GuestPatch { tags: Some(vec!["pencereli".into()]), ..Default::default() }, "admin").unwrap();
+    }
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 22 * 60), 1, "103");
+    // Yedeği alınan yedek, sonraki turda doğrulanır (iş doğrulama istiyor).
+    assert_eq!(state.jobs_tick("2026-11-25", 2, 22 * 60 + 1), 1, "202");
+    let c = state.snapshot();
+    assert!(c.tasks.iter().any(|t| t.command.starts_with("backup verify vm-103-") && t.user == redox_server::state::SCHEDULER), "{:?}", c.tasks.iter().map(|t| &t.command).collect::<Vec<_>>());
+    state.jobs_tick("2026-11-25", 2, 22 * 60 + 2);
+    assert!(state.snapshot().tasks.iter().any(|t| t.command.starts_with("backup verify ct-202-")));
+
+    // Pencere kapanınca sıradaki konuklar yedeklenmez ve bu günlüğe yazılır.
+    state.update_guest(101, &redox_core::GuestPatch { tags: Some(vec!["pencereli".into()]), ..Default::default() }, "admin").unwrap();
+    state.mutate(|c| c.jobs[0].last_run = None);
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(state.jobs_tick("2026-11-26", 3, 23 * 60), 0, "ilk konuk (101) çalışıyor: simülasyonda yedeği alınamaz");
+    assert_eq!(state.snapshot().job("gece").unwrap().queue.len(), 2);
+    assert_eq!(state.jobs_tick("2026-11-27", 4, 6 * 60), 0, "pencere kapandı");
+    let c = state.snapshot();
+    assert!(c.job("gece").unwrap().queue.is_empty());
+    let closed = c.tasks.iter().find(|t| t.command == "job gece").expect("pencere kaydı");
+    assert!(closed.status == TaskStatus::Failed && closed.message.as_deref().unwrap().contains("2 konuk bu turda yedeklenmedi"), "{:?}", closed.message);
+
+    // API: alanlar kabul edilir ve doğrulanır.
+    let (status, _) = api(&app, post_json("/api/v1/jobs", &json!({ "name": "api", "time": "01:00", "until": "05:00", "verify": true }))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(state.snapshot().job("api").unwrap().until.as_deref(), Some("05:00"));
+    let (status, _) = api(&app, post_json("/api/v1/jobs", &json!({ "name": "api", "time": "01:00", "until": "99:00" }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn dynamic_memory_sets_the_balloon_target_from_guest_usage() {
+    let (app, state) = setup_real();
+    // 103 kapalı: balon takılır, dinamik bellek açılır; çalışmayan konukta hedef hesaplanmaz.
+    assert!(post_ok(&app, "/guests/103/balloon", "min=1024").await.contains("error="), "balon yokken açılmaz");
+    state.update_guest(103, &redox_core::GuestPatch { balloon: Some(true), ..Default::default() }, "admin").unwrap();
+    assert!(post_ok(&app, "/guests/103/balloon", "min=cok").await.contains("error="));
+    assert!(post_ok(&app, "/guests/103/balloon", "min=1024").await.contains("notice="));
+    assert_eq!(state.dynamic_memory_tick(), 0);
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains(r#"name="min""#) && tab.contains("Dinamik bellek"));
+    assert!(post_ok(&app, "/guests/103/balloon", "mb=2048").await.contains("error="), "dinamik bellek açıkken elle hedef verilmez");
+
+    // Çalışınca: 1 GB kullanım + 256 MB pay = 1280 MB; ikinci turda değişecek bir şey yoktur.
+    state.mutate(|c| c.guests.iter_mut().filter(|g| g.vmid == 103).for_each(|g| g.status = GuestStatus::Running));
+    assert_eq!(state.dynamic_memory_tick(), 1);
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.balloon_mb, 1280);
+    assert_eq!(state.dynamic_memory_tick(), 0);
+
+    // API ile kapatılır: balon boşalır, elle hedef yeniden verilebilir.
+    let (status, _) = api(&app, post_json("/api/v1/guests/103/balloon", &serde_json::json!({ "min": 0 }))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let hw = state.snapshot().guest(103).unwrap().hw.clone();
+    assert_eq!((hw.mem_min_mb, hw.balloon_mb), (0, 0));
+    assert_eq!(state.dynamic_memory_tick(), 0);
+    let (status, _) = api(&app, post_json("/api/v1/guests/103/balloon", &serde_json::json!({ "mb": 2048 }))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn usage_counters_are_listed_and_reset() {
+    let (app, state) = setup_real();
+    state.mutate(|c| {
+        c.record_usage(102, Some((0, 0)), 1_700_000_000);
+        c.record_usage(102, Some((5 << 20, 7 << 20)), 1_700_000_060);
+    });
+    let (status, one) = api(&app, request(Method::GET, "/api/v1/guests/102/usage").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!((one["uptime_secs"].as_u64(), one["disk_read_mb"].as_u64(), one["disk_write_mb"].as_u64()), (Some(60), Some(5), Some(7)));
+    assert!(one["mem_gb_hours"].as_f64().unwrap() > 0.0 && one["name"].is_string());
+    let (_, all) = api(&app, request(Method::GET, "/api/v1/usage").body(Body::empty()).unwrap()).await;
+    assert_eq!(all.as_array().unwrap().len(), state.snapshot().guests.len());
+    assert!(page(&app, "/guests/102").await.contains("Kaynak ölçümü"));
+    assert!(!page(&setup().0, "/guests/102").await.contains("Kaynak ölçümü"), "simülasyonda ölçüm yok");
+
+    let (status, _) = api(&app, request(Method::DELETE, "/api/v1/guests/102/usage").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(state.snapshot().usage_of(102).uptime_secs, 0);
+    let (status, _) = api(&app, request(Method::GET, "/api/v1/guests/999/usage").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn nic_guard_is_set_from_the_options_tab() {
+    let (app, state) = setup();
+    let tab = page(&app, "/guests/102?tab=secenekler").await;
+    assert!(tab.contains(r#"name="nic_guard""#) && !tab.contains(r#"name="nic_guard" value="1" checked"#));
+    let (status, _) = api(&app, request(Method::PATCH, "/api/v1/guests/102").header(CONTENT_TYPE, "application/json").body(Body::from(r#"{"nic_guard":true}"#)).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(state.snapshot().guest(102).unwrap().hw.nic_guard, "çalışan konukta da açılır");
+    assert!(page(&app, "/guests/102?tab=secenekler").await.contains(r#"name="nic_guard" value="1" checked"#));
+    assert!(page(&app, "/guests/102").await.contains("Ağ kartı koruması"));
+    state.guards_tick().unwrap();
+}
+
+#[tokio::test]
+async fn four_eyes_holds_deletions_until_another_admin_approves() {
+    let (app, state) = setup();
+    state.set_four_eyes(true);
+    let guests = state.snapshot().guests.len();
+    // API: silme yapılmaz, 202 ve istek numarası döner; aynı istek yinelenmez.
+    let (status, body) = api(&app, request(Method::DELETE, "/api/v1/guests/103").body(Body::empty()).unwrap()).await;
+    assert_eq!((status, body["approval"].as_u64()), (StatusCode::ACCEPTED, Some(1)));
+    let (_, again) = api(&app, request(Method::DELETE, "/api/v1/guests/103").body(Body::empty()).unwrap()).await;
+    assert_eq!(again["approval"].as_u64(), Some(1));
+    assert_eq!(state.snapshot().guests.len(), guests, "konuk duruyor");
+    let (_, list) = api(&app, request(Method::GET, "/api/v1/approvals").body(Body::empty()).unwrap()).await;
+    assert_eq!((list[0]["action"].as_str(), list[0]["target"].as_str()), (Some("guest-delete"), Some("103")));
+    // Silinemeyecek konuk için istek açılmaz (çalışan konuk).
+    let (status, _) = api(&app, request(Method::DELETE, "/api/v1/guests/100").body(Body::empty()).unwrap()).await;
+    assert_ne!(status, StatusCode::ACCEPTED);
+
+    // İsteği yapan kendi isteğini onaylayamaz; sayfada yalnızca geri çekme düğmesi görür.
+    let requester = state.snapshot().approvals[0].by.clone();
+    assert!(matches!(state.approve(1, &requester), Err(redox_core::Error::InvalidSpec(m)) if m.contains("kendi isteğinizi onaylayamazsınız")));
+    let home = page(&app, "/").await;
+    assert!(home.contains("Onay bekliyor (#1)") && home.contains("103 kimlikli konuğu silmek") && home.contains("Geri Çek") && !home.contains(r#"action="/approvals/1/approve""#), "{}", &home[..home.len().min(200)]);
+    // Başka bir yönetici onaylar: işlem iki adla günlüğe geçer.
+    assert_eq!(state.approve(1, "ikinci-yonetici").unwrap(), "onaylandı: 103 kimlikli konuğu silmek");
+    let c = state.snapshot();
+    assert_eq!(c.guests.len(), guests - 1);
+    assert!(c.tasks.iter().any(|t| t.user == format!("{requester}+ikinci-yonetici") && t.command.ends_with("destroy 103")), "{:?}", c.tasks.first());
+    assert!(state.approve(1, "ikinci-yonetici").is_err(), "onay bir kez kullanılır");
+
+    // Reddetme: istek düşer, hiçbir şey silinmez. Kapalıyken silme hemen yapılır.
+    let other = state.snapshot().guests.iter().find(|g| state.snapshot().check_deletable(g.vmid).is_ok()).map(|g| g.vmid).expect("silinebilir bir konuk");
+    let id = state.request_guest_delete(other, "admin").unwrap().expect("istek açılır");
+    assert!(post_ok(&app, &format!("/approvals/{id}/reject"), "").await.contains("notice="));
+    assert!(state.snapshot().approvals.is_empty() && state.snapshot().guests.len() == guests - 1);
+    state.set_four_eyes(false);
+    let (status, _) = api(&app, request(Method::DELETE, &format!("/api/v1/guests/{other}")).body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(state.snapshot().guests.len(), guests - 2);
 }

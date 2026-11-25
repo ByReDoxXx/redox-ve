@@ -36,6 +36,8 @@ pub struct QemuConfig {
     pub bridge_bin: String,
     /// Ağ arayüzlerinin sysfs dizini (köprünün VLAN süzmesi buradan okunur).
     pub sys_net: PathBuf,
+    /// Çekirdek modüllerinin parametre dizini (`/sys/module`); KVM'in iç içe sanallaştırma ayarı buradan okunur.
+    pub sys_module: PathBuf,
     /// Ek depolama alanları: `(ad, dizin)`. Konuğun diskleri, kaydındaki depolamanın dizininde durur;
     /// `local` (ve burada tanımlı olmayan her ad) veri dizinindeki `images/` klasörüdür.
     pub storages: Vec<(String, PathBuf)>,
@@ -43,6 +45,8 @@ pub struct QemuConfig {
     pub incremental_backups: bool,
     /// Değişen blok takibi: çalışan konuğun artımlı yedeğinde yalnızca son yedekten beri yazılan bloklar okunur.
     pub cbt: bool,
+    /// Yedek kopyalama hız sınırı (MB/sn, disk başına); 0 sınırsız. Yedek, konukların disk hızını tüketmesin diye.
+    pub backup_mbps: u64,
 }
 
 impl QemuConfig {
@@ -59,8 +63,10 @@ impl QemuConfig {
             ip_bin: "ip".to_string(),
             bridge_bin: "bridge".to_string(),
             sys_net: PathBuf::from("/sys/class/net"),
+            sys_module: PathBuf::from("/sys/module"),
             storages: Vec::new(),
             incremental_backups: false,
+            backup_mbps: 0,
             cbt: false,
         }
     }
@@ -234,6 +240,28 @@ pub fn tap_name(vmid: VmId, index: u8) -> String {
     format!("rx{vmid}n{index}")
 }
 
+/// KVM modülünde iç içe sanallaştırma açık mı? (`kvm_intel` ya da `kvm_amd` modülünün `nested` parametresi.)
+pub fn nested_enabled(sys_module: &Path) -> bool {
+    ["kvm_intel", "kvm_amd"].iter().any(|module| std::fs::read_to_string(sys_module.join(module).join("parameters/nested")).is_ok_and(|v| matches!(v.trim(), "Y" | "1")))
+}
+
+pub const NESTED_HINT: &str = "sunucuda iç içe sanallaştırma kapalı. Açmak için /etc/modprobe.d/kvm.conf dosyasına \"options kvm_intel nested=1\" (AMD'de kvm_amd) yazıp modülü yeniden yükleyin ya da sunucuyu yeniden başlatın";
+
+impl QemuDriver {
+    /// Çalışan konuğun QEMU sürecinin açık tuttuğu TAP arayüzleri (köprüdeki kartları); kapalıysa boş.
+    pub fn guest_taps(&self, vmid: VmId) -> Vec<String> {
+        #[cfg(unix)]
+        {
+            imp::taps(self, vmid)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = vmid;
+            Vec::new()
+        }
+    }
+}
+
 /// VLAN etiketi taşıyan kartlar: `(kart sırası, köprü, etiket)`; 0 birinci karttır.
 pub fn vlan_nics(g: &Guest) -> Vec<(u8, String, u16)> {
     let mut list = Vec::new();
@@ -290,10 +318,17 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     let secure = uefi && g.hw.secure_boot;
     // Güvenli önyükleme, değişken deposunu yalnızca sistem yönetim kipinden yazılabilir kılar (SMM).
     let smm = if secure { ",smm=on" } else { "" };
+    // İşlemci modeli: seçilmemişse KVM'de sunucunun kendi işlemcisi, yazılım öykünmesinde en geniş model.
+    let cpu = match g.hw.cpu_type.as_str() {
+        "" if cfg.kvm => "host",
+        "" => "max",
+        model => model,
+    };
+    let cpu = redox_core::hw::cpu_arg(cpu, g.hw.nested);
     if cfg.kvm {
-        push(&["-machine", &format!("q35,accel=kvm{smm}"), "-cpu", "host"]);
+        push(&["-machine", &format!("q35,accel=kvm{smm}"), "-cpu", &cpu]);
     } else {
-        push(&["-machine", &format!("q35,accel=tcg{smm}"), "-cpu", "max"]);
+        push(&["-machine", &format!("q35,accel=tcg{smm}"), "-cpu", &cpu]);
     }
     if uefi {
         let (code, _) = cfg.ovmf_files(secure);
@@ -348,9 +383,15 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     } else {
         // Kullanıcı kipinde NAT: köprü ve kök yetkisi gerektirmez. Port yönlendirmeleri sunucunun
         // bütün arayüzlerinde dinler (güvenlik duvarı ayrıca açılmalıdır).
-        let mut net = "user,id=net0".to_string();
+        // Yalıtılmış konukta ağ dışarıya kapalıdır (yedek sınaması: özgün konukla aynı adresle ağa çıkmasın).
+        let mut net = if g.hw.isolated { "user,id=net0,restrict=on".to_string() } else { "user,id=net0".to_string() };
         for f in &g.forwards {
             net.push_str(&format!(",hostfwd=tcp::{}-:{}", f.host_port, f.guest_port));
+        }
+        // Yedek sınaması: denetlenecek kapı yalnızca sunucunun kendisinden (127.0.0.1) erişilir. Yalıtım
+        // (restrict=on) açıkça tanımlanan yönlendirmeleri etkilemez.
+        if g.hw.isolated && g.hw.test_port > 0 && g.hw.test_fwd > 0 {
+            net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{}-:{}", g.hw.test_fwd, g.hw.test_port));
         }
         push(&["-netdev", &net, "-device", &nic]);
     }
@@ -375,7 +416,7 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         let Some((network, vlan)) = redox_core::hw::parse_nic(spec) else { continue };
         let n = i as u8 + 1;
         let backend = if network == NAT {
-            format!("user,id=net{n}")
+            format!("user,id=net{n}{}", if g.hw.isolated { ",restrict=on" } else { "" })
         } else if vlan > 0 {
             tap_backend(g.vmid, n)
         } else {
@@ -402,7 +443,16 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     push(&["-vnc", &format!("unix:{}", opt(&cfg.vnc_path(g.vmid)))]);
     push(&["-qmp", &format!("unix:{},server=on,wait=off", opt(&cfg.qmp_path(g.vmid)))]);
     push(&["-pidfile", &cfg.pid_path(g.vmid).display().to_string(), "-daemonize"]);
+    // Bellek balonu en sona eklenir: öbür aygıtların veri yolundaki yeri değişmez.
+    if g.hw.balloon {
+        push(&["-device", "virtio-balloon-pci,id=balloon0"]);
+    }
     a
+}
+
+/// Makine durumu arşivindeki TPM dosyasının adı: yol ayırıcısız, gizli olmayan, sade bir dosya adı.
+fn machine_member_ok(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 64 && !name.starts_with('.') && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
 
 /// cloud-init dosyalarını yazar (her başlatmadan önce: ad değişikliği konuğa yansır).
@@ -416,7 +466,14 @@ pub fn write_seed(cfg: &QemuConfig, g: &Guest) -> Result<(), String> {
     let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).map_err(|e| format!("cloud-init dosyası yazılamadı ({name}): {e}"));
     std::fs::create_dir_all(&dir).map_err(|e| format!("{} oluşturulamadı: {e}", dir.display()))?;
     write("user-data", &user_data)?;
-    write("meta-data", &redox_core::hw::meta_data(g.vmid, &g.name))
+    // Sabit adres verilmişse ağ ayarı da yazılır; verilmemişse eski dosya kaldırılır (konuk DHCP kullanır).
+    match g.hw.network_config(g.vmid) {
+        Some(network) => write("network-config", &network)?,
+        None => {
+            let _ = std::fs::remove_file(dir.join("network-config"));
+        }
+    }
+    write("meta-data", &redox_core::hw::meta_data(g.vmid, &g.name, g.hw.ci_gen))
 }
 
 /// Başlatmadan önce UEFI değişken deposunu (yoksa kalıptan) hazırlar.
@@ -988,6 +1045,19 @@ impl Hypervisor for QemuDriver {
         Ok(())
     }
 
+    fn snapshot_disk_only(&self, guest: &Guest, name: &str) -> Result<bool, String> {
+        if !valid_snapshot_name(name) {
+            return Err(format!("geçersiz anlık görüntü adı: {name}"));
+        }
+        #[cfg(unix)]
+        if self.alive(guest.vmid) {
+            let disks: Vec<PathBuf> = disk_ids(guest).iter().map(|n| self.guest_disk(guest, *n)).collect();
+            return imp::disk_snapshot(self, guest, name, &disks);
+        }
+        // Kapalı konukta anlık görüntü zaten yalnızca disklerdir.
+        self.snapshot(guest, SnapshotOp::Create(name)).map(|()| false)
+    }
+
     fn resize_disk(&self, guest: &Guest, new_gb: u64) -> Result<(), String> {
         self.cbt_invalidate(guest.vmid);
         let disk = self.cfg.disk_of(guest);
@@ -1087,44 +1157,17 @@ impl Hypervisor for QemuDriver {
     }
 
     fn backup(&self, guest: &Guest, id: &str) -> Result<BackupSize, String> {
-        let target = self.backup_path(id)?;
-        std::fs::create_dir_all(self.cfg.backups_dir()).map_err(|e| format!("yedek dizini oluşturulamadı: {e}"))?;
-        if target.exists() || self.store.has(id) {
-            return Err(format!("{} zaten var", target.display()));
+        let size = self.backup_disks(guest, id)?;
+        // Diskler tamam; makine durumu eklenemezse yedek eksik sayılır ve geri alınır.
+        if let Err(e) = self.save_machine(guest, id) {
+            let _ = Hypervisor::delete_backup(self, id);
+            return Err(e);
         }
-        #[cfg(unix)]
-        let live = self.alive(guest.vmid);
-        #[cfg(not(unix))]
-        let live = false;
-        let ids = disk_ids(guest);
-        if self.cfg.incremental_backups {
-            return self.backup_chunks(guest, id, live, &ids);
-        }
-        // Her disk ayrı dosya: asıl disk `<yedek>.qcow2`, ek diskler `<yedek>.diskN.qcow2`. Önce geçici
-        // adla yazılır: yarıda kesilen yedek, geçerli bir yedek dosyası gibi görünmez.
-        let mut finals = Vec::with_capacity(ids.len());
-        let mut parts = Vec::with_capacity(ids.len());
-        for n in &ids {
-            let target = self.backup_part(id, *n)?;
-            let name = target.file_name().and_then(|f| f.to_str()).unwrap_or_default().to_string();
-            parts.push((self.guest_disk(guest, *n), target.with_file_name(format!(".{name}.tmp"))));
-            finals.push(target);
-        }
-        let placed = self.dump(guest, &parts, live, false, Cbt::Off).and_then(|quiesced| {
-            parts.iter().zip(&finals).try_for_each(|((_, temp), target)| std::fs::rename(temp, target).map_err(|e| format!("yedek dosyası yerine konamadı: {e}")))?;
-            Ok(quiesced)
-        });
-        let quiesced = match placed {
-            Ok(quiesced) => quiesced,
-            Err(e) => {
-                for path in parts.iter().map(|(_, temp)| temp).chain(&finals) {
-                    let _ = std::fs::remove_file(path);
-                }
-                return Err(e);
-            }
-        };
-        let bytes: u64 = finals.iter().map(|part| std::fs::metadata(part).map(|m| m.len()).unwrap_or(0)).sum();
-        Ok(BackupSize { quiesced, ..BackupSize::full(bytes.div_ceil(1024 * 1024)) })
+        Ok(size)
+    }
+
+    fn backup_machine_file(&self, id: &str) -> Option<PathBuf> {
+        self.machine_path(id).ok()
     }
 
     fn restore(&self, guest: &Guest, id: &str, disks: &[u8]) -> Result<(), String> {
@@ -1180,11 +1223,16 @@ impl Hypervisor for QemuDriver {
                 return Err(format!("disk değiştirilemedi: {e}"));
             }
         }
-        Ok(())
+        self.load_machine(guest, id).map_err(|e| format!("diskler geri yüklendi ama makine durumu (UEFI/TPM) geri yüklenemedi: {e}"))
     }
 
     fn delete_backup(&self, id: &str) -> Result<(), String> {
         self.backup_path(id)?;
+        match std::fs::remove_file(self.machine_path(id)?) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("makine durumu arşivi silinemedi: {e}")),
+        }
         for n in 0..=redox_core::hw::MAX_EXTRA_DISKS as u8 {
             let path = self.backup_part(id, n)?;
             match std::fs::remove_file(&path) {
@@ -1195,6 +1243,175 @@ impl Hypervisor for QemuDriver {
         }
         // Artımlı yedekse dizini silinir ve başka yedeğin anmadığı parçalar toplanır.
         self.store.delete(id).map(|_| ())
+    }
+
+    fn instant_from_backup(&self, guest: &Guest, backup: &str, disks: &[u8]) -> Result<(), String> {
+        if self.store.has(backup) {
+            return Err("artımlı yedek parça parça durur, bir diskin arkalığı olamaz; yeni konuk olarak geri yükleyin".to_string());
+        }
+        self.cbt_invalidate(guest.vmid);
+        let mut made: Vec<PathBuf> = Vec::new();
+        let built = std::iter::once(0).chain(disks.iter().copied()).try_for_each(|n| {
+            let (base, disk) = (self.backup_part(backup, n)?, self.guest_disk(guest, n));
+            if !base.is_file() {
+                return Err(format!("yedek dosyası yerelde yok: {}", base.display()));
+            }
+            // Arkalık olarak kullanılacak dosya zincirsiz olmalı (dış hedeften gelmiş olabilir).
+            self.check_standalone(&base)?;
+            // Konuk oluşturulurken açılan boş disk kaldırılır; yerine yedeğe dayanan katman kurulur.
+            let _ = std::fs::remove_file(&disk);
+            made.push(disk.clone());
+            self.img(
+                &["create".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-F".as_ref(), "qcow2".as_ref(), "-b".as_ref(), base.as_os_str(), disk.as_os_str()],
+                "yedeğe dayanan disk oluşturulamadı",
+            )
+        });
+        if let Err(e) = built {
+            for path in &made {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(e);
+        }
+        self.load_machine(guest, backup)
+    }
+
+    fn detach_backing(&self, guest: &Guest) -> Result<(), String> {
+        let disks: Vec<PathBuf> = disk_ids(guest).iter().map(|n| self.guest_disk(guest, *n)).collect();
+        #[cfg(unix)]
+        let live = self.alive(guest.vmid);
+        #[cfg(not(unix))]
+        let live = false;
+        if live {
+            #[cfg(unix)]
+            imp::stream_disks(self, guest, &disks)?;
+        } else {
+            for disk in &disks {
+                // Arkalıktaki veri diske kopyalanır ve bağ kaldırılır.
+                self.img(&["rebase".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-b".as_ref(), "".as_ref(), disk.as_os_str()], "disk yedekten ayrılamadı")?;
+            }
+        }
+        // Hâlâ arkalığı olan disk varsa işlem tamamlanmamıştır: yedek serbest bırakılmaz.
+        match disks.iter().find(|disk| self.has_backing(disk).unwrap_or(true)) {
+            Some(disk) => Err(format!("{} hâlâ yedeğe dayanıyor", disk.display())),
+            None => Ok(()),
+        }
+    }
+
+    /// Diskler önce hedefe geçici adla kopyalanır; hepsi tamamlanınca yerlerine konur ve ancak ondan sonra
+    /// kaynaklar silinir. Herhangi bir adım başarısız olursa hedefte dosya bırakılmaz, konuk eski yerinde kalır.
+    fn move_storage(&self, guest: &Guest, target: &str) -> Result<(), String> {
+        let dest_dir = self.cfg.storage_dir(target);
+        if dest_dir == self.cfg.storage_dir(&guest.storage) {
+            return Err(format!("{target} alanı konuğun şimdiki alanıyla aynı dizinde"));
+        }
+        std::fs::create_dir_all(&dest_dir).map_err(|e| format!("{} oluşturulamadı: {e}", dest_dir.display()))?;
+        self.cbt_invalidate(guest.vmid);
+        let sources: Vec<PathBuf> = disk_ids(guest).iter().map(|n| self.guest_disk(guest, *n)).collect();
+        let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let copied = sources.iter().try_for_each(|source| {
+            let name = source.file_name().and_then(|n| n.to_str()).ok_or("disk adı okunamadı")?.to_string();
+            let dest = dest_dir.join(&name);
+            if dest.exists() {
+                return Err(format!("{} zaten var; önce onu kaldırın", dest.display()));
+            }
+            let temp = dest_dir.join(format!(".{name}.tasiniyor"));
+            let _ = std::fs::remove_file(&temp);
+            staged.push((temp.clone(), dest));
+            // Bayt bayt kopya: anlık görüntüler ve değişiklik haritası dosyayla birlikte gelir.
+            std::fs::copy(source, &temp).map(|_| ()).map_err(|e| format!("{} kopyalanamadı: {e}", source.display()))
+        });
+        let placed = copied.and_then(|()| staged.iter().try_for_each(|(temp, dest)| std::fs::rename(temp, dest).map_err(|e| format!("{} yerine konamadı: {e}", dest.display()))));
+        if let Err(e) = placed {
+            for (temp, dest) in &staged {
+                let _ = std::fs::remove_file(temp);
+                let _ = std::fs::remove_file(dest);
+            }
+            return Err(e);
+        }
+        for source in &sources {
+            let _ = std::fs::remove_file(source);
+        }
+        Ok(())
+    }
+
+    fn import_disk(&self, guest: &Guest, id: u8, source: &Path) -> Result<(), String> {
+        self.cbt_invalidate(guest.vmid);
+        let disk = self.cfg.extra_disk_of(guest, id);
+        if disk.exists() {
+            return Err(format!("{} zaten var", disk.display()));
+        }
+        // Dosya başka sunucudan geldi: biçimi tahmine bırakılmaz, başka dosyaya bağlanan imaj kabul edilmez.
+        self.check_standalone(source)?;
+        self.img(&["convert".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-O".as_ref(), "qcow2".as_ref(), source.as_os_str(), disk.as_os_str()], "ek disk içe aktarılamadı")
+            .inspect_err(|_| {
+                let _ = std::fs::remove_file(&disk);
+            })
+    }
+
+    fn restore_machine(&self, guest: &Guest, archive: &Path) -> Result<(), String> {
+        self.load_machine_from(guest, archive)
+    }
+
+    fn host_cpu_vendor(&self) -> Option<&'static str> {
+        std::fs::read_to_string("/proc/cpuinfo").ok().and_then(|text| redox_core::hw::parse_cpu_vendor(&text))
+    }
+
+    fn guest_run(&self, guest: &Guest, command: &str) -> Result<(), String> {
+        let (path, args) = redox_core::hw::split_hook(command).ok_or("komut boş")?;
+        #[cfg(unix)]
+        {
+            match crate::qga::exec(&self.cfg.qga_path(guest.vmid), &path, &args, Duration::from_secs(120)) {
+                Ok((0, _)) => Ok(()),
+                Ok((code, last)) => Err(format!("{path} {code} koduyla bitti ({last})")),
+                Err(e) => Err(format!("{path} çalıştırılamadı: {e}")),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, path, args);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    // Yazılım öykünmesinde (KVM yokken) uzantıyı QEMU kendisi sağlar.
+    fn nested_virt(&self) -> bool {
+        !self.cfg.kvm || nested_enabled(&self.cfg.sys_module)
+    }
+
+    fn io_counters(&self, guest: &Guest) -> Option<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            imp::io_counters(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            None
+        }
+    }
+
+    fn balloon_stats(&self, guest: &Guest) -> Option<redox_core::BalloonStats> {
+        #[cfg(unix)]
+        {
+            imp::balloon_stats(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            None
+        }
+    }
+
+    fn set_balloon(&self, guest: &Guest, target_mb: u64) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::set_balloon(self, guest, target_mb)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, target_mb);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
     }
 
     fn screenshot(&self, guest: &Guest) -> Result<Vec<u8>, String> {
@@ -1275,6 +1492,20 @@ impl QemuDriver {
 
     /// Yedek dosyası kendi başına duran bir qcow2 mu? Arkalık (backing file) ya da ayrı veri dosyası
     /// gösteren bir imaj, çevrilirken sunucudaki başka bir dosyanın içeriğini konuğun diskine taşırdı.
+    /// İmajın bir arkalığı var mı? Konuk çalışırken de sorulabilsin diye kilit zorlanmaz (`-U`).
+    fn has_backing(&self, path: &Path) -> Result<bool, String> {
+        let out = std::process::Command::new(&self.cfg.qemu_img_bin)
+            .args(["info", "-U", "--output=json", "-f", "qcow2"])
+            .arg(path)
+            .output()
+            .map_err(|e| format!("{} çalıştırılamadı: {e}", self.cfg.qemu_img_bin))?;
+        if !out.status.success() {
+            return Err(format!("disk bilgisi okunamadı: {}", last_line(&out.stderr)));
+        }
+        let info: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("disk bilgisi okunamadı: {e}"))?;
+        Ok(["backing-filename", "full-backing-filename"].iter().any(|key| info.get(*key).is_some()))
+    }
+
     fn check_standalone(&self, path: &Path) -> Result<(), String> {
         let out = std::process::Command::new(&self.cfg.qemu_img_bin)
             .args(["info", "--output=json", "-f", "qcow2"])
@@ -1319,12 +1550,19 @@ impl QemuDriver {
                 return Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string());
             }
         }
+        // Kapalı konuk: qemu-img kopyalar; hız sınırı varsa `-r` (bayt/sn) ile uygulanır.
+        let rate = (self.cfg.backup_mbps > 0).then(|| (self.cfg.backup_mbps * 1024 * 1024).to_string());
         for (disk, target) in parts {
-            if raw {
-                self.img(&["convert".as_ref(), "-O".as_ref(), "raw".as_ref(), disk.as_os_str(), target.as_os_str()], "yedek alınamadı")?;
-            } else {
-                self.convert(disk, target, true, "yedek alınamadı")?;
+            let mut args: Vec<&std::ffi::OsStr> = vec!["convert".as_ref()];
+            if let Some(rate) = &rate {
+                args.extend::<[&std::ffi::OsStr; 2]>(["-r".as_ref(), rate.as_ref()]);
             }
+            args.extend::<[&std::ffi::OsStr; 2]>(["-O".as_ref(), if raw { "raw" } else { "qcow2" }.as_ref()]);
+            if !raw {
+                args.push("-c".as_ref());
+            }
+            args.extend([disk.as_os_str(), target.as_os_str()]);
+            self.img(&args, "yedek alınamadı")?;
         }
         Ok(None)
     }
@@ -1480,6 +1718,168 @@ impl QemuDriver {
         }
         args.extend([raw.as_os_str(), to.as_os_str()]);
         self.img(&args, what)
+    }
+
+    /// Konuğun disklerini yedekler (makine durumu ayrıca `save_machine` ile eklenir).
+    fn backup_disks(&self, guest: &Guest, id: &str) -> Result<BackupSize, String> {
+        let target = self.backup_path(id)?;
+        std::fs::create_dir_all(self.cfg.backups_dir()).map_err(|e| format!("yedek dizini oluşturulamadı: {e}"))?;
+        if target.exists() || self.store.has(id) {
+            return Err(format!("{} zaten var", target.display()));
+        }
+        #[cfg(unix)]
+        let live = self.alive(guest.vmid);
+        #[cfg(not(unix))]
+        let live = false;
+        let ids = disk_ids(guest);
+        if self.cfg.incremental_backups {
+            return self.backup_chunks(guest, id, live, &ids);
+        }
+        // Her disk ayrı dosya: asıl disk `<yedek>.qcow2`, ek diskler `<yedek>.diskN.qcow2`. Önce geçici
+        // adla yazılır: yarıda kesilen yedek, geçerli bir yedek dosyası gibi görünmez.
+        let mut finals = Vec::with_capacity(ids.len());
+        let mut parts = Vec::with_capacity(ids.len());
+        for n in &ids {
+            let target = self.backup_part(id, *n)?;
+            let name = target.file_name().and_then(|f| f.to_str()).unwrap_or_default().to_string();
+            parts.push((self.guest_disk(guest, *n), target.with_file_name(format!(".{name}.tmp"))));
+            finals.push(target);
+        }
+        let placed = self.dump(guest, &parts, live, false, Cbt::Off).and_then(|quiesced| {
+            parts.iter().zip(&finals).try_for_each(|((_, temp), target)| std::fs::rename(temp, target).map_err(|e| format!("yedek dosyası yerine konamadı: {e}")))?;
+            Ok(quiesced)
+        });
+        let quiesced = match placed {
+            Ok(quiesced) => quiesced,
+            Err(e) => {
+                for path in parts.iter().map(|(_, temp)| temp).chain(&finals) {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(e);
+            }
+        };
+        let bytes: u64 = finals.iter().map(|part| std::fs::metadata(part).map(|m| m.len()).unwrap_or(0)).sum();
+        Ok(BackupSize { quiesced, ..BackupSize::full(bytes.div_ceil(1024 * 1024)) })
+    }
+
+    /// Yedeğin yanındaki makine durumu arşivi: UEFI değişken deposu ve sanal TPM durumu.
+    fn machine_path(&self, id: &str) -> Result<PathBuf, String> {
+        Ok(self.backup_path(id)?.with_file_name(format!("{id}.machine.tar")))
+    }
+
+    /// Konuğun UEFI değişken deposunu ve sanal TPM durumunu yedeğin yanına arşivler. İkisi de yoksa
+    /// arşiv yazılmaz ve `false` döner. Disklere göre çok küçüktür (birkaç MB).
+    fn save_machine(&self, guest: &Guest, id: &str) -> Result<bool, String> {
+        let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        if guest.hw.firmware == redox_core::hw::Firmware::Uefi {
+            let secure = guest.hw.secure_boot;
+            let vars = self.cfg.efivars_path(guest.vmid, secure);
+            if vars.is_file() {
+                // Konuk çalışıyorsa dosya QEMU'da açıktır: kilit zorlanmadan (-U) bir kopyası alınır.
+                let copy = vars.with_extension("qcow2.backup");
+                let _ = std::fs::remove_file(&copy);
+                let made = self
+                    .img(&["convert".as_ref(), "-U".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-O".as_ref(), "qcow2".as_ref(), vars.as_os_str(), copy.as_os_str()], "UEFI değişkenleri yedeklenemedi")
+                    .and_then(|()| std::fs::read(&copy).map_err(|e| format!("UEFI değişkenleri okunamadı: {e}")));
+                let _ = std::fs::remove_file(&copy);
+                entries.push((if secure { "efivars-secure.qcow2" } else { "efivars.qcow2" }.to_string(), made?));
+            }
+        }
+        if guest.hw.tpm {
+            let mut files: Vec<PathBuf> = std::fs::read_dir(self.cfg.tpm_dir(guest.vmid)).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect()).unwrap_or_default();
+            files.sort();
+            for file in files {
+                let name = file.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+                if !machine_member_ok(&name) || name.ends_with(".lock") {
+                    continue;
+                }
+                entries.push((format!("tpm/{name}"), std::fs::read(&file).map_err(|e| format!("TPM durumu okunamadı ({name}): {e}"))?));
+            }
+        }
+        if entries.is_empty() {
+            return Ok(false);
+        }
+        let path = self.machine_path(id)?;
+        let temp = path.with_extension("tar.tmp");
+        let refs: Vec<(&str, &[u8])> = entries.iter().map(|(name, data)| (name.as_str(), data.as_slice())).collect();
+        crate::ova::write_tar(&temp, &refs)
+            .and_then(|()| std::fs::rename(&temp, &path))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&temp);
+                format!("makine durumu arşivi yazılamadı: {e}")
+            })?;
+        Ok(true)
+    }
+
+    /// Yedekteki makine durumunu geri koyar. Arşiv yoksa (eski yedek, BIOS'lu ve TPM'siz konuk) bir şey yapmaz.
+    /// Konuğun şimdiki donanımına uymayan parça atlanır: UEFI'den BIOS'a geçmiş konuğa değişken deposu,
+    /// TPM'i kaldırılmış konuğa TPM durumu konmaz.
+    fn load_machine(&self, guest: &Guest, id: &str) -> Result<(), String> {
+        let path = self.machine_path(id)?;
+        if !path.is_file() {
+            return Ok(());
+        }
+        self.load_machine_from(guest, &path)
+    }
+
+    /// `load_machine`'in arşiv yolunu doğrudan alan hali (başka sunucudan indirilen arşiv için).
+    fn load_machine_from(&self, guest: &Guest, path: &Path) -> Result<(), String> {
+        use std::io::{Read, Seek, SeekFrom};
+        const MAX_MEMBER: u64 = 64 * 1024 * 1024;
+        let mut file = std::fs::File::open(path).map_err(|e| format!("makine durumu arşivi açılamadı: {e}"))?;
+        let mut tpm: Vec<(String, Vec<u8>)> = Vec::new();
+        for member in crate::ova::members(&mut file)? {
+            if member.size > MAX_MEMBER {
+                return Err(format!("makine durumu arşivindeki {} beklenmedik ölçüde büyük", member.name));
+            }
+            let mut data = vec![0u8; member.size as usize];
+            file.seek(SeekFrom::Start(member.offset)).and_then(|_| file.read_exact(&mut data)).map_err(|e| format!("makine durumu arşivi okunamadı: {e}"))?;
+            match member.name.as_str() {
+                name @ ("efivars.qcow2" | "efivars-secure.qcow2") => {
+                    let secure = name == "efivars-secure.qcow2";
+                    if guest.hw.firmware != redox_core::hw::Firmware::Uefi || guest.hw.secure_boot != secure {
+                        continue;
+                    }
+                    let vars = self.cfg.efivars_path(guest.vmid, secure);
+                    let staging = vars.with_extension("qcow2.restore");
+                    std::fs::write(&staging, &data).map_err(|e| format!("UEFI değişkenleri yazılamadı: {e}"))?;
+                    // Arşiv dış hedeften gelmiş olabilir: başka bir dosyaya bağlanan imaj kabul edilmez.
+                    let placed = self.check_standalone(&staging).and_then(|()| std::fs::rename(&staging, &vars).map_err(|e| format!("UEFI değişkenleri yerine konamadı: {e}")));
+                    if placed.is_err() {
+                        let _ = std::fs::remove_file(&staging);
+                    }
+                    placed?;
+                }
+                name => {
+                    if let Some(file_name) = name.strip_prefix("tpm/").filter(|n| machine_member_ok(n)) {
+                        tpm.push((file_name.to_string(), data));
+                    }
+                }
+            }
+        }
+        if guest.hw.tpm && !tpm.is_empty() {
+            let dir = self.cfg.tpm_dir(guest.vmid);
+            let staging = dir.with_extension("restore");
+            let _ = std::fs::remove_dir_all(&staging);
+            let built = (|| {
+                std::fs::create_dir_all(&staging)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700))?;
+                }
+                for (name, data) in &tpm {
+                    std::fs::write(staging.join(name), data)?;
+                }
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::rename(&staging, &dir)
+            })();
+            built.map_err(|e: std::io::Error| {
+                let _ = std::fs::remove_dir_all(&staging);
+                format!("TPM durumu yerine konamadı: {e}")
+            })?;
+        }
+        Ok(())
     }
 
     /// Yedek kimliği dosya adına dönüşür; yol kaçışına karşı yalnızca güvenli karakterler.
@@ -1807,6 +2207,134 @@ mod imp {
         Ok(())
     }
 
+    /// Çalışan konuğun disklerini arkalıklarından bağımsızlaştırır: QEMU arkalıktaki veriyi diske akıtır
+    /// (`block-stream`), bitince bağ kendiliğinden kalkar. Konuk bu sırada çalışmayı sürdürür.
+    pub(super) fn stream_disks(d: &QemuDriver, g: &Guest, disks: &[super::PathBuf]) -> Result<(), String> {
+        let sock = d.cfg.qmp_path(g.vmid);
+        let blocks = qmp(&sock, &["query-block"])?;
+        let devices = blocks.first().and_then(Value::as_array).ok_or("konuğun diskleri QEMU'da bulunamadı")?;
+        let prefix = format!("redox-flat-{}-", g.vmid);
+        for (i, disk) in disks.iter().enumerate() {
+            let file = disk.display().to_string();
+            let device = devices
+                .iter()
+                .find(|b| b["inserted"]["file"] == file.as_str())
+                .and_then(|b| b["device"].as_str())
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| format!("disk QEMU'da bulunamadı: {file}"))?;
+            let start = serde_json::json!({ "execute": "block-stream", "arguments": { "device": device, "job-id": format!("{prefix}{i}") } });
+            qmp_values(&sock, &[start]).map_err(|e| format!("disk yedekten ayrılamadı: {e}"))?;
+        }
+        // İşler bitince listeden düşer; sonuç çağıran tarafta imajın kendisine bakılarak doğrulanır.
+        let deadline = std::time::Instant::now() + Duration::from_secs(24 * 3600);
+        loop {
+            let jobs = qmp(&sock, &["query-block-jobs"])?;
+            let busy = jobs.first().and_then(Value::as_array).is_some_and(|list| list.iter().any(|job| job["device"].as_str().is_some_and(|name| name.starts_with(&prefix))));
+            if !busy {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline || !live_pid(d, g.vmid).is_some() {
+                return Err("disklerin yedekten ayrılması tamamlanamadı (konuk kapandı ya da süre doldu)".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    /// Çalışan konuğun disklerinin, bellek durumu olmadan alınan anlık görüntüsü. Bütün diskler tek bir QMP
+    /// işlemiyle (transaction) aynı anda görüntülenir. Konuk ajanı varsa dosya sistemleri önce dondurulur ve
+    /// görüntü alınır alınmaz çözülür: görüntü, uygulamaların yarım yazdığı bir anı değil temiz bir anı içerir.
+    pub(super) fn disk_snapshot(d: &QemuDriver, g: &Guest, name: &str, disks: &[super::PathBuf]) -> Result<bool, String> {
+        let sock = d.cfg.qmp_path(g.vmid);
+        let blocks = qmp(&sock, &["query-block"])?;
+        let devices = blocks.first().and_then(Value::as_array).ok_or("konuğun diskleri QEMU'da bulunamadı")?;
+        let mut actions = Vec::new();
+        for disk in disks {
+            let file = disk.display().to_string();
+            let device = devices
+                .iter()
+                .find(|b| b["inserted"]["file"] == file.as_str())
+                .and_then(|b| b["device"].as_str())
+                .filter(|n| !n.is_empty())
+                .ok_or_else(|| format!("disk QEMU'da bulunamadı: {file}"))?;
+            actions.push(serde_json::json!({ "type": "blockdev-snapshot-internal-sync", "data": { "device": device, "name": name } }));
+        }
+        // UEFI değişken deposu da (takılıysa) aynı işleme katılır: kapalıyken geri dönüş onu da arar.
+        for secure in [false, true] {
+            let file = d.cfg.efivars_path(g.vmid, secure).display().to_string();
+            if let Some(device) = devices.iter().find(|b| b["inserted"]["file"] == file.as_str()).and_then(|b| b["device"].as_str()).filter(|n| !n.is_empty()) {
+                actions.push(serde_json::json!({ "type": "blockdev-snapshot-internal-sync", "data": { "device": device, "name": name } }));
+            }
+        }
+        let frozen = d.agent_call(g.vmid, "guest-fsfreeze-freeze", Duration::from_secs(60)).is_some();
+        let taken = qmp_values(&sock, &[serde_json::json!({ "execute": "transaction", "arguments": { "actions": actions } })]).map(|_| ()).map_err(|e| format!("denetim noktası alınamadı: {e}"));
+        if frozen {
+            // Konuk donmuş bırakılmaz: çözme başarısızsa görüntü alınmış olsa da hata bildirilir.
+            let qga = d.cfg.qga_path(g.vmid);
+            let thawed = (0..5).any(|i| {
+                if i > 0 {
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                crate::qga::call(&qga, "guest-fsfreeze-thaw", Duration::from_secs(30)).is_ok()
+            });
+            if !thawed {
+                return Err("konuğun dosya sistemi denetim noktasından sonra çözülemedi; konukta 'fsfreeze -u' çalıştırın ya da konuğu yeniden başlatın".to_string());
+            }
+        }
+        taken.map(|()| frozen)
+    }
+
+    pub(super) fn taps(d: &QemuDriver, vmid: VmId) -> Vec<String> {
+        match live_pid(d, vmid) {
+            Some(pid) => crate::netlimit::taps_of(Path::new(&format!("/proc/{pid}/fdinfo"))),
+            None => Vec::new(),
+        }
+    }
+
+    /// Konuğun bütün blok aygıtlarından açılıştan beri okunan ve yazılan bayt.
+    pub(super) fn io_counters(d: &QemuDriver, g: &Guest) -> Option<(u64, u64)> {
+        let replies = qmp(&d.cfg.qmp_path(g.vmid), &["query-blockstats"]).ok()?;
+        let devices = replies.first()?.as_array()?;
+        let sum = |key: &str| devices.iter().filter_map(|b| b["stats"][key].as_u64()).sum::<u64>();
+        Some((sum("rd_bytes"), sum("wr_bytes")))
+    }
+
+    /// Balon sürücüsünün bellek ölçümü. QEMU ölçümleri yalnızca yoklama aralığı ayarlıysa toplar: ayarlı
+    /// değilse burada açılır ve ilk ölçüm bir sonraki turda gelir. Sürücüsüz konukta değerler hiç dolmaz.
+    pub(super) fn balloon_stats(d: &QemuDriver, g: &Guest) -> Option<redox_core::BalloonStats> {
+        const PATH: &str = "/machine/peripheral/balloon0";
+        const POLL_SECS: u64 = 10;
+        if !g.hw.balloon {
+            return None;
+        }
+        let sock = d.cfg.qmp_path(g.vmid);
+        let get = |property: &str| serde_json::json!({ "execute": "qom-get", "arguments": { "path": PATH, "property": property } });
+        let replies = qmp_values(&sock, &[get("guest-stats-polling-interval"), get("guest-stats")]).ok()?;
+        if replies.first().and_then(Value::as_u64) != Some(POLL_SECS) {
+            let set = serde_json::json!({ "execute": "qom-set", "arguments": { "path": PATH, "property": "guest-stats-polling-interval", "value": POLL_SECS } });
+            let _ = qmp_values(&sock, &[set]);
+            return None;
+        }
+        let report = replies.get(1)?;
+        if report["last-update"].as_u64().unwrap_or(0) == 0 {
+            return None;
+        }
+        // Sürücünün bildirmediği değerleri QEMU -1 olarak, yani işaretsiz okununca 2^64-1 olarak verir
+        // (eski çekirdekler ve bazı Windows sürücüleri "kullanılabilir bellek"i bildirmez). Böyle bir değer
+        // ölçüm sayılırsa konuk boşta görünür ve belleği haksız yere kısılır.
+        let mb = |key: &str| report["stats"][key].as_u64().filter(|bytes| *bytes < u64::MAX / 2).map(|bytes| bytes / (1024 * 1024));
+        Some(redox_core::BalloonStats { total_mb: mb("stat-total-memory")?, available_mb: mb("stat-available-memory")? })
+    }
+
+    /// Balonu hedefe ayarlar; hedef 0 ise konuk belleğinin tamamını geri alır.
+    pub(super) fn set_balloon(d: &QemuDriver, g: &Guest, target_mb: u64) -> Result<(), String> {
+        if !g.hw.balloon {
+            return Err("konukta bellek balonu aygıtı yok".to_string());
+        }
+        let mb = if target_mb == 0 { g.mem_total_mb } else { target_mb.min(g.mem_total_mb) };
+        let command = serde_json::json!({ "execute": "balloon", "arguments": { "value": mb * 1024 * 1024 } });
+        qmp_values(&d.cfg.qmp_path(g.vmid), &[command]).map(|_| ()).map_err(|e| format!("bellek hedefi ayarlanamadı: {e}"))
+    }
+
     fn limit_network(d: &QemuDriver, g: &Guest) -> Result<(), String> {
         if g.hw.net_mbps == 0 {
             return Ok(());
@@ -1840,6 +2368,9 @@ mod imp {
                         use std::os::unix::fs::DirBuilderExt;
                         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).map_err(|e| format!("paylaşılan klasör {} oluşturulamadı: {e}", dir.display()))?;
                     }
+                }
+                if g.hw.nested && d.cfg.kvm && !super::nested_enabled(&d.cfg.sys_module) {
+                    return Err(format!("konuk iç içe sanallaştırma istiyor ama {}", super::NESTED_HINT));
                 }
                 start_tpm(d, g)?;
                 if let Err(e) = prepare_vlan_taps(d, g) {
@@ -1884,6 +2415,13 @@ mod imp {
                     wait_until(Duration::from_secs(5), || !alive());
                     cleanup(d, g.vmid);
                     return Err(e);
+                }
+                // Kayıtlı bellek hedefi yeniden uygulanır (QEMU her açılışta balonu boş başlatır). Uygulanamazsa
+                // konuk belleğinin tamamıyla çalışmayı sürdürür; bu bir başlatma hatası değildir.
+                if g.hw.balloon && g.hw.balloon_mb > 0 && !resuming {
+                    if let Err(e) = set_balloon(d, g, g.hw.balloon_mb) {
+                        eprintln!("uyarı: konuk {} için {e}", g.vmid);
+                    }
                 }
                 if resuming {
                     // Durum yüklenene kadar konuk "inmigrate" görünür; yüklenince kendiliğinden çalışır.
@@ -2052,6 +2590,19 @@ mod imp {
     /// başlamaz çözülür: yedek, uygulamaların yarım yazdığı bir anı değil temiz bir anı içerir. Dönen değer
     /// dondurmanın yapılıp yapılmadığıdır. Ajan yoksa yedek yine alınır (elektrik kesilmiş gibi tutarlıdır).
     pub fn live_backup(d: &QemuDriver, g: &Guest, parts: &[(std::path::PathBuf, std::path::PathBuf)], raw: bool, mode: super::Cbt) -> Result<bool, String> {
+        // Yedek öncesi komut (ör. veritabanını tutarlı duruma getirir): başarısızsa yedek alınmaz, çünkü
+        // komutu yazan kişi yedeğin o durumda alınmasını şart koşmuştur.
+        let hook = |command: &str, when: &str| -> Result<(), String> {
+            let Some((path, args)) = redox_core::hw::split_hook(command) else { return Ok(()) };
+            match crate::qga::exec(&d.cfg.qga_path(g.vmid), &path, &args, Duration::from_secs(300)) {
+                Ok((0, _)) => Ok(()),
+                Ok((code, last)) => Err(format!("yedek {when} komutu {code} koduyla bitti: {path} ({last})")),
+                Err(e) => Err(format!("yedek {when} komutu çalıştırılamadı: {e}")),
+            }
+        };
+        hook(&g.hw.backup_pre, "öncesi").map_err(|e| format!("{e}; yedek alınmadı"))?;
+        let mut post_done = g.hw.backup_post.is_empty();
+        let mut post_result: Result<(), String> = Ok(());
         let frozen = d.agent_call(g.vmid, "guest-fsfreeze-freeze", Duration::from_secs(60)).is_some();
         let mut thawed = !frozen;
         // Çözme başarısız olursa konuk donmuş kalır: birkaç kez denenir ve sonuç mutlaka bildirilir.
@@ -2070,13 +2621,22 @@ mod imp {
         let outcome = live_copy(d, g, parts, raw, mode, &mut || {
             if !thawed {
                 thawed = true;
-                return thaw(d);
+                thaw(d)?;
+            }
+            // Kopyalar başladı: disk görüntüsü alındı, konuk normal çalışmasına dönebilir.
+            if !post_done {
+                post_done = true;
+                post_result = hook(&g.hw.backup_post, "sonrası");
             }
             Ok(())
         });
-        // Kopyalar başlayamadıysa da (hata) konuk donmuş bırakılmaz.
+        // Kopyalar başlayamadıysa da (hata) konuk donmuş bırakılmaz ve yedek sonrası komut yine çalıştırılır.
         let unfrozen = if thawed { Ok(()) } else { thaw(d) };
-        outcome.and(unfrozen).map(|()| frozen)
+        if !post_done {
+            post_result = hook(&g.hw.backup_post, "sonrası");
+        }
+        let post = post_result.map_err(|e| format!("{e}; yedek geçersiz sayıldı, komutu konukta elle çalıştırın"));
+        outcome.and(unfrozen).and(post).map(|()| frozen)
     }
 
     /// `started`: kopyalar başladığı (anlık görüntü alındığı) an bir kez çağrılır.
@@ -2135,6 +2695,10 @@ mod imp {
                 "job-id": job, "device": device, "target": target.display().to_string(),
                 "format": if raw && !delta { "raw" } else { "qcow2" }, "sync": if delta { "incremental" } else { "full" },
             });
+            if d.cfg.backup_mbps > 0 {
+                // Çalışan konuk: QEMU'nun yedek işi bu hızı (bayt/sn) aşmaz.
+                data["speed"] = (d.cfg.backup_mbps * 1024 * 1024).into();
+            }
             if delta {
                 // İş başarıyla biterse QEMU kopyalanan bitleri haritadan siler; başarısız olursa harita olduğu gibi kalır.
                 data["bitmap"] = CBT_BITMAP.into();
@@ -2529,6 +3093,59 @@ mod tests {
     }
 
     #[test]
+    fn boot_test_port_is_forwarded_only_on_loopback_of_isolated_guests() {
+        let mut g = guest(None);
+        (g.hw.test_port, g.hw.test_fwd) = (22, 40123);
+        assert!(!args(&cfg(), &g).join(" ").contains("hostfwd"), "olağan konukta sınama kapısı açılmaz");
+        g.hw.isolated = true;
+        assert!(args(&cfg(), &g).join(" ").contains("user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:40123-:22 "));
+        g.hw.test_fwd = 0;
+        assert!(!args(&cfg(), &g).join(" ").contains("hostfwd"));
+    }
+
+    #[test]
+    fn isolated_guests_have_no_way_out_of_their_network() {
+        let mut g = guest(None);
+        g.hw.nics = vec!["nat".into()];
+        let open = args(&cfg(), &g).join(" ");
+        assert!(open.contains("-netdev user,id=net0 ") && open.contains("-netdev user,id=net1 ") && !open.contains("restrict"), "{open}");
+        g.hw.isolated = true;
+        let closed = args(&cfg(), &g).join(" ");
+        assert!(closed.contains("-netdev user,id=net0,restrict=on ") && closed.contains("-netdev user,id=net1,restrict=on "), "{closed}");
+    }
+
+    #[test]
+    fn cpu_model_and_balloon_device_follow_the_guest() {
+        let mut g = guest(None);
+        let plain = args(&cfg(), &g).join(" ");
+        assert!(plain.contains("-cpu host") && !plain.contains("balloon"), "{plain}");
+        let mut soft = cfg();
+        soft.kvm = false;
+        assert!(args(&soft, &g).join(" ").contains("accel=tcg -cpu max"));
+        g.hw.nested = true;
+        assert!(args(&cfg(), &g).join(" ").contains("-cpu host "), "host uzantıyı zaten taşır");
+        g.hw.cpu_type = "EPYC".into();
+        assert!(args(&cfg(), &g).join(" ").contains("-cpu EPYC,+svm "));
+        g.hw.cpu_type = "Haswell".into();
+        assert!(args(&cfg(), &g).join(" ").contains("-cpu Haswell,+vmx "));
+        g.hw.nested = false;
+        let sys = std::env::temp_dir().join(format!("redox-nested-{}", std::process::id()));
+        assert!(!nested_enabled(&sys));
+        std::fs::create_dir_all(sys.join("kvm_amd/parameters")).unwrap();
+        std::fs::write(sys.join("kvm_amd/parameters/nested"), "0\n").unwrap();
+        assert!(!nested_enabled(&sys));
+        std::fs::write(sys.join("kvm_amd/parameters/nested"), "1\n").unwrap();
+        assert!(nested_enabled(&sys));
+        std::fs::remove_dir_all(&sys).unwrap();
+        g.hw.cpu_type = "Skylake-Server".into();
+        g.hw.balloon = true;
+        let a = args(&cfg(), &g);
+        assert!(a.join(" ").contains("accel=kvm -cpu Skylake-Server"), "{a:?}");
+        assert!(args(&soft, &g).join(" ").contains("accel=tcg -cpu Skylake-Server"), "seçilen model öykünmede de kullanılır");
+        assert_eq!(&a[a.len() - 2..], ["-device", "virtio-balloon-pci,id=balloon0"], "balon en son aygıttır: öbürlerinin yeri değişmez");
+    }
+
+    #[test]
     fn cloud_init_guests_get_a_cidata_drive_and_seed_files() {
         const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxvcmVtaXBzdW1kb2xvcnNpdGFtZXRjb25zZWN0 ben@dizustu";
         let mut g = guest(None);
@@ -2550,6 +3167,17 @@ mod tests {
         g.name = "yeni-ad".into();
         write_seed(&c, &g).unwrap();
         assert!(std::fs::read_to_string(c.seed_dir(150).join("user-data")).unwrap().contains("hostname: yeni-ad"));
+        // Sabit adres: ağ ayarı dosyası yazılır ve kimlik değişir (cloud-init yeniden uygular); adres silinince dosya kalkar.
+        assert!(!c.seed_dir(150).join("network-config").exists(), "adres yokken ağ dosyası yazılmaz");
+        assert!(g.hw.apply_cloud_init(None, None, Some("10.0.0.5/24"), Some("10.0.0.1"), Some("1.1.1.1")));
+        write_seed(&c, &g).unwrap();
+        let network = std::fs::read_to_string(c.seed_dir(150).join("network-config")).unwrap();
+        assert!(network.contains("macaddress: \"52:54:00:00:00:96\"") && network.contains("- 10.0.0.5/24") && network.contains("gateway4: 10.0.0.1"), "{network}");
+        assert!(std::fs::read_to_string(c.seed_dir(150).join("meta-data")).unwrap().starts_with("instance-id: redox-150-1
+"));
+        g.hw.apply_cloud_init(None, None, Some(""), Some(""), Some(""));
+        write_seed(&c, &g).unwrap();
+        assert!(!c.seed_dir(150).join("network-config").exists() && c.seed_dir(150).join("user-data").exists());
         g.hw = Default::default();
         write_seed(&c, &g).unwrap();
         assert!(!c.seed_dir(150).exists());

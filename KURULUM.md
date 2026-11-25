@@ -1,6 +1,7 @@
 # RedoX VE — sunucuya kurulum
 
 RedoX VE, Proxmox VE örnek alınarak Rust ile sıfırdan yazılmış bağımsız bir sanallaştırma platformudur.
+Bu kılavuzun İngilizcesi: [INSTALL.md](INSTALL.md).
 Genel tanıtım, Proxmox ile karşılaştırma, ekran görüntüleri ve teknik doküman: [README.tr.md](README.tr.md) (İngilizce: [README.md](README.md)).
 
 Bu kılavuz Debian 12 / Ubuntu 22.04+ (systemd, x86_64) içindir. Komutlardaki
@@ -47,7 +48,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # hepsi geçmeli (Linux'ta 381 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
+cargo test --workspace          # hepsi geçmeli (Linux'ta 469 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -179,6 +180,19 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
 - **Anlık görüntü ve yedek** sanal makine **çalışırken de** alınır (anlık görüntü belleği de kaydeder;
   geri dönünce konuk o andan devam eder). **Klon ve disk büyütme** konuk kapalıyken yapılır. Yedekler
   `/var/lib/redox/backups/` altında qcow2 dosyalarıdır (artımlı yedek açıksa parça deposu, aşağıda).
+- **Yedek işleri (birden çok konuk, tek zamanlama):** *Yedekler* sayfasındaki **Yedek işleri** bölümünden ya da
+  `redox job add gece time=03:00 days=1-5 tags=web,db keep=7` ile tanımlanır (en fazla 16 iş). `tags` verilmezse
+  bütün konuklar, `days` verilmezse her gün (1 Pazartesi … 7 Pazar). Şablonlar hiçbir zaman dahil değildir.
+  - Konuklar **tek tek** yedeklenir: biri bitmeden sıradaki başlamaz; bütün işler arasında aynı anda en çok bir yedek
+    sürer. Sırası gelen konuk başka bir işlemle meşgulse beklenir; yedeği alınamayan konuk (ör. simülasyonda çalışan
+    konuk) görev günlüğüne `zamanlayıcı` kullanıcısıyla hata yazılır ve tur sıradakiyle sürer.
+  - Saklama sayısı (`keep`) konuk başınadır ve yalnızca **o işin** aldığı yedeklere uygulanır; konuğun kendi
+    zamanlamasıyla ya da elle alınan yedekler sayılmaz. İş silinirse aldığı yedekler kalır ve artık kendiliğinden
+    silinmez.
+  - Sunucu o saatte kapalıysa iş, gün bitmeden açılırsa çalışır. Tur sürerken iş yeniden başlamaz.
+  - Hemen çalıştırmak için **Şimdi Çalıştır** ya da `redox job run gece`; listelemek için `redox job list`, silmek için
+    `redox job remove gece`. Aynı adla yeniden kaydetmek işi günceller.
+  - Zamanlayıcı 30 saniyede bir bakar: bir konuğun yedeği bitince sıradaki en geç 30 saniye sonra başlar.
 - **Zamanlanmış yedek:** konuğun *Seçenekler* sekmesinde saat (`03:30`) ve saklanacak yedek sayısı
   verilir; ya da `redox vm set 103 backup-time=03:30 backup-keep=7`. Saat sunucunun yerel saatidir;
   sayıyı aşan en eski **otomatik** yedekler silinir, elle alınanlara dokunulmaz. Sunucu o dakikada
@@ -203,8 +217,25 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   (`sudo install -d -o redox -g redox -m 0700 /mnt/nvme2/redox`); ağ paylaşımı hizmetten önce bağlanmış olmalıdır.
   Alan *Depolama* sayfasında ve konuk oluşturma formunda görünür; konuğun bütün diskleri (asıl, ek, klon ve geri
   yükleme) seçilen alanda durur. Yedekler, kurulum kalıpları ve konteynerler her zaman veri dizinindedir
-  (`local`). Bir konuğu sonradan başka alana taşıma yoktur. Üzerinde konuk olan bir alanı hizmet satırından
-  çıkarırsanız sunucu başlamaz ve hangi konukların orada olduğunu söyler.
+  (`local`). Üzerinde konuk olan bir alanı hizmet satırından çıkarırsanız sunucu başlamaz ve hangi konukların orada
+  olduğunu söyler.
+- **Konuğu başka depolama alanına taşıma:** kapalı sanal makinenin *Çoğalt ve Taşı* sekmesindeki **Depolama alanı**
+  bölümünden ya da `redox vm move 103 hizli` ile bütün diskleri (ek diskler dahil) başka bir alana taşınır. Diskler önce
+  hedefe kopyalanır, hepsi tamamlanınca yerlerine konur ve ancak ondan sonra eski yerlerinden silinir: yarıda kalan
+  taşıma konuğu eski alanında bırakır ve hedefte dosya kalmaz. Anlık görüntüler disklerle birlikte gelir. Süre
+  disklerin dolu kısmıyla orantılıdır ve hedefte konuğun diskleri kadar boş yer gerekir. Askıdaki konuk, bağlı klon ve
+  bağlı klonları olan şablon taşınmaz (diskleri birbirinin yerine bağlıdır). Konteynerler taşınmaz.
+- **Kaynak havuzları ve kotalar:** *Havuzlar* sayfasından ya da `redox pool add web cores=32 memory=65536 disk=500
+  guests=10` ile bir konuk grubunun toplam çekirdek, bellek (MB), disk (GB) ve konuk sayısına sınır konur; yazılmayan
+  sınırsızdır (en fazla 32 havuz). Konuk havuza *Seçenekler* sekmesindeki **Kaynak havuzu** kutusundan ya da
+  `redox vm set 103 pool=web` ile alınır (`pool=` çıkarır).
+  - Kota, konukların **ayrılmış** kaynağına uygulanır (çekirdek sayısı, bellek, disklerin toplamı), o anki kullanıma
+    değil; kapalı konuklar da sayılır.
+  - Kota dolduğunda havuza konuk alınamaz, havuzdaki konuğun çekirdeği ve belleği artırılamaz, diski büyütülemez ya da
+    disk eklenemez, konuk klonlanamaz (klon kaynağın havuzunu devralır).
+  - Kota şimdiki kullanımın altına indirilemez; içinde konuk olan havuz silinemez.
+  - Konuk oluşturma havuzsuzdur: havuz sonradan atanır. Konukları yalnızca yönetici oluşturup değiştirebildiği için
+    kotalar bir yetki sınırı değil, kaynak ayırmayı gözetim altında tutan bir güvencedir.
 - **Kaynak uyarıları:** depolama doluluğuna ek olarak düğümün belleği (%90 uyarı, %97 kritik), düğümün işlemcisi
   (%90) ve çalışan bir konuğun işlemcisi (%95) izlenir. Koşul *Genel Bakış* sayfasında hemen görünür; webhook ve
   e-posta bildirimi ise ancak koşul 5 dakika kesintisiz sürerse gönderilir (anlık sıçramalar bildirim üretmez).
@@ -246,6 +277,31 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   `/var/lib/redox/cloud/` klasörüne koyun. Oluşturma formunda *Disk imajı* olarak seçin, kullanıcı adını ve SSH açık
   anahtarınızı yazın: disk imajdan kopyalanır, istediğiniz boyuta büyütülür ve ilk açılışta kullanıcı, anahtar ve
   makine adı kendiliğinden ayarlanır. Parola ile giriş kapalıdır.
+- **cloud-init'i sonradan düzenleme:** kapalı sanal makinenin *Donanım* sekmesindeki **cloud-init** bölümünden
+  kullanıcı, SSH açık anahtarı, sabit adres (`10.0.0.5/24`), ağ geçidi ve ad sunucuları (en fazla 3) değiştirilir; ya da
+  `redox vm set 103 ci-user=ali ci-key='ssh-ed25519 AAAA…' ci-ip=10.0.0.5/24 ci-gw=10.0.0.1 ci-dns=1.1.1.1,9.9.9.9`.
+  - Anahtar doluysa cloud-init açıktır; boşaltılırsa (`ci-key=`) kapanır ve öbür ayarlar da silinir. Adres boşsa
+    (`ci-ip=`) konuk DHCP kullanır. Adres yalnızca birinci karta verilir (IPv4).
+  - Ayarlar her değiştiğinde konuğun cloud-init kimliği de değişir; konuk bir sonraki açılışta ayarları **yeniden
+    uygular**: yeni kullanıcı ve anahtar eklenir, makinenin SSH sunucu anahtarları yenilenebilir (istemciler "anahtar
+    değişti" uyarısı verir), eski kullanıcı silinmez.
+  - Konuğun işletim sisteminde cloud-init kurulu olmalıdır (bulut imajlarında hazır gelir). Sonradan cloud-init açılan
+    konuğa bir sürücü daha takılır; diskleri sıra numarasıyla (`/dev/vdb`) bağlayan sistemlerde sıra kayabilir.
+  - Gerçek QEMU'da dosyaların yazıldığı ve sürücünün takıldığı denendi; ayarların **konuğun içinde** uygulandığı
+    gerçek bir bulut imajıyla doğrulanmadı.
+- **İşlemci türü:** *Donanım* sekmesinde **İşlemci türü** (ya da `redox vm set 103 cpu=Haswell`; `cpu=host` varsayılana
+  döner). Varsayılan, sunucunun kendi işlemcisidir ve en hızlısıdır. Konuğu farklı işlemcili bir sunucuya çalışırken
+  taşıyacaksanız iki sunucunun da desteklediği ortak bir model seçin (ör. iki Intel sunucu için ikisinden eski olanın
+  kuşağı). Konuk kapalıyken değişir. Başka üreticinin modeli (Intel sunucuda `EPYC`, AMD sunucuda `Haswell`) kabul
+  edilmez. Aynı üreticinin, sunucudan **yeni** bir kuşağını seçerseniz QEMU eksik özellikleri uyarıyla atlayabilir ya da
+  konuk başlamaz; bu denetlenmez.
+- **Bellek balonu:** *Donanım* sekmesinde **Balon aygıtını tak** (`redox vm set 103 balloon=true`; konuk kapalıyken).
+  Takılıyken aynı sekmedeki **Bellek hedefi** ya da `redox vm balloon 103 4096` ile konuğun belleği **çalışırken**
+  küçültülüp büyütülür (256 MB ile konuğun belleği arasında; 0 balonu boşaltır). Hedef kaydedilir ve her açılışta
+  yeniden uygulanır. Konukta virtio balon sürücüsü gerekir (Linux çekirdeğinde hazır; Windows'ta virtio-win). Sürücü
+  yoksa komut kabul edilir ama bellek geri gelmez. Balon, konuğun kullanmadığı belleği verir; hedef çok düşükse konuk
+  takas alanına başvurur ya da süreç öldürür. Gerçek QEMU'da aygıtın takıldığı ve komutun kabul edildiği denendi;
+  belleğin gerçekten küçüldüğü, işletim sistemi olan bir konukta doğrulanmadı.
 - **Başka sanallaştırıcıdan aktarma:** aynı klasöre koyduğunuz `vmdk`, `vdi`, `vhdx` diskleri de imaj olarak seçilir ve
   qcow2'ye çevrilir. OVA dosyası bir tar arşividir: `tar -xf makine.ova` ile açıp içindeki `.vmdk` dosyasını koyun.
 - **Dışa aktarma:** *Yedekler* sekmesindeki **İndir** düğmesi yedeği tek başına kullanılabilir bir qcow2 dosyası olarak
@@ -313,6 +369,107 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   - Diskler önce yanlarına yazılır, hepsi hazır olunca yerlerine konur: biri eksik ya da bozuksa hiçbir diske dokunulmaz.
   - **İndir** asıl diski verir; her ek disk için ayrı düğme vardır (`.../download?disk=1`). Dış hedefe hepsi gider.
   - Bu özellikten önce alınmış yedekler yalnızca asıl diski içerir ve öyle geri yüklenir.
+- **UEFI ve TPM durumunun yedeği:** UEFI'li konuğun değişken deposu (önyükleme girdileri, güvenli önyükleme
+  anahtarları) ve sanal TPM'in durumu (BitLocker anahtarlarını saklayan kısım) yedeğin yanına küçük bir arşiv olarak
+  yazılır (`backups/<yedek>.machine.tar`); yedek listesinde `UEFI/TPM` etiketi çıkar. Geri yükleme diskle birlikte
+  bunları da geri getirir; dış hedefe kopya ve silme arşivi de kapsar. Tam ve artımlı yedeklerde aynıdır.
+  - Konuğun şimdiki donanımına uymayan parça geri konmaz: güvenli önyükleme ayarı değişmişse değişken deposu, TPM
+    kaldırılmışsa TPM durumu atlanır.
+  - Konuk çalışırken değişken deposunun kopyası QEMU dosyayı kullanırken alınır; depo nadiren yazıldığı için pratikte
+    tutarlıdır, ama diskler gibi tek bir anda dondurulmaz.
+  - Bu özellikten önce alınmış yedeklerde arşiv yoktur; geri yüklenince depo ve TPM durumu olduğu gibi kalır.
+  - *Buraya Al* (sunucular arası taşıma) arşivi de taşır: kopya, kaynağın değişken deposu ve TPM durumuyla açılır.
+- **Yedekten yeni konuk:** yedeği özgün konuğun üstüne değil, ayrı bir sanal makine olarak açar: *Yedekler* sekmesinde
+  **Yeni konuk olarak aç**, *Yedekler* sayfasında **Yeni Konuk** ya da `redox backup restore-new <yedek> <ad>`.
+  Konuğun tanımı (çekirdek, bellek, donanım) yedekle birlikte saklanır; özgün konuk silinmiş olsa da yedek açılır.
+  Kopya kendiliğinden başlamaz, zamanlamaları ve sunucunun USB/PCI aygıtlarını devralmaz. Bu özellikten önce alınmış
+  yedekler, konukları hâlâ duruyorsa onun şimdiki ayarlarıyla açılır; konuğu da silinmişse açılamaz.
+- **Anında kurtarma:** **Anında aç** ya da `redox backup instant <yedek> <ad>`: konuğun diskleri yedeğin üzerine
+  kurulu ince katmanlar olarak hazırlanır (kopyalama yok, bir saniyenin altında) ve konuk hemen başlatılabilir. Konuk
+  yalnızca değişiklikleri tutar, geri kalanını yedekten okur; bu yüzden yedek, konuk ondan ayrılana kadar silinemez
+  ve budanmaz. Kalıcı olması için *Çoğalt ve Taşı* sekmesinde **Yedekten Ayır** (`redox vm detach <kimlik>`):
+  yedekteki veri disklere kopyalanır; konuk çalışırken de yapılır. Yalnızca tam (tek dosyalı) ve yerelde duran
+  yedeklerle çalışır; artımlı yedeği *Yeni konuk olarak aç* ile geri yükleyin.
+- **Yedeği açarak sınama:** **Açarak sına** ya da `redox backup test <yedek>`: yedekten ağdan yalıtılmış geçici bir
+  konuk oluşturulur, başlatılır, bir süre (varsayılan 60 sn; `--backup-test-secs`) çalışır halde kaldığı denetlenir
+  ve konuk silinir. Sonuç yedeğin satırına (`sınandı: tarih`) ve görev günlüğüne yazılır. **Doğrula**'dan farkı:
+  o yalnızca verinin bozulmadığını gösterir; bu, yedeğin gerçekten açılan bir konuk verdiğini. Konukta konuk ajanı
+  varsa işletim sisteminin yanıt verdiği de doğrulanır; yoksa sonuçta "işletim sisteminin açıldığı doğrulanamadı"
+  yazar (yalnızca sanal makinenin çökmeden çalıştığı bilinir). Sınama, yedeğin açık hali kadar boş disk yeri ister.
+- **Dosya düzeyinde geri yükleme:** `sudo apt install libguestfs-tools` kuruluysa *Yedekler* sekmesinde **Dosyalara göz
+  at** çıkar: yedeğin içindeki klasörler gezilir, tek dosya ya da bir klasör (tar olarak) indirilir; yedek ve konuk
+  değişmez. Komut satırından `redox backup ls <yedek> /etc`. Yalnızca yöneticiler kullanabilir ve her erişim denetim
+  günlüğüne yazılır (yedeğin içeriği konuğun bütün dosyalarıdır). Her listeleme birkaç saniye sürer; artımlı yedekte
+  önce disk geçici bir dosyaya dökülür. Ubuntu'da çekirdek dosyası yalnızca köke açıktır: `sudo chmod 0644
+  /boot/vmlinuz-*` gerekir. **Gerçek libguestfs ile denenmedi** (geliştirme ortamına kurulamadı; sahte araçla sınandı).
+- **Haftalık, aylık, yıllık saklama (GFS):** "son N yedek"e ek olarak yedeği olan son N haftanın, ayın ve yılın en
+  yeni otomatik yedeği saklanır. Konuk için *Seçenekler* sekmesinde ya da
+  `redox vm set 103 backup-weekly=4 backup-monthly=12 backup-yearly=2`; iş için `weekly= monthly= yearly=`.
+  Haftalar Pazartesi başlar; tarihler UTC'ye göre hesaplanır.
+- **Değiştirilemez yedek (kilit):** **Kilitle** (30 gün) ya da `redox backup lock <yedek> <gün>`: yedek o tarihe kadar
+  silinemez ve budanmaz. Kilit yalnızca uzatılabilir; kısaltılamaz ve kaldırılamaz. İşe `lock=14` verilirse o işin
+  aldığı her yedek 14 gün kilitli doğar. Bu, panelden ve API'den silmeye karşı bir korumadır: sunucuda kök yetkisi
+  olan biri dosyayı yine silebilir. Gerçek değiştirilemezlik için S3 hedefinizde kovaya **Object Lock varsayılan saklama
+  süresi** tanımlayın (o zaman RedoX'un silme istekleri de süre dolana kadar reddedilir ve görev günlüğüne düşer).
+- **Birden çok dış hedef (3-2-1):** hizmet satırına `--offsite-copy DOSYA` ekleyin (birden çok kez yazılabilir; dosya
+  biçimi `--offsite` ile aynı). Asıl hedefe giden her yedek bunlara da kopyalanır; her hedef kendi parolasıyla
+  şifrelenir. Bir kopya hedefine erişilemezse yedek ve öbür kopyalar geçerlidir, hata görev günlüğüne yazılır
+  (`backup copy`). Geri yüklemede önce asıl hedef, olmazsa sırayla kopya hedefleri denenir. Silme hepsinden siler.
+- **Yedekten önce ve sonra konukta komut:** *Seçenekler* sekmesinde ya da
+  `redox vm set 103 backup-pre='/usr/local/bin/once.sh' backup-post='/usr/local/bin/sonra.sh'`. Konuk çalışırken alınan
+  yedekten hemen önce ve disk görüntüsü alınır alınmaz, konuk ajanıyla çalışır (ör. veritabanını tutarlı duruma
+  getirip sonra serbest bırakmak için). Mutlak program yolu ve argümanları yazılır; kabuk kullanılmaz. Öncesi komutu
+  başarısız olursa (ya da konukta ajan yoksa) yedek alınmaz; sonrası komutu başarısız olursa yedek geçersiz sayılır
+  ve görev, komutu elle çalıştırmanızı söyler. Kapalı konukta komut çalışmaz.
+- **Yedek penceresi, doğrulama ve hız sınırı:** işe `until=06:00` verilirse o saatten sonra sıradaki konukların
+  yedeğine başlanmaz (süren yedek kesilmez; elle başlatılan tur pencereye bakmaz) ve kaç konuğun kaldığı görev
+  günlüğüne yazılır. `verify=true` her yedekten sonra bozulma denetimi yapar. Hizmet satırındaki `--backup-mbps N`
+  yedek kopyalama hızını disk başına N MB/sn ile sınırlar (yedek, konukların disk hızını tüketmesin diye).
+- **Yedek raporu ve korumasız konuklar:** *Yedekler* sayfası, 7 gündür (`--backup-age-days`; 0 kapatır) yedeği
+  alınmamış konukları listeler. `redox backup report` son 24 saatin özetini verir; `--backup-report 07:30` ile her gün o
+  saatte e-postayla gönderilir (`--alert-email` gerekir).
+- **Üretim denetim noktası:** *Anlık Görüntüler* sekmesinde **Üretim (belleksiz)** kutusu ya da
+  `redox snapshot create 103 once --production`. Çalışan konuğun yalnızca diskleri, tek bir işlemde ve (konuk ajanı
+  varsa) dosya sistemleri dondurularak görüntülenir; bellek kaydedilmez. Küçük ve hızlıdır, veritabanı gibi
+  uygulamalar için tutarlıdır. Geri dönüşte konuk o andan sürmez, o andaki diskle yeniden açılır; bu yüzden dönüş
+  konuk kapalıyken yapılır. Ajan yoksa görüntü yine alınır ama "tutarlı" etiketi taşımaz.
+- **Dinamik bellek:** balon aygıtı takılı konukta *Donanım → Bellek hedefi* kartından ya da
+  `redox vm balloon 103 auto 2048`. Hedef, konuğun kullandığı bellek + %20 pay olarak, verdiğiniz alt sınır ile
+  belleğin tamamı arasında 15 saniyede bir ayarlanır; büyütme hemen, küçültme yalnızca fark belirginse yapılır.
+  Konukta virtio balon sürücüsü gerekir; sürücü ölçüm vermiyorsa (ya da "kullanılabilir bellek"i bildirmiyorsa)
+  hedefe dokunulmaz. `auto 0` kapatır. **Gerçek QEMU'da ölçüm yoklamasının açıldığı doğrulandı; balon sürücüsü olan
+  gerçek bir konukta belleğin gerçekten küçülüp büyüdüğü denenmedi.**
+- **Kaynak ölçümü:** konuğun *Özet* sekmesindeki kart ve `redox usage` / `redox vm usage 103`; `GET /api/v1/usage`
+  hepsini verir. Açık kalma süresi, işlemci (çekirdek-saat), bellek (GB-saat) ve disk okuma/yazma birikimli
+  sayılır; konuk kapanıp açılsa da sürer. `redox vm usage 103 reset` fatura dönemi kapanınca sıfırlar. Sayaçlar
+  diske beş dakikada bir yazılır: hizmet aniden kesilirse son dakikalar kaybolabilir. Ağ trafiği sayılmaz.
+- **Ağ kartı koruması:** *Seçenekler → Güvenlik duvarı* altındaki kutu ya da `redox vm set 103 nic-guard=true`.
+  Konuk yalnızca kendi MAC adresiyle konuşabilir, ağa DHCP yanıtı ve IPv6 yönlendirici duyurusu (RA) gönderemez.
+  Köprüye bağlı kartlarda etkilidir ve `--firewall` ister (12. bölüm). Kurallar konuğun sunucudaki arayüzlerine
+  bağlıdır; konuk açılıp kapandıkça en geç 15 saniyede güncellenir. **Kuralların üretimi sınandı; gerçek bir
+  köprüde trafik altında denenmedi.**
+- **İç içe sanallaştırma:** *Donanım* sekmesindeki kutu ya da `redox vm set 103 nested=true` (konuk kapalıyken).
+  Konuk kendi sanal makinelerini çalıştırabilir (KVM, Hyper-V, WSL2, Docker Desktop). Sunucuda açık olmalıdır:
+  `cat /sys/module/kvm_intel/parameters/nested` (AMD'de `kvm_amd`) `Y` ya da `1` vermeli; vermiyorsa
+  `/etc/modprobe.d/kvm.conf` içine `options kvm_intel nested=1` yazıp sunucuyu yeniden başlatın. `qemu64` ve
+  `kvm64` modelleriyle kullanılamaz.
+- **Yedek yaşı hedefi (RPO):** *Seçenekler* sekmesinde saat olarak ya da `redox vm set 103 rpo=24`. Son yedeği
+  bundan eski olan konuk, genel `--backup-age-days` ayarından bağımsız olarak "korumasız" sayılır.
+- **Olağan dışı değişim uyarısı:** artımlı yedekte değişen veri, konuğun önceki yedeklerinin ortancasının en az 4
+  katıysa (ve en az 512 MB ile diskin %25'iyse) yedek işaretlenir, görev günlüğüne başarısız bir kayıt düşer (uyarı
+  kanallarına böyle ulaşır) ve günlük raporda yer alır. Toplu şifreleme (fidye yazılımı) böyle bir iz bırakır;
+  büyük bir veri taşıma ya da yükseltme de bırakır. Kanıt değil, bakılması gereken bir işarettir. Yalnızca artımlı
+  yedeklerde (`--incremental-backups`) çalışır; en az üç önceki yedek gerekir.
+- **Yedek sınamasında hizmet denetimi:** `redox vm set 103 test-port=22 test-cmd=/usr/local/bin/saglik.sh`.
+  Yedek açılarak sınanırken geçici konuğun o kapısındaki hizmetten **veri gelmesi** beklenir (kapı yalnızca
+  sunucunun 127.0.0.1 adresine yönlendirilir) ve komut konuk ajanıyla çalıştırılır; 0 ile bitmezse sınama
+  başarısızdır. Veri göndermeyen hizmetler için komutu kullanın. **Gerçek QEMU'da kapı yönlendirmesi doğrulandı;
+  işletim sistemi kurulu gerçek bir konukta denenmedi.**
+- **Dört göz ilkesi:** hizmet satırına `--four-eyes` ekleyin. Yedek ve konuk silme hemen yapılmaz; **başka** bir
+  yönetici onaylayınca yürür (`redox approval list | approve <no> | reject <no>` ya da her sayfanın üstündeki
+  bildirim). İstek sahibi kendi isteğini onaylayamaz, 24 saatte onaylanmayan istek düşer. En az iki yönetici
+  hesabı gerekir. Zamanlayıcının saklama budaması bu kuralın dışındadır. Aynı kişinin iki hesabı varsa kural onu
+  durdurmaz: amaç, ele geçirilen tek bir hesabın yedekleri silememesidir.
 - **Aygıt aktarımı:** *Donanım* sekmesine `lsusb` kimliğini (`046d:c52b`) ya da `lspci -D` adresini (`0000:01:00.0`)
   yazın. USB için hizmet kullanıcısının aygıta erişimi (udev kuralı), PCI için BIOS'ta IOMMU, çekirdekte
   `intel_iommu=on` ve aygıtın `vfio-pci` sürücüsüne bağlanması gerekir. **Gerçek donanımla denenmedi.**
@@ -398,11 +555,15 @@ journalctl -u redox -n 20 --no-pager      # "sürücü: qemu-kvm+lxc" yazmalı
 - **Konsol sekmesi** konteynerde komut çalıştırır (kök olarak, en çok 20 saniye) ve çıktısını gösterir.
   Etkileşimli programlar çalışmaz. Komut metni günlüğe yazılmaz.
 - **Sınırlar:** bellek ve çekirdek sınırı uygulanır; **disk boyutu sınırı uygulanmaz** (kök dosya sistemi
-  düz bir dizindir). Klon ve disk büyütme konteynerlerde yok.
-- **Anlık görüntü ve yedek** konteyner **kapalıyken** alınır. Anlık görüntü `lxc-snapshot` ile, yedek kök
-  dosya sisteminin `tar.gz` arşivi olarak (`/var/lib/redox/backups/ct-….tar.gz`) tutulur; geri yükleme
-  kök dosya sistemini boşaltıp arşivi açar, sınırlar ve ağ ayarı değişmez. Zamanlanmış yedek çalışan
-  konteyneri atlar ve görev günlüğüne hata yazar.
+  düz bir dizindir). Disk büyütme, şablon ve bağlı klon konteynerlerde yok.
+- **Klon:** kapalı konteynerin *Çoğalt* sekmesinden ya da `redox ct clone 202 yeni-ad` ile kopyası alınır
+  (`lxc-copy`). Kopya kendi kimliğini, adını ve ağ adresini alır; anlık görüntüler kopyalanmaz.
+- **Anlık görüntü** konteyner **kapalıyken** alınır (`lxc-snapshot`). **Yedek çalışırken de alınır:** konteyner
+  arşivleme süresince dondurulur (içindeki programlar durur, ağ bağlantıları bekler) ve bitince kaldığı yerden sürer;
+  süre kök dosya sisteminin boyutuyla orantılıdır. Kesinti istemiyorsanız yedeği sakin bir saate zamanlayın.
+  Yedek, kök dosya sisteminin `tar.gz` arşividir (`/var/lib/redox/backups/ct-….tar.gz`); geri yükleme (konteyner
+  kapalıyken) kök dosya sistemini boşaltıp arşivi açar, sınırlar ve ağ ayarı değişmez. Konteyner yedekten sonra
+  çözülemezse yedek bırakılmaz ve görev, elle çalıştırılacak `lxc-unfreeze` komutunu söyler.
 - LXC'yi kullanmak istemiyorsanız `--no-lxc` ile kapatın. Hizmet kök olarak çalışırsa konteynerler
   kimlik eşlemesiz (yetkili) olur; sunucu bunu başlarken uyarır.
 
@@ -432,8 +593,11 @@ from = redox@example.com
 to = ben@example.com, nobet@example.com
 ```
 
-Bağlantı baştan TLS'lidir (465. kapı); STARTTLS (587) desteklenmez. Bir turdaki olaylar tek iletide gönderilir.
-Yalnızca sahte bir SMTP sunucusuyla sınandı; gerçek bir sağlayıcıyla (TLS dahil) denenmedi.
+Kapı 465 ise bağlantı baştan TLS'lidir; 587 ise düz başlar ve STARTTLS ile şifrelenir. Kapıdan bağımsız seçmek için
+`mode = tls` ya da `mode = starttls` yazın. Kullanıcı adı, parola ve ileti hiçbir koşulda şifreleme kurulmadan
+gönderilmez: sunucu STARTTLS'i kabul etmezse ya da sertifikası doğrulanamazsa gönderim durur. Aynı makinedeki bir
+aktarıcıya (`127.0.0.1`) bağlantı şifresizdir. Bir turdaki olaylar tek iletide gönderilir.
+Yalnızca sahte bir SMTP sunucusuyla sınandı; gerçek bir sağlayıcıyla (TLS el sıkışması dahil) denenmedi.
 
 **Grafikler:** düğüm ve konuk sayfalarında son 10 dakika, 24 saat (dakikalık ortalama) ve 30 gün (saatlik ortalama)
 seçilebilir. Geçmiş `metrics.json` dosyasında tutulur ve yeniden başlatmada korunur; sunucunun kapalı olduğu süreler
@@ -475,7 +639,9 @@ token'ı reddeden eş sayfada nedeniyle birlikte gösterilir; diğerleri etkilen
 **Buraya Al** düğmesini ya da `redox peer import izmir 103` komutunu kullanın. Bunun için eş dosyasındaki token
 eşte **yönetici** yetkili olmalıdır. Merkez eşte bir yedek aldırır, indirir, yeni bir kimlikle konuğu oluşturur ve
 eşteki geçici yedeği siler. Kaynak konuk yerinde kalır: kopyanın çalıştığını görünce eşte siz silersiniz. Köprü
-merkezde yoksa ağ NAT'a çevrilir; USB/PCI aktarımı taşınmaz. Konteynerler ve ek diskli sanal makineler taşınmaz.
+merkezde yoksa ağ NAT'a çevrilir; USB/PCI aktarımı taşınmaz. Konteynerler taşınmaz. Ek diskler numaraları ve
+içerikleriyle, UEFI değişken deposu ve sanal TPM durumu da konukla birlikte gelir (ikisi de eşte yönetici token'ı ister;
+TPM durumu disk şifreleme anahtarlarını korur). TPM'li konuğun TPM durumu alınamıyorsa taşıma yapılmaz.
 
 **Çalışan konuğu taşıma (Çalışırken Al):** eşte çalışan (ya da askıda duran) bir sanal makinede aynı düğme
 **Çalışırken Al** adını alır; komut aynıdır. Merkez konuğu eşte askıya aldırır, diskini ve bellek durumunu indirir
@@ -555,11 +721,22 @@ Hizmet satırına `--offsite /var/lib/redox/offsite.conf` ekleyip yeniden başla
   değiştirilebilir hem de içerikleri değiştirilebilir; geri
   yüklenen tam yedek imajının başka bir dosyaya bağlanmadığı denetlenir, içeriği denetlenemez. Güvenmediğiniz
   hedeflerde şifrelemeyi açın.
-- S3'te tek dosya sınırı 5 GB'dir (parçalı yükleme yok). Artımlı yedeklerde parçalar en çok 4 MiB olduğu için bu sınır
-  onları etkilemez; tam yedekler ve konteyner arşivleri için geçerlidir. S3'te her yeni parça için bir sorgu ve bir
-  yükleme isteği yapılır; çok büyük ilk yedek uzun sürebilir.
-- S3 hedefi yalnızca yerel bir sahte sunucuyla sınandı; gerçek bir sağlayıcıyla denenmedi. İmza hesabı AWS'nin
-  belgelerindeki örnekle doğrulandı.
+- S3'te 64 MiB'ı aşan dosyalar parça parça yüklenir (çok parçalı yükleme): tam yedekler ve konteyner arşivleri için
+  5 GB sınırı yoktur. Bir parça gönderilemezse yükleme iptal edilir ve hedefte yarım parça bırakılmaz; yine de
+  sağlayıcınızda "tamamlanmamış çok parçalı yüklemeleri sil" yaşam döngüsü kuralını açmanız iyi olur (iptal isteği de
+  başarısız olabilir). Artımlı yedeklerde parçalar en çok 4 MiB olduğu için tek istekle gider; her yeni parça için bir
+  sorgu ve bir yükleme isteği yapılır, çok büyük ilk yedek uzun sürebilir.
+- S3 hedefi yalnızca yerel bir sahte sunucuyla sınandı; gerçek bir sağlayıcıyla denenmedi. İmza hesabı (sorgulu
+  istekler dahil) AWS'nin belgelerindeki üç örnekle doğrulandı.
+
+### Kopya hedefinde ayrı saklama süresi (arşiv)
+
+Kopya hedefinin (`--offsite-copy`) dosyasına `keep_days = 90` yazarsanız o hedef bir arşive dönüşür: yedek yerelde
+silinse de (elle ya da saklama budamasıyla) alındığı andan başlayarak 90 gün boyunca o hedefte durur; asıl dış
+hedeften ve yerelden hemen silinir. Böyle yedekler *Yedekler* sayfasındaki **Arşiv** kartında ve
+`redox backup archive` çıktısında görünür. `redox backup recover <yedek>` kaydı listeye geri getirir; sonra olağan
+bir yedek gibi geri yüklenir ya da yeni konuk olarak açılır (dosyalar o sırada kopya hedefinden iner). Süresi dolan
+yedek kopya hedefinden kendiliğinden silinir. `keep_days` yalnızca kopya hedeflerinde geçerlidir.
 
 ## 12. Konuk güvenlik duvarı
 
@@ -593,7 +770,7 @@ sudo -u redox redox user scope nobet web,test --users /var/lib/redox/users.json 
 ```
 
 Kapsam boşsa operatör bütün konuklarda yetkilidir. Operatör bütün konukları **görür**; kapsam yalnızca işlem yapmayı
-kısıtlar. Kaynak kotası yoktur. Rol ve kapsam *Kullanıcılar* sayfasından da değişir.
+kısıtlar. Kaynak kotaları için 8. bölümdeki *Kaynak havuzları* maddesine bakın. Rol ve kapsam *Kullanıcılar* sayfasından da değişir.
 
 **Tek oturum açma (OpenID Connect):** kimlik sağlayıcınızda (Keycloak, Authentik, Google, Microsoft Entra) bir istemci
 oluşturun; dönüş adresi `https://redox.example.com/login/oidc/callback` olsun.
@@ -624,7 +801,7 @@ sağlayıcıda zorunlu kılın). Yalnızca sahte bir sağlayıcıyla sınandı; 
 - **Kilit adres bazlıdır.** Çok sayıda adresten dağıtık deneme yapan biri yavaşlatılır ama tümüyle engellenmez; Argon2 her denemeyi pahalı kılar.
 - **Giriş kilitleri bellekte.** Hizmet yeniden başlayınca hatalı deneme sayaçları sıfırlanır (oturumlar korunur).
 - **Denetim kaydı istek düzeyindedir** (kim, nereden, hangi adres); form içerikleri kaydedilmez. Dosya (`audit.log`) kendiliğinden küçülmez; `logrotate` ile döndürün.
-- **Yedekler, dış hedef tanımlamadıkça aynı sunucudadır** (11. bölüm). UEFI değişken deposu ve sanal TPM durumu yedeğe girmez.
+- **Yedekler, dış hedef tanımlamadıkça aynı sunucudadır** (11. bölüm).
 - **Artımlı depoda bozulma kendiliğinden fark edilmez:** yeni yedekler, depoda zaten duran parçaları yeniden
   okumadan kullanır. Diskte bozulmuş bir parça, onu paylaşan bütün yedekleri etkiler ve ancak **Doğrula** ya da geri
   yükleme sırasında ortaya çıkar. Önemli yedekleri ara sıra doğrulayın; dış kopya varsa geri yükleme onarır.
@@ -634,8 +811,7 @@ sağlayıcıda zorunlu kılın). Yalnızca sahte bir sağlayıcıyla sınandı; 
   okunur. `--changed-block-tracking` ile çalışan konukta yalnızca değişen bloklar okunur. Dış hedefe yalnızca yeni
   parçalar gider.
 - **Yapılmayanlar:** LVM/ZFS depolama havuzları, kesintisiz (sıfır duraksamalı) canlı taşıma, sunucular arası
-  kendiliğinden devralma, kaynak kotaları,
-  konteyner klonu, konuğu başka depolama alanına taşıma, canlı konsolda pano ve ses.
+  kendiliğinden devralma, canlı konsolda pano ve ses, işlemci ve belleği çalışırken ekleme, konteyner taşıma.
 - **QEMU birimi** (`redox-qemu.service`) simülasyon birimine göre daha gevşek bir sandbox kullanır; nedenleri dosyada yazılı.
 - Bu kılavuzdaki systemd birimleri ve Caddy ayarı gerçek bir sunucuda denenmedi. Kod ve testler Linux'ta (WSL, Ubuntu) çalıştırıldı.
   QEMU sürücüsü NAT ağıyla gerçek KVM üzerinde denendi (çalışan konukta anlık görüntü, geri dönüş ve yedek dahil);
@@ -655,4 +831,19 @@ sağlayıcıda zorunlu kılın). Yalnızca sahte bir sağlayıcıyla sınandı; 
   Denenmeyenler: konuk ajanı gerçek bir konukta (yalnızca sahte ajanla sınandı; denemedeki konukta işletim sistemi
   yoktu), adresten indirme gerçek bir HTTPS sunucusuyla, dışa aktarılan OVA'nın VMware ya da VirtualBox'a alınması
   (arşiv sistem `tar`'ıyla açıldı, diskler ve XML doğrulandı).
+  Son turda gerçek KVM'de denenenler: yedek işi (iki konuğun sırayla yedeklenmesi, işin saklama sayısı), seçilen
+  işlemci modeliyle başlatma, balon aygıtı ve bellek hedefi komutu, cloud-init ağ dosyasının yazılması ve UEFI + TPM
+  durumunun çalışan konukta yedeklenip geri yüklenmesi (gerçek OVMF ve swtpm; depo özetiyle karşılaştırıldı).
+  Konteyner klonu ve çalışırken yedeği yalnızca sahte LXC araçlarıyla sınandı.
+  Ardından gerçek KVM'de denenenler: depolar arası taşıma (ek disk ve anlık görüntüyle; içerikler özetle karşılaştırıldı,
+  taşınan diskte anlık görüntüye dönüldü), havuz kotaları, başka üreticinin işlemci modelinin reddi ve ek diskli,
+  UEFI + güvenli önyükleme + TPM'li konuğun iki sunucu arasında taşınması (diskler, değişken deposu ve TPM durumu
+  özetleriyle aynı; konuk hedefte açıldı). E-postada STARTTLS ve S3'te parçalı yükleme yalnızca sahte sunucularla sınandı.
+  Yedek özelliklerinden gerçek KVM'de denenenler: yedekten yeni konuk (diskler özetle aynı), anında kurtarma (katman
+  80 ms'de hazır; konuk çalışırken yedekten ayrıldı, içerik aynı kaldı), açarak sınama (geçici konuk çalıştı ve silindi),
+  kilit, iki dış hedefe kopya ve yalnızca kopya hedefinden geri yükleme, hız sınırlı kapalı ve canlı yedek (QEMU ve
+  qemu-img seçeneği kabul etti; gerçek hızın sınıra uyduğu ölçülmedi) ve ajan yokken yedek öncesi komutunun yedeği
+  durdurması. Denenmeyenler: dosya düzeyinde geri yükleme (libguestfs yok), yedek komutlarının gerçek bir konuk ajanıyla
+  çalışması, açarak sınamada işletim sisteminin yanıt vermesi (deneme konuğunda işletim sistemi yoktu), raporun gerçek
+  bir e-posta sunucusuna gönderilmesi.
   Parçalı eşitleme S3 hedefinde yalnızca sahte sunucuyla, tek tek dosya işlemleri düzeyinde sınandı. Artımlı yedek birkaç GB'lik disklerle denendi; yüzlerce GB'lik disklerde süre ve bellek ölçülmedi.

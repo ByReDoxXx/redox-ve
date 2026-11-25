@@ -1,7 +1,8 @@
 //! Uyarıları e-postayla gönderen küçük SMTP istemcisi.
 //!
-//! Bağlantı baştan TLS'lidir (genellikle 465. kapı, "SMTPS"). Şifresiz bağlantı yalnızca aynı
-//! makinedeki bir aktarıcıya (loopback) yapılır; STARTTLS (587) desteklenmez.
+//! Bağlantı ya baştan TLS'lidir (465. kapı, "SMTPS") ya da düz başlayıp STARTTLS ile şifrelenir (587. kapı).
+//! Şifresiz bağlantı yalnızca aynı makinedeki bir aktarıcıya (loopback) yapılır. Kimlik bilgisi ve ileti
+//! hiçbir zaman şifreleme kurulmadan gönderilmez.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -16,6 +17,18 @@ pub struct Config {
     pub to: Vec<String>,
     user: Option<String>,
     password: Option<String>,
+    mode: Mode,
+}
+
+/// Bağlantının nasıl şifreleneceği.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Mode {
+    /// Baştan TLS (465).
+    Tls,
+    /// Düz başlar, `STARTTLS` ile şifrelenir (587).
+    StartTls,
+    /// Şifresiz: yalnızca aynı makinedeki aktarıcı.
+    Plain,
 }
 
 /// Parola hata ayıklama çıktısına yazılmaz.
@@ -70,14 +83,28 @@ impl Config {
         if user.is_some() != password.is_some() {
             return Err("e-posta dosyası: \"user\" ve \"password\" birlikte verilmeli".to_string());
         }
+        // Kip yazılmazsa kapıdan anlaşılır: 587 STARTTLS, diğerleri baştan TLS; aynı makinedeki aktarıcı şifresiz.
+        let mode = match take("mode").as_deref() {
+            Some("tls") => Mode::Tls,
+            Some("starttls") => Mode::StartTls,
+            Some(other) => return Err(format!("e-posta dosyası: mode \"tls\" ya da \"starttls\" olmalı: {other}")),
+            None if loopback(&host) => Mode::Plain,
+            None if port == 587 => Mode::StartTls,
+            None => Mode::Tls,
+        };
         if let Some(unknown) = map.keys().next() {
             return Err(format!("e-posta dosyası: bilinmeyen anahtar \"{unknown}\""));
         }
-        Ok(Config { host, port, from, to, user, password })
+        Ok(Config { host, port, from, to, user, password, mode })
     }
 
     pub fn describe(&self) -> String {
-        format!("{} → {} ({}:{})", self.from, self.to.join(", "), self.host, self.port)
+        let mode = match self.mode {
+            Mode::Tls => "TLS",
+            Mode::StartTls => "STARTTLS",
+            Mode::Plain => "şifresiz, yerel",
+        };
+        format!("{} → {} ({}:{}, {mode})", self.from, self.to.join(", "), self.host, self.port)
     }
 
     /// Tek bir ileti gönderir. Gövde düz metindir (UTF-8).
@@ -90,19 +117,42 @@ impl Config {
             .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(10)).map_err(|e| format!("e-posta sunucusuna bağlanılamadı ({address}): {e}")))?;
         tcp.set_read_timeout(Some(Duration::from_secs(20))).map_err(|e| e.to_string())?;
         tcp.set_write_timeout(Some(Duration::from_secs(20))).map_err(|e| e.to_string())?;
-        if loopback(&self.host) {
-            return self.converse(tcp, subject, body);
+        match self.mode {
+            Mode::Plain => self.converse(tcp, subject, body),
+            Mode::Tls => self.converse(self.encrypt(tcp)?, subject, body),
+            Mode::StartTls => {
+                // Şifreleme kurulana kadar yalnızca karşılama, EHLO ve STARTTLS konuşulur.
+                let mut plain = Session { reader: BufReader::new(tcp) };
+                plain.expect(220, "karşılama")?;
+                plain.command("EHLO redox.localdomain", 250)?;
+                plain.command("STARTTLS", 220).map_err(|e| format!("e-posta sunucusu şifrelemeyi (STARTTLS) kabul etmedi: {e}"))?;
+                // Yanıttan sonra tamponda veri kalmışsa araya girilmiş olabilir: şifreli oturuma taşınmaz.
+                if !plain.reader.buffer().is_empty() {
+                    return Err("e-posta sunucusu STARTTLS yanıtından sonra beklenmedik veri gönderdi".to_string());
+                }
+                let tls = self.encrypt(plain.reader.into_inner())?;
+                self.deliver(Session { reader: BufReader::new(tls) }, subject, body).map_err(|e| format!("{e} (STARTTLS sonrası)"))
+            }
         }
+    }
+
+    /// Bağlantıyı TLS ile sarar; sunucunun sertifikası genel kök sertifikalarla ve sunucu adıyla doğrulanır.
+    fn encrypt(&self, tcp: TcpStream) -> Result<rustls::StreamOwned<rustls::ClientConnection, TcpStream>, String> {
         let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
         let tls = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
         let name = rustls::pki_types::ServerName::try_from(self.host.clone()).map_err(|_| format!("geçersiz e-posta sunucusu adı: {}", self.host))?;
         let connection = rustls::ClientConnection::new(Arc::new(tls), name).map_err(|e| format!("TLS başlatılamadı: {e}"))?;
-        self.converse(rustls::StreamOwned::new(connection, tcp), subject, body)
+        Ok(rustls::StreamOwned::new(connection, tcp))
     }
 
     fn converse<S: Read + Write>(&self, stream: S, subject: &str, body: &str) -> Result<(), String> {
         let mut smtp = Session { reader: BufReader::new(stream) };
         smtp.expect(220, "karşılama")?;
+        self.deliver(smtp, subject, body)
+    }
+
+    /// Karşılamadan sonraki konuşma: tanışma, kimlik, zarf ve ileti.
+    fn deliver<S: Read + Write>(&self, mut smtp: Session<S>, subject: &str, body: &str) -> Result<(), String> {
         smtp.command("EHLO redox.localdomain", 250)?;
         if let (Some(user), Some(password)) = (&self.user, &self.password) {
             let token = base64(format!("\0{user}\0{password}").as_bytes());
@@ -218,6 +268,7 @@ mod tests {
             ("host = smtp.example.com\nfrom = a@b.co\nto = c@d.co\nuser = x", "birlikte verilmeli"),
             ("host = smtp.example.com\nfrom = a@b.co\nto = c@d.co\nport = smtp", "kapı bir sayı"),
             ("host = smtp.example.com\nfrom = a@b.co\nto = c@d.co\nstarttls = on", "bilinmeyen anahtar"),
+            ("host = smtp.example.com\nfrom = a@b.co\nto = c@d.co\nmode = duz", "mode \"tls\" ya da \"starttls\""),
             ("host = smtp.example.com\nfrom = a@b.co\nto = c@d.co>\\r\\nBCC: x@y.co", "geçersiz adres"),
             ("host = smtp.example.com/x\nfrom = a@b.co\nto = c@d.co", "geçersiz sunucu adı"),
         ] {
@@ -230,6 +281,84 @@ mod tests {
         for bad in ["", "ben", "ben@", "@example.com", "ben@localhost", "ben@example.com\r\nBcc: x@y.co", "ben <ben@example.com>", "ben@.example.com"] {
             assert!(!valid_address(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn encryption_mode_follows_the_port_unless_stated() {
+        let cfg = |extra: &str| Config::parse(&format!("host = smtp.example.com\nfrom = a@b.co\nto = c@d.co\n{extra}")).unwrap();
+        assert_eq!((cfg("").mode, cfg("port = 587").mode, cfg("port = 2525").mode), (Mode::Tls, Mode::StartTls, Mode::Tls));
+        assert_eq!((cfg("port = 587\nmode = tls").mode, cfg("port = 465\nmode = starttls").mode), (Mode::Tls, Mode::StartTls));
+        assert!(cfg("port = 587").describe().ends_with("(smtp.example.com:587, STARTTLS)"));
+        let local = |extra: &str| Config::parse(&format!("host = 127.0.0.1\nport = 587\nfrom = a@b.co\nto = c@d.co\n{extra}")).unwrap();
+        assert_eq!((local("").mode, local("mode = starttls").mode), (Mode::Plain, Mode::StartTls), "yerel aktarıcı şifresizdir; istenirse STARTTLS");
+    }
+
+    /// STARTTLS: kimlik ve ileti, şifreleme kurulmadan hiçbir koşulda gönderilmez.
+    #[test]
+    fn starttls_never_sends_credentials_before_encryption() {
+        let starttls = |port: u16| Config::parse(&format!("host = 127.0.0.1\nport = {port}\nmode = starttls\nfrom = redox@example.com\nto = ben@example.com\nuser = redox\npassword = gizli-parola\n")).unwrap();
+        // Sunucu STARTTLS'i bilmiyor: gönderim durur.
+        let (port, server) = fake_smtp(true);
+        let err = starttls(port).send("konu", "gövde").unwrap_err();
+        assert!(err.contains("STARTTLS") && err.contains("500"), "{err}");
+        let log = server.join().unwrap();
+        assert_eq!(log, "EHLO redox.localdomain\r\nSTARTTLS\r\n", "yalnızca tanışma ve STARTTLS konuşuldu");
+        // Sunucu kabul ediyor ama TLS konuşmuyor (ya da sertifikası doğrulanamıyor): yine hiçbir şey sızmaz.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.write_all(b"220 sahte ESMTP\r\n").unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 512];
+            let mut replied = 0;
+            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            while let Ok(n) = socket.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                seen.extend_from_slice(&buf[..n]);
+                let lines = seen.iter().filter(|b| **b == b'\n').count();
+                if replied == 0 && lines >= 1 {
+                    socket.write_all(b"250 sahte\r\n").unwrap();
+                    replied = 1;
+                } else if replied == 1 && lines >= 2 {
+                    socket.write_all(b"220 hazir\r\n").unwrap();
+                    replied = 2;
+                } else if replied == 2 {
+                    // TLS el sıkışması yerine düz metin: istemci bağlantıyı bırakmalı.
+                    let _ = socket.write_all(b"250 bu TLS degil\r\n");
+                    break;
+                }
+            }
+            String::from_utf8_lossy(&seen).to_string()
+        });
+        let err = starttls(port).send("konu", "gizli gövde").unwrap_err();
+        assert!(!err.contains("gizli"), "{err}");
+        let seen = server.join().unwrap();
+        assert!(seen.starts_with("EHLO redox.localdomain\r\nSTARTTLS\r\n"), "{seen:?}");
+        assert!(!seen.contains("AUTH") && !seen.contains("MAIL FROM") && !seen.contains("gizli"), "şifreleme kurulmadan kimlik ve ileti gitmez");
+        // STARTTLS yanıtının ardına eklenmiş veri (araya girme denemesi) oturuma taşınmaz.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(socket);
+            reader.get_mut().write_all(b"220 sahte ESMTP\r\n").unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            reader.get_mut().write_all(b"250 sahte\r\n").unwrap();
+            reader.read_line(&mut line).unwrap();
+            reader.get_mut().write_all(b"220 hazir\r\n250 araya eklenmis yanit\r\n").unwrap();
+            let mut rest = String::new();
+            let _ = reader.get_mut().set_read_timeout(Some(Duration::from_secs(2)));
+            let _ = reader.read_line(&mut rest);
+            rest
+        });
+        let err = starttls(port).send("konu", "gövde").unwrap_err();
+        let rest = server.join().unwrap();
+        assert!(!rest.contains("AUTH") && !rest.contains("MAIL"), "{rest:?}");
+        assert!(err.contains("beklenmedik veri") || err.contains("STARTTLS sonrası") || err.contains("TLS"), "{err}");
     }
 
     /// Tek bağlantı kabul eden sahte SMTP sunucusu; konuşmayı kaydeder.

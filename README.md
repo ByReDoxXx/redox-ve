@@ -18,9 +18,9 @@ command-line client for them.
 It is built for a single server or a handful of independent servers: a home lab, a small office, a
 development host. It is not a clustered hypervisor (see [Limits](#limits)).
 
-> **Language:** the web panel, the CLI help text and the detailed installation guide
-> ([KURULUM.md](KURULUM.md)) are currently in Turkish. This README covers installation and the technical
-> design in English.
+> **Language:** the web panel and the CLI help text are currently in Turkish. The documentation is in both
+> languages: this README and [INSTALL.md](INSTALL.md) in English, [README.tr.md](README.tr.md) and
+> [KURULUM.md](KURULUM.md) in Turkish.
 
 ![Overview page](docs/img/overview.jpg)
 
@@ -42,25 +42,46 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 **Guests**
 
 - KVM virtual machines through QEMU, and unprivileged LXC containers, managed from the same pages.
+- Containers can be cloned, and backed up while running (frozen for the duration of the archive).
 - BIOS, UEFI, UEFI with secure boot, and a virtual TPM 2.0 (enough for Windows 11).
-- Install from an ISO, or create from a cloud image with cloud-init (user, SSH key, host name).
+- Install from an ISO, or create from a cloud image with cloud-init (user, SSH key, host name). The
+  cloud-init settings, including a static address, can be edited later from the panel.
+- Selectable CPU model per VM, and a memory balloon whose target can be changed while the VM runs.
 - Import `vmdk`, `vdi`, `vhdx` disks and OVA archives; export a guest as OVA.
 - Templates, full clones and linked clones (a linked clone is ready in under a second).
 - Up to 8 extra data disks and 3 extra network cards; both can be hot-plugged into a running VM.
 - Suspend to disk and resume, pause, scheduled start/stop/reboot, start order at host boot.
 - Automatic restart of a guest that crashed or shut itself down.
 - Shared folders between host and VM (virtio-9p), USB and PCI passthrough.
+- Dynamic memory (the balloon target follows what the guest uses) and nested virtualization.
+- Resource metering per guest: cumulative core-hours, GB-hours and disk I/O for billing and planning.
+- NIC protection on bridged cards: no MAC spoofing, no rogue DHCP server or router advertisements.
 
 **Storage and backup**
 
 - Live snapshots (including memory) and live backups of running VMs.
-- Scheduled backups with retention.
+- Scheduled backups with retention, per guest or as backup jobs that cover many guests one at a time.
+- UEFI variables and virtual TPM state are saved with the backup and restored with it.
+- Restore a backup as a new guest, or start a guest straight from its backup (instant recovery) and detach it later.
+- Boot test: a backup is started in an isolated temporary guest to prove that it boots; optionally a TCP port
+  must answer and a command inside the guest must succeed.
+- Production checkpoints: disk-only snapshots of a running VM with file systems frozen through the guest agent.
+- A warning when an incremental backup changes far more data than usual (a possible sign of ransomware).
+- A backup age target (RPO) per guest, and an archive: copy targets can keep backups for a set number of days
+  after they were deleted locally.
+- Four-eyes principle (optional): deleting a backup or a guest needs a second administrator's approval.
+- File-level restore: browse a backup and download single files (with libguestfs).
+- Weekly, monthly and yearly retention (GFS), locked (immutable) backups, backup windows and a copy speed limit.
+- Commands inside the guest before and after a live backup, through the guest agent.
+- A daily backup report by e-mail and a list of guests that have no recent backup.
 - Incremental backups: a content-addressed 4 MiB chunk store with no chains, so any backup can be deleted.
 - Changed-block tracking, so an incremental backup of a running VM reads only the blocks that changed.
 - Off-site copies to a directory (second disk, NFS, SMB) or any S3-compatible store, with client-side
   encryption. Encrypted copies are bound to the backup's name, so swapped files are rejected on restore.
+  Large files go to S3 as multipart uploads. Backups can be copied to several targets (3-2-1).
 - Backup verification, and repair of a damaged local chunk from the off-site copy.
-- Additional storage directories for VM disks.
+- Additional storage directories for VM disks, and moving a stopped VM's disks between them.
+- Resource pools with quotas on cores, memory, disk and guest count.
 
 **Network**
 
@@ -74,7 +95,8 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Live graphical console in the browser, with keyboard and mouse.
 - Roles (admin, operator, viewer), tag-based operator scopes, TOTP two-factor login, OpenID Connect.
 - Audit log, task log, resource alerts by webhook or e-mail, Prometheus metrics.
-- A combined view of several RedoX VE servers, and moving a VM between them while keeping its memory state.
+- A combined view of several RedoX VE servers, and moving a VM between them while keeping its memory state,
+  its extra disks, its UEFI variables and its TPM state.
 
 ## RedoX VE and Proxmox VE
 
@@ -124,7 +146,7 @@ Live console, connected to a real QEMU guest:
 ## Installation
 
 These steps target Debian 12 or Ubuntu 22.04 and later (systemd, x86_64). Replace `redox.example.com`
-with your own name. The full guide, with every option explained, is [KURULUM.md](KURULUM.md) (Turkish).
+with your own name. The full guide, with every option explained, is [INSTALL.md](INSTALL.md).
 
 ### 1. Build
 
@@ -193,7 +215,7 @@ journalctl -u redox -n 20 --no-pager
 The log should show the `qemu-kvm` driver. If `/dev/kvm` is missing, enable virtualization in the
 firmware; otherwise QEMU falls back to software emulation, which is very slow.
 
-Optional pieces, each described in [KURULUM.md](KURULUM.md):
+Optional pieces, each described in [INSTALL.md](INSTALL.md):
 
 | Need | Packages | Section |
 |---|---|---|
@@ -253,12 +275,16 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 | `GET /guests`, `POST /guests` | List and create guests |
 | `GET`, `PATCH`, `DELETE /guests/{vmid}` | Show, change, destroy |
 | `POST /guests/{vmid}/{start,stop,reboot,pause,resume}` | Power actions |
-| `POST /guests/{vmid}/suspend`, `/discard-suspend` | Suspend to disk |
+| `POST /guests/{vmid}/suspend`, `/discard-suspend`, `/detach` | Suspend to disk, detach from backup |
 | `POST /guests/{vmid}/snapshots`, `.../{name}/rollback` | Snapshots |
-| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics` | Clones and hardware |
+| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/move` | Clones, hardware, storage move |
 | `GET /guests/{vmid}/export` | OVA export |
 | `POST /guests/{vmid}/backups`, `GET /backups` | Backups |
 | `POST /backups/{id}/restore`, `/push`, `/verify`, `GET .../download` | Restore, off-site, verify, download |
+| `POST /backups/{id}/restore-new`, `/instant`, `/test`, `/lock` | New guest, instant recovery, boot test, lock |
+| `GET /backups/{id}/files`, `/file`, `GET /backups/report` | Files inside a backup, backup report |
+| `GET /jobs`, `POST /jobs`, `DELETE /jobs/{name}`, `POST /jobs/{name}/run` | Backup jobs |
+| `GET /pools`, `POST /pools`, `DELETE /pools/{name}` | Resource pools and quotas |
 | `GET /storage`, `GET /media`, `PUT /media/{name}`, `POST /media/fetch` | Storage, ISO and image upload |
 | `GET /peers`, `POST /peers/{name}/import/{vmid}` | Other servers, VM import |
 | `GET /tasks`, `GET /tasks/{id}` | Task log |
@@ -275,10 +301,10 @@ crates/
   redox-server/   The `redox` binary: HTTP server, drivers, CLI.
 deploy/           systemd units and a Caddyfile.
 docs/img/         Screenshots used in this README.
-KURULUM.md        Detailed installation and operations guide (Turkish).
+INSTALL.md        Detailed installation and operations guide (KURULUM.md is the Turkish version).
 ```
 
-About 23,700 lines of Rust in the two crates.
+About 28,500 lines of Rust in the two crates.
 
 ### `redox-core`
 
@@ -286,6 +312,9 @@ About 23,700 lines of Rust in the two crates.
 |---|---|
 | `model`, `hw` | Guests, nodes, storage, snapshots, backups, tasks; the hardware description of a guest |
 | `cluster`, `ops` | The state machine: which operation is allowed in which state, guest locking, task bookkeeping |
+| `jobs` | Backup jobs: selection by tag, days, one guest at a time, per-job retention |
+| `pools` | Resource pools: quotas on allocated cores, memory, disk and guest count |
+| `retention` | Weekly, monthly and yearly retention, backup locks, calendar arithmetic |
 | `driver` | The `Hypervisor` trait that every backend implements, and the `Remote` trait for off-site targets |
 | `command` | The command grammar shared by the CLI and the panel's command bar |
 | `seed` | The sample cluster shown by the simulation driver |
@@ -300,7 +329,7 @@ carried out; `redox-core` decides *whether* it may happen.
 | HTTP | `lib` (router, security headers), `api` (REST), `ui`, `ui_ops`, `ui_admin` (page handlers), `view*` (HTML with [maud](https://maud.lambda.xyz)) |
 | State | `state` (application state, task runner, schedulers), `history` and `metrics` (graphs, Prometheus) |
 | Drivers | `qemu` (QEMU/KVM over QMP), `lxc`, `hostdriver` (combines the two), `qga` (guest agent) |
-| Backup | `chunkstore` (incremental store), `offsite` (directory and S3 targets, encryption), `ova` |
+| Backup | `chunkstore` (incremental store), `offsite` (directory and S3 targets, encryption), `ova`, `guestfs` (files inside a backup), `report` |
 | Network | `net`, `netlimit` (`tc`), `firewall` (nftables) |
 | Identity | `auth` (users, sessions, tokens), `totp`, `oidc`, `audit` |
 | Operations | `alerts`, `mail`, `ha` (restart watchdog), `peers` (other servers), `media` (ISO and image upload) |
@@ -344,6 +373,8 @@ Data directory (`/var/lib/redox`):
   Each backup is a complete list of chunks, so there is no chain to break. Zero regions are not stored.
 - **Changed-block tracking** (`--changed-block-tracking`): a persistent QEMU dirty bitmap. It is dropped,
   and the next backup reads the whole disk, whenever it might be wrong (restore, rollback, resize, crash).
+- **Machine state:** the UEFI variable store and the virtual TPM state go into a small archive next to the
+  backup (`<backup>.machine.tar`) and follow it off-site.
 - **Off-site:** ChaCha20-Poly1305 in 64 KiB chunks, key derived with Argon2id. The file's name is
   authenticated with every chunk.
 
@@ -378,17 +409,22 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-381 tests pass on Linux and 336 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+469 tests pass on Linux and 404 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
 Beyond the test suite, the QEMU driver has been exercised against real QEMU 10.2 with KVM: snapshots,
 full and incremental backups, changed-block tracking, off-site copies, suspend and resume, hot-plug,
-VLAN and rate limits, the live console, and moving a running VM between two servers.
+VLAN and rate limits, the live console, moving a running VM between two servers, backup jobs, CPU models,
+the balloon device, backup and restore of UEFI variables and TPM state, moving disks between storages,
+pool quotas, moving a VM with extra disks, UEFI and TPM between two servers, restore as a new guest, instant
+recovery, the boot test, locks, copies to two off-site targets, production checkpoints, nested virtualization,
+resource metering, the boot test's port forwarding, the copy-target archive and the four-eyes approval flow.
 
 Not yet verified on a real server: the systemd units and the Caddy configuration, bridged networking,
-LXC containers, the guest firewall, a real S3 provider, a real SMTP or OpenID Connect provider, and
-USB/PCI passthrough. [KURULUM.md](KURULUM.md) marks each of these where it is described.
+LXC containers, the guest firewall and NIC protection under traffic, dynamic memory and the boot-test service
+checks with a real guest operating system, a real S3 provider, a real SMTP or OpenID Connect provider, and
+USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is described.
 
 ## Limits
 
@@ -396,8 +432,9 @@ USB/PCI passthrough. [KURULUM.md](KURULUM.md) marks each of these where it is de
 - Moving a running VM keeps its memory but pauses it while disk and memory are copied. It is not a
   zero-downtime live migration.
 - No automatic failover between servers. A crashed guest is restarted on the same server only.
-- No LVM or ZFS storage pools, no resource quotas, no container clones.
-- A guest cannot be moved to another storage after creation.
+- No LVM or ZFS storage pools.
+- CPU and memory cannot be added to a running VM (the balloon only lowers and restores memory).
+- Containers cannot be moved to another storage or to another server.
 - The live console has no clipboard or audio.
 - The interface is Turkish only.
 

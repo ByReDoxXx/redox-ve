@@ -40,7 +40,10 @@ pub(crate) struct Ctx {
     real: bool,
     ct: bool,
     live: bool,
+    live_ct: bool,
     hotplug: bool,
+    files: bool,
+    backup_age: u32,
     offsite: Option<String>,
     range: crate::history::Range,
     history: crate::state::History,
@@ -60,7 +63,10 @@ impl Ctx {
             real: st.driver().is_real(),
             ct: st.driver().supports(GuestKind::Ct),
             live: st.driver().live_disk_ops(GuestKind::Vm),
+            live_ct: st.driver().live_backup(GuestKind::Ct),
             hotplug: st.driver().hotplug(GuestKind::Vm),
+            files: st.guestfish().is_some(),
+            backup_age: st.backup_age_days(),
             offsite: st.offsite().map(|c| c.describe()),
             range,
             query,
@@ -93,7 +99,10 @@ impl Ctx {
             real: self.real,
             ct: self.ct,
             live: self.live,
+            live_ct: self.live_ct,
             hotplug: self.hotplug,
+            files: self.files,
+            backup_age: self.backup_age,
             offsite: self.offsite.as_deref(),
             history: &self.history,
         }
@@ -155,6 +164,12 @@ pub async fn backups(State(st): State<AppState>,
     Extension(me): Extension<Identity>, headers: HeaderMap, Query(query): Query<PageQuery>) -> Html<String> {
     let ctx = Ctx::new(&st, &headers, query, &me);
     Html(view::backups(&ctx.page(Current::Backups, "/backups")))
+}
+
+pub async fn pools(State(st): State<AppState>,
+    Extension(me): Extension<Identity>, headers: HeaderMap, Query(query): Query<PageQuery>) -> Html<String> {
+    let ctx = Ctx::new(&st, &headers, query, &me);
+    Html(view::pools(&ctx.page(Current::Other, "/pools")))
 }
 
 pub async fn node(
@@ -398,8 +413,9 @@ pub async fn delete(State(st): State<AppState>,
     let Some(vmid) = parse_vmid(&raw) else {
         return flash("/", "error", &format!("Geçersiz konuk kimliği: {raw}"));
     };
-    match st.delete_guest(vmid, &me.user) {
-        Ok(()) => flash("/", "notice", &format!("{vmid} silindi.")),
+    match st.request_guest_delete(vmid, &me.user) {
+        Ok(Some(id)) => flash(&format!("/guests/{vmid}"), "notice", &format!("Silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{id}).")),
+        Ok(None) => flash("/", "notice", &format!("{vmid} silindi.")),
         Err(Error::GuestNotFound(_)) => flash("/", "error", &Error::GuestNotFound(vmid).to_string()),
         Err(e) => flash(&format!("/guests/{vmid}"), "error", &capitalize(&e.to_string())),
     }

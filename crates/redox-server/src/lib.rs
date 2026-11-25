@@ -8,6 +8,7 @@ pub mod cli;
 pub mod console;
 pub mod firewall;
 pub mod fonts;
+pub mod guestfs;
 pub mod ha;
 pub mod history;
 pub mod host;
@@ -25,6 +26,7 @@ pub mod ova;
 pub mod peers;
 pub mod qemu;
 pub mod qga;
+pub mod report;
 pub mod state;
 pub mod totp;
 pub mod ui;
@@ -87,6 +89,14 @@ pub fn app(state: AppState) -> Router {
         .route("/guests/{vmid}/snapshots/{name}/{op}", post(ui_ops::snapshot_action))
         .route("/guests/{vmid}/backups", post(ui_ops::backup_create))
         .route("/backups/{id}/{op}", get(ui_ops::backup_get).post(ui_ops::backup_action))
+        .route("/backups/jobs", post(ui_ops::job_save))
+        .route("/backups/{id}/files", get(ui_ops::backup_files))
+        .route("/backups/{id}/file", get(ui_ops::backup_file))
+        .route("/guests/{vmid}/balloon", post(ui_ops::balloon_set))
+        .route("/approvals/{id}/{op}", post(ui_ops::approval_action))
+        .route("/guests/{vmid}/move", post(ui_ops::storage_move))
+        .route("/guests/{vmid}/detach", post(ui_ops::guest_detach))
+        .route("/backups/jobs/{name}/{op}", post(ui_ops::job_action))
         .route("/guests/{vmid}/confirm", get(ui_ops::confirm))
         .route("/guests/{vmid}/export", get(ui_ops::guest_export))
         .route("/guests/{vmid}/console", get(ui_ops::live_console))
@@ -96,6 +106,8 @@ pub fn app(state: AppState) -> Router {
         .route("/guests/{vmid}/keys", post(ui_ops::keys))
         .route("/guests/{vmid}/exec", post(ui_ops::exec))
         .route("/storage", get(ui::storage))
+        .route("/pools", get(ui::pools).post(ui_ops::pool_save))
+        .route("/pools/{name}/delete", post(ui_ops::pool_delete))
         .route("/media/upload", post(ui_ops::media_upload).layer(axum::extract::DefaultBodyLimit::disable()))
         .route("/media/fetch", post(ui_ops::media_fetch))
         .route("/media/{name}/delete", post(ui_ops::media_delete))

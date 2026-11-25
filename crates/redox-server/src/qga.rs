@@ -58,6 +58,44 @@ mod imp {
     /// Önce `guest-sync` ile hat eşitlenir: kanalda önceki bir istemciden kalmış yanıtlar olabilir,
     /// bizim gönderdiğimiz sayı geri gelene kadar okunanlar atılır.
     pub fn call(sock: &Path, command: &str, timeout: Duration) -> Result<Value, String> {
+        call_with(sock, command, None, timeout)
+    }
+
+    /// Konuğun içinde bir program çalıştırır ve bitmesini bekler; çıkış kodunu ve çıktısının son satırını döndürür.
+    /// Kabuk kullanılmaz: program yolu ve argümanları ayrı ayrı verilir.
+    pub fn exec(sock: &Path, path: &str, args: &[String], timeout: Duration) -> Result<(i64, String), String> {
+        let started = call_with(sock, "guest-exec", Some(serde_json::json!({ "path": path, "arg": args, "capture-output": true })), Duration::from_secs(10))?;
+        let pid = started["pid"].as_i64().ok_or("konuk ajanı çalıştırdığı programın kimliğini döndürmedi")?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let status = call_with(sock, "guest-exec-status", Some(serde_json::json!({ "pid": pid })), Duration::from_secs(10))?;
+            if status["exited"].as_bool() == Some(true) {
+                let text = |key: &str| status[key].as_str().map(|data| String::from_utf8_lossy(&unbase64(data)).to_string()).unwrap_or_default();
+                let output = format!("{}{}", text("out-data"), text("err-data"));
+                let last = output.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().chars().take(200).collect();
+                return Ok((status["exitcode"].as_i64().unwrap_or(-1), last));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!("konuktaki program {} saniyede bitmedi: {path}", timeout.as_secs()));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    }
+
+    fn unbase64(text: &str) -> Vec<u8> {
+        const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let values: Vec<u32> = text.bytes().filter_map(|b| TABLE.iter().position(|t| *t == b).map(|p| p as u32)).collect();
+        values
+            .chunks(4)
+            .flat_map(|c| {
+                let n = c.iter().enumerate().fold(0u32, |n, (i, v)| n | v << (18 - 6 * i));
+                (0..c.len().saturating_sub(1)).map(move |i| (n >> (16 - 8 * i)) as u8).collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// `call`'ın argüman alan hali.
+    pub fn call_with(sock: &Path, command: &str, arguments: Option<Value>, timeout: Duration) -> Result<Value, String> {
         let absent = || "konuk ajanı yanıt vermiyor (konukta qemu-guest-agent kurulu ve çalışıyor mu?)".to_string();
         let stream = UnixStream::connect(sock).map_err(|_| absent())?;
         stream.set_read_timeout(Some(SYNC_TIMEOUT)).map_err(|e| e.to_string())?;
@@ -86,7 +124,11 @@ mod imp {
             return Err(absent());
         }
         reader.get_ref().set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
-        writer.write_all(format!("{}\n", serde_json::json!({ "execute": command })).as_bytes()).map_err(|e| format!("konuk ajanına yazılamadı: {e}"))?;
+        let request = match arguments {
+            Some(arguments) => serde_json::json!({ "execute": command, "arguments": arguments }),
+            None => serde_json::json!({ "execute": command }),
+        };
+        writer.write_all(format!("{request}\n").as_bytes()).map_err(|e| format!("konuk ajanına yazılamadı: {e}"))?;
         line.clear();
         match reader.read_line(&mut line) {
             Ok(n) if n > 0 => {}
@@ -101,7 +143,7 @@ mod imp {
 }
 
 #[cfg(unix)]
-pub use imp::call;
+pub use imp::{call, call_with, exec};
 
 #[cfg(test)]
 mod tests {

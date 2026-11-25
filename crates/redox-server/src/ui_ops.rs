@@ -72,6 +72,7 @@ pub async fn edit(
             name: general.then(|| f.name.trim().to_string()),
             os: general.then(|| f.os.trim().to_string()),
             tags: general.then(|| parse_tags(&f.tags)),
+            pool: general.then(|| f.pool.trim().to_string()),
             onboot: general.then(|| f.onboot.is_some()),
             cores: number(&f.cores, "Çekirdek")?.map(|v| v as u32).filter(|_| hardware),
             memory_mb: number(&f.memory_mb, "Bellek")?.filter(|_| hardware),
@@ -80,8 +81,17 @@ pub async fn edit(
             bridge: hardware_sent.then(|| f.bridge.trim().to_string()).filter(|b| !b.is_empty()),
             backup_time: general.then(|| f.backup_time.trim().to_string()),
             backup_keep: number(&f.backup_keep, "Saklanacak yedek sayısı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            rpo_hours: number(&f.rpo_hours, "Yedek yaşı hedefi")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            backup_weekly: number(&f.backup_weekly, "Haftalık yedek sayısı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            backup_monthly: number(&f.backup_monthly, "Aylık yedek sayısı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            backup_yearly: number(&f.backup_yearly, "Yıllık yedek sayısı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
             firewall: general.then(|| f.firewall.is_some()),
+            nic_guard: (general && guest.kind == redox_core::GuestKind::Vm).then(|| f.nic_guard.is_some()),
             fw_rules: if general { Some(redox_core::hw::parse_fw_rules(&f.fw_rules)?) } else { None },
+            backup_pre: (general && guest.kind == redox_core::GuestKind::Vm).then(|| f.backup_pre.clone()),
+            test_port: number(&f.test_port, "Sınama kapısı")?.map(|v| v.min(u16::MAX as u64) as u16).filter(|_| general && guest.kind == redox_core::GuestKind::Vm),
+            test_cmd: (general && guest.kind == redox_core::GuestKind::Vm).then(|| f.test_cmd.clone()),
+            backup_post: (general && guest.kind == redox_core::GuestKind::Vm).then(|| f.backup_post.clone()),
             firmware: machine.map(|(firmware, _)| firmware),
             secure_boot: machine.map(|(_, secure)| secure),
             tpm: machine.map(|_| f.tpm.is_some()),
@@ -98,6 +108,14 @@ pub async fn edit(
             shares: if hardware_sent && guest.kind == redox_core::GuestKind::Vm { Some(redox_core::hw::parse_shares(&f.shares)?) } else { None },
             vlan: number(&f.vlan, "VLAN etiketi")?.map(|v| v.min(u16::MAX as u64) as u16).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
             net_mbps: number(&f.net_mbps, "Ağ hız sınırı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
+            cpu_type: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.cpu_type.trim().to_string()),
+            balloon: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.balloon.is_some()),
+            nested: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.nested.is_some()),
+            ci_user: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.ci_user.clone()),
+            ci_ssh_key: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.ci_ssh_key.clone()),
+            ci_ip: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.ci_ip.clone()),
+            ci_gw: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.ci_gw.clone()),
+            ci_dns: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.ci_dns.clone()),
         })
     })();
     let patch = match parsed {
@@ -134,6 +152,188 @@ pub async fn schedule_add(State(st): State<AppState>, Extension(me): Extension<I
     match st.update_guest(vmid, &GuestPatch { schedules: Some(schedules), ..Default::default() }, &me.user) {
         Ok(()) => flash(&back, "notice", "Zamanlanmış işlem eklendi."),
         Err(e) => failed(&back, &e),
+    }
+}
+
+/// Anında kurtarılmış konuğu yedekten ayırır.
+pub async fn guest_detach(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(raw): Path<String>) -> Redirect {
+    let vmid = match vmid_of(&raw) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let back = format!("/guests/{vmid}?tab=cogalt");
+    match st.guest_detach(vmid, &me.user) {
+        Ok(_) => flash(&back, "notice", "Diskler yedekten ayrılıyor; bitince yedek serbest kalır. Sonuç görevlerde görünür."),
+        Err(e) => failed(&back, &e),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct MoveForm {
+    storage: String,
+}
+
+/// Çoğalt ve Taşı sekmesindeki depolama alanı formu.
+pub async fn storage_move(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(raw): Path<String>, Form(f): Form<MoveForm>) -> Redirect {
+    let vmid = match vmid_of(&raw) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let back = format!("/guests/{vmid}?tab=cogalt");
+    let target = f.storage.trim();
+    if target.is_empty() {
+        return flash(&back, "error", "Bir depolama alanı seçin.");
+    }
+    match st.storage_move(vmid, target, &me.user) {
+        Ok(_) => flash(&back, "notice", &format!("Diskler {target} alanına taşınıyor; sonuç görevlerde görünür.")),
+        Err(e) => failed(&back, &e),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct PoolForm {
+    name: String,
+    cores: String,
+    memory_mb: String,
+    disk_gb: String,
+    guests: String,
+}
+
+/// Havuzlar sayfasındaki form: ekler ya da aynı adlı havuzun kotalarını günceller. Boş alan sınırsızdır.
+pub async fn pool_save(State(st): State<AppState>, Form(f): Form<PoolForm>) -> Redirect {
+    let number = |raw: &str, label: &str| -> Result<u64, String> {
+        match raw.trim() {
+            "" => Ok(0),
+            text => text.parse().map_err(|_| format!("{label} bir tam sayı olmalı.")),
+        }
+    };
+    let parsed = (|| {
+        Ok::<_, String>(redox_core::Pool {
+            name: f.name.trim().to_string(),
+            cores: number(&f.cores, "Çekirdek kotası")?.min(u32::MAX as u64) as u32,
+            memory_mb: number(&f.memory_mb, "Bellek kotası")?,
+            disk_gb: number(&f.disk_gb, "Disk kotası")?,
+            guests: number(&f.guests, "Konuk sayısı")?.min(u32::MAX as u64) as u32,
+        })
+    })();
+    let pool = match parsed {
+        Ok(pool) => pool,
+        Err(message) => return flash("/pools", "error", &message),
+    };
+    let name = pool.name.clone();
+    match st.pool_put(pool) {
+        Ok(()) => flash("/pools", "notice", &format!("{name} havuzu kaydedildi.")),
+        Err(e) => failed("/pools", &e),
+    }
+}
+
+pub async fn pool_delete(State(st): State<AppState>, Path(name): Path<String>) -> Redirect {
+    match st.pool_remove(&name) {
+        Ok(()) => flash("/pools", "notice", &format!("{name} havuzu silindi.")),
+        Err(e) => failed("/pools", &e),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct BalloonForm {
+    mb: String,
+    /// Dinamik bellek formunda: alt sınır (MB); 0 kapatır.
+    min: Option<String>,
+}
+
+/// Dört göz ilkesi: bekleyen isteği onaylar ya da reddeder (`op`: `approve` / `reject`).
+pub async fn approval_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((id, op)): Path<(u64, String)>) -> Redirect {
+    let result = match op.as_str() {
+        "approve" => st.approve(id, &me.user).map(|done| capitalize(&done)),
+        "reject" => st.reject(id, &me.user).map(|()| format!("İstek #{id} reddedildi.")),
+        _ => return flash("/", "error", &format!("Bilinmeyen işlem: {op}")),
+    };
+    match result {
+        Ok(text) => flash("/", "notice", &text),
+        Err(e) => failed("/", &e),
+    }
+}
+
+/// Donanım sekmesindeki bellek hedefi formu.
+pub async fn balloon_set(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(raw): Path<String>, Form(f): Form<BalloonForm>) -> Redirect {
+    let vmid = match vmid_of(&raw) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let back = format!("/guests/{vmid}?tab=donanim");
+    if let Some(min) = &f.min {
+        let Ok(min) = min.trim().parse::<u64>() else {
+            return flash(&back, "error", "En az bellek MB olarak bir tam sayı olmalı.");
+        };
+        return match st.dynamic_memory_set(vmid, min, &me.user) {
+            Ok(()) if min == 0 => flash(&back, "notice", "Dinamik bellek kapatıldı: konuk belleğinin tamamını kullanır."),
+            Ok(()) => flash(&back, "notice", &format!("Dinamik bellek açıldı: hedef {min} MB ile belleğin tamamı arasında ayarlanır.")),
+            Err(e) => failed(&back, &e),
+        };
+    }
+    let Ok(mb) = f.mb.trim().parse::<u64>() else {
+        return flash(&back, "error", "Bellek hedefi MB olarak bir tam sayı olmalı.");
+    };
+    match st.balloon_set(vmid, mb, &me.user) {
+        Ok(()) if mb == 0 => flash(&back, "notice", "Balon boşaltıldı: konuk belleğinin tamamını kullanır."),
+        Ok(()) => flash(&back, "notice", &format!("Bellek hedefi {mb} MB olarak ayarlandı.")),
+        Err(e) => failed(&back, &e),
+    }
+}
+
+/// Yedekler sayfasındaki iş formu: ekler ya da aynı adlı işi günceller.
+pub async fn job_save(State(st): State<AppState>, RawForm(body): RawForm) -> Redirect {
+    let pairs: Vec<(String, String)> = serde_urlencoded::from_bytes(&body).unwrap_or_default();
+    let value = |key: &str| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.trim()).unwrap_or("");
+    let days: String = pairs.iter().filter(|(k, _)| k == "day").filter_map(|(_, v)| v.parse::<u8>().ok()).filter(|d| (1..=7).contains(d)).map(|d| d.to_string()).collect();
+    if days.is_empty() {
+        return flash("/backups", "error", "En az bir gün seçin.");
+    }
+    let keep = match value("keep") {
+        "" => None,
+        text => match text.parse::<u32>() {
+            Ok(n) => Some(n),
+            Err(_) => return flash("/backups", "error", "Saklanacak yedek sayısı bir sayı olmalı."),
+        },
+    };
+    let count = |key: &str, label: &str| -> Result<u32, String> {
+        match value(key) {
+            "" => Ok(0),
+            text => text.parse().map_err(|_| format!("{label} bir sayı olmalı.")),
+        }
+    };
+    let extras = (|| Ok::<_, String>((redox_core::Gfs { weekly: count("weekly", "Haftalık yedek sayısı")?, monthly: count("monthly", "Aylık yedek sayısı")?, yearly: count("yearly", "Yıllık yedek sayısı")? }, count("lock", "Kilit süresi")?)))();
+    let (gfs, lock) = match extras {
+        Ok(extras) => extras,
+        Err(message) => return flash("/backups", "error", &message),
+    };
+    let job = match redox_core::BackupJob::from_text(value("name"), value("time"), &days, value("tags"), keep).and_then(|job| job.with_retention(gfs, lock)).and_then(|job| job.with_window(value("until"), !value("verify").is_empty())) {
+        Ok(job) => job,
+        Err(e) => return failed("/backups", &e),
+    };
+    let name = job.name.clone();
+    match st.job_put(job) {
+        Ok(()) => flash("/backups", "notice", &format!("{name} işi kaydedildi.")),
+        Err(e) => failed("/backups", &e),
+    }
+}
+
+/// `run`: işi şimdi başlatır; `delete`: siler (aldığı yedekler kalır).
+pub async fn job_action(State(st): State<AppState>, Path((name, op)): Path<(String, String)>) -> Redirect {
+    match op.as_str() {
+        "run" => match st.job_run(&name) {
+            Ok(0) => flash("/backups", "error", &format!("{name} işinin kapsamında konuk yok.")),
+            Ok(n) => flash("/backups", "notice", &format!("{name} işi başlatıldı: {n} konuk sırayla yedeklenecek; sonuç görevlerde görünür.")),
+            Err(e) => failed("/backups", &e),
+        },
+        "delete" => match st.job_remove(&name) {
+            Ok(()) => flash("/backups", "notice", &format!("{name} işi silindi; aldığı yedekler duruyor.")),
+            Err(e) => failed("/backups", &e),
+        },
+        _ => flash("/backups", "error", "Bilinmeyen işlem."),
     }
 }
 
@@ -244,6 +444,8 @@ pub struct NameForm {
     linked: Option<String>,
     /// Şablon formunda: `1` şablona çevirir, `0` çıkarır.
     on: Option<String>,
+    /// Anlık görüntü formunda: belleksiz (üretim) denetim noktası.
+    production: Option<String>,
 }
 
 pub async fn suspend(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(raw): Path<String>) -> Redirect {
@@ -300,7 +502,8 @@ pub async fn snapshot_create(State(st): State<AppState>, Extension(me): Extensio
         Err(r) => return r,
     };
     let back = format!("/guests/{vmid}?tab=goruntuler");
-    match st.snapshot_create(vmid, f.name.trim(), &me.user) {
+    let started = if f.production.is_some() { st.snapshot_create_production(vmid, f.name.trim(), &me.user) } else { st.snapshot_create(vmid, f.name.trim(), &me.user) };
+    match started {
         Ok(_) => flash(&back, "notice", &format!("Anlık görüntü alınıyor: {}", f.name.trim())),
         Err(e) => failed(&back, &e),
     }
@@ -340,6 +543,19 @@ pub async fn backup_create(State(st): State<AppState>, Extension(me): Extension<
 }
 
 pub async fn backup_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((id, op)): Path<(String, String)>) -> Redirect {
+    // Yedekten yeni konuk: özgün konuk silinmiş de olabilir; başarılıysa yeni konuğun sayfasına gidilir.
+    if op == "restore-new" || op == "instant" {
+        let name = match st.snapshot().backup(&id) {
+            Ok(b) => redox_core::restored_name(&b.guest_name),
+            Err(e) => return flash("/backups", "error", &capitalize(&e.to_string())),
+        };
+        let made = if op == "instant" { st.backup_instant(&id, &name, &me.user) } else { st.backup_restore_new(&id, &name, &me.user) };
+        return match made {
+            Ok(vmid) if op == "instant" => flash(&format!("/guests/{vmid}"), "notice", &format!("{name}, {id} yedeğinin üzerinde açılmaya hazır. Kalıcı olması için Çoğalt ve Taşı sekmesinden yedekten ayırın.")),
+            Ok(vmid) => flash(&format!("/guests/{vmid}"), "notice", &format!("{id} yedeğinden {name} oluşturuluyor; sonuç görevlerde görünür.")),
+            Err(e) => failed("/backups", &e),
+        };
+    }
     let owner = st.snapshot().backup(&id).map(|b| b.vmid);
     let back = match owner {
         Ok(vmid) => format!("/guests/{vmid}?tab=yedekler"),
@@ -347,9 +563,14 @@ pub async fn backup_action(State(st): State<AppState>, Extension(me): Extension<
     };
     let result = match op.as_str() {
         "restore" => st.backup_restore(&id, &me.user).map(|_| format!("{id} geri yükleniyor.")),
-        "delete" => st.backup_delete(&id, &me.user).map(|()| format!("{id} silindi.")),
+        "delete" => st.request_backup_delete(&id, &me.user).map(|queued| match queued {
+            Some(n) => format!("{id} silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n})."),
+            None => format!("{id} silindi."),
+        }),
         "push" => st.backup_push(&id, &me.user).map(|()| format!("{id} dış hedefe gönderiliyor.")),
         "verify" => st.backup_verify(&id, &me.user).map(|()| format!("{id} doğrulanıyor; sonuç görev günlüğüne yazılır.")),
+        "test" => st.backup_test(&id, &me.user).map(|()| format!("{id} geçici bir konuk olarak açılıp sınanıyor; sonuç görev günlüğüne ve yedeğin satırına yazılır.")),
+        "lock" => st.backup_lock(&id, redox_core::retention::DEFAULT_LOCK_DAYS, &me.user).map(|until| format!("{id}, {} tarihine kadar silinemez.", redox_core::retention::date_label(until))),
         _ => return flash(&back, "error", &format!("Bilinmeyen işlem: {op}")),
     };
     match result {
@@ -493,6 +714,145 @@ pub async fn media_delete(State(st): State<AppState>, Extension(me): Extension<I
         Ok(()) => flash("/storage", "notice", &format!("{name} silindi.")),
         Err(e) => failed("/storage", &e),
     }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FilesQuery {
+    /// 0: asıl disk; diğerleri yedekteki ek disk numarası.
+    pub disk: u8,
+    path: String,
+    /// Dizin, tar arşivi olarak indirilsin mi?
+    tar: Option<String>,
+}
+
+impl FilesQuery {
+    /// Verilmemiş yol köktür.
+    pub fn path(&self) -> String {
+        if self.path.is_empty() { "/".to_string() } else { self.path.clone() }
+    }
+}
+
+/// Yedeğin içindeki dizini listeler. Okuma birkaç saniye sürer (ve artımlı yedekte önce imaj dökülür): istek iş
+/// parçacığını tutmaz. Her erişim denetim günlüğüne yazılır: yedeğin içeriği konuğun bütün dosyalarıdır.
+pub async fn list_backup_files(st: &AppState, user: &str, ip: &str, id: &str, disk: u8, path: &str) -> Result<Vec<crate::guestfs::Entry>, Error> {
+    if !crate::guestfs::valid_path(path) {
+        return Err(Error::InvalidSpec(format!("geçersiz yol: {path}")));
+    }
+    st.auth().audit.record(now(), user, ip, &format!("backup ls {id} {}", crate::guestfs::normalize(path)), true);
+    let (state, id, path) = (st.clone(), id.to_string(), path.to_string());
+    tokio::task::spawn_blocking(move || {
+        let (bin, image, temporary) = state.backup_image(&id, disk)?;
+        let listed = crate::guestfs::list(&bin, &image, &path).map_err(Error::Driver);
+        if temporary {
+            crate::state::discard_export(&image);
+        }
+        listed
+    })
+    .await
+    .unwrap_or_else(|_| Err(Error::Driver("dosya listesi okunamadı".to_string())))
+}
+
+/// Yedeğin içindeki dosyaları gösteren sayfa (yalnızca yönetici).
+pub async fn backup_files(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Extension(crate::ClientIp(ip)): Extension<crate::ClientIp>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<FilesQuery>,
+) -> Response {
+    let ctx = Ctx::new(&st, &headers, PageQuery::default(), &me);
+    if !me.can_write() {
+        return ctx.not_found("Yedeğin içindeki dosyaları yalnızca yönetici görebilir.");
+    }
+    let Ok(backup) = st.snapshot().backup(&id).cloned() else {
+        return ctx.not_found("Yedek bulunamadı.");
+    };
+    let path = query.path();
+    let listed = list_backup_files(&st, &me.user, &ip, &id, query.disk, &path).await.map_err(|e| capitalize(&e.to_string()));
+    Html(crate::view::backup_files(&ctx.page(Current::Backups, "/backups"), &backup, query.disk, &crate::guestfs::normalize(&path), &listed)).into_response()
+}
+
+/// Yedeğin içinden tek bir dosyayı ya da (`tar=1` ile) bir dizinin tar arşivini indirir. Yalnızca yönetici.
+pub async fn backup_file(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Extension(crate::ClientIp(ip)): Extension<crate::ClientIp>,
+    Path(id): Path<String>,
+    Query(query): Query<FilesQuery>,
+) -> Response {
+    use std::io::Read;
+    if !me.can_write() {
+        return (StatusCode::FORBIDDEN, "Yedekten dosya indirmek için yönetici yetkisi gerekir.").into_response();
+    }
+    let (path, tar) = (query.path(), query.tar.is_some());
+    if !crate::guestfs::valid_path(&path) || (!tar && crate::guestfs::normalize(&path) == "/") {
+        return (StatusCode::UNPROCESSABLE_ENTITY, "Geçersiz yol.").into_response();
+    }
+    st.auth().audit.record(now(), &me.user, &ip, &format!("backup {} {id} {}", if tar { "tar" } else { "get" }, crate::guestfs::normalize(&path)), true);
+    let (state, wanted, disk, guest_path) = (st.clone(), id.clone(), query.disk, path.clone());
+    let opened = tokio::task::spawn_blocking(move || {
+        let (bin, image, temporary) = state.backup_image(&wanted, disk)?;
+        let cleanup: Option<Box<dyn FnOnce() + Send>> = if temporary {
+            let image = image.clone();
+            Some(Box::new(move || crate::state::discard_export(&image)))
+        } else {
+            None
+        };
+        let mut stream = crate::guestfs::open(&bin, &image, &guest_path, tar, cleanup).map_err(Error::Driver)?;
+        // İlk parça burada okunur: dosya yoksa ya da okunamıyorsa boş bir indirme yerine açık bir hata döner.
+        let mut first = vec![0u8; 64 * 1024];
+        let n = stream.read(&mut first).map_err(|e| Error::Driver(format!("yedekteki dosya okunamadı: {e}")))?;
+        first.truncate(n);
+        Ok::<_, Error>((first, stream))
+    })
+    .await;
+    let (first, reader) = match opened {
+        Ok(Ok(ready)) if !ready.0.is_empty() => ready,
+        Ok(Ok(_)) => return (StatusCode::NOT_FOUND, "Dosya yedekte yok, boş ya da okunamıyor.").into_response(),
+        Ok(Err(e)) => return (StatusCode::UNPROCESSABLE_ENTITY, capitalize(&e.to_string())).into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Dosya okunamadı.").into_response(),
+    };
+    let stream = futures_util::stream::unfold((Some(first), reader), |(first, mut reader)| async move {
+        if let Some(first) = first {
+            return Some((Ok::<_, std::io::Error>(first), (None, reader)));
+        }
+        let read = tokio::task::spawn_blocking(move || {
+            let mut buf = vec![0u8; 256 * 1024];
+            let n = reader.read(&mut buf);
+            (
+                n.map(|n| {
+                    buf.truncate(n);
+                    buf
+                }),
+                reader,
+            )
+        })
+        .await;
+        match read {
+            Ok((Ok(buf), _)) if buf.is_empty() => None,
+            Ok((result, reader)) => Some((result, (None, reader))),
+            Err(_) => None,
+        }
+    });
+    // Dosya adı başlığa güvenle konabilsin diye sadeleştirilir.
+    let leaf = crate::guestfs::normalize(&path).rsplit('/').next().unwrap_or("").to_string();
+    let safe: String = leaf.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect();
+    let name = match (safe.is_empty(), tar) {
+        (true, _) => format!("{id}.tar"),
+        (false, true) => format!("{safe}.tar"),
+        (false, false) => safe,
+    };
+    (
+        [
+            (CONTENT_TYPE, if tar { "application/x-tar" } else { "application/octet-stream" }.to_string()),
+            (axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\"")),
+            (HeaderName::from_static("x-content-type-options"), "nosniff".to_string()),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response()
 }
 
 #[derive(Debug, Default, Deserialize)]

@@ -402,34 +402,30 @@ impl Hypervisor for LxcDriver {
         self.write_snapshot_map(g.vmid, &map)
     }
 
-    /// Kök dosya sisteminin sıkıştırılmış arşivi. Konteyner kapalı olmalıdır.
+    fn live_backup(&self, kind: GuestKind) -> bool {
+        kind == GuestKind::Ct
+    }
+
+    /// Kök dosya sisteminin sıkıştırılmış arşivi. Çalışan konteyner arşivleme süresince dondurulur
+    /// (süreçleri durur, dosyalar değişmez) ve sonra çözülür; kapalı ya da zaten duraklatılmış konteynere dokunulmaz.
     fn backup(&self, g: &Guest, id: &str) -> Result<BackupSize, String> {
         let target = self.backup_path(id)?;
         std::fs::create_dir_all(&self.cfg.backups_dir).map_err(|e| format!("yedek dizini oluşturulamadı: {e}"))?;
         if target.exists() {
             return Err(format!("{} zaten var", target.display()));
         }
-        let rootfs = self.rootfs(g.vmid)?;
-        let file = std::fs::File::create(&target).map_err(|e| format!("{} oluşturulamadı: {e}", target.display()))?;
-        let out = self
-            .userns()
-            .args(["tar", "--numeric-owner", "-C"])
-            .arg(&rootfs)
-            .args(["-czf", "-", "."])
-            .stdin(Stdio::null())
-            .stdout(file)
-            .output()
-            .map_err(|e| format!("tar çalıştırılamadı: {e}"));
-        match out {
-            Ok(o) if o.status.success() => Ok(BackupSize::full(std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0).div_ceil(1024 * 1024))),
-            other => {
+        let running = self.info(g.vmid).is_some_and(|i| i.state == "RUNNING");
+        if running {
+            self.run("lxc-freeze", g.vmid, &[]).map_err(|e| format!("konteyner yedek için dondurulamadı: {e}"))?;
+        }
+        let made = self.archive(g, &target);
+        if running {
+            if let Err(e) = self.run("lxc-unfreeze", g.vmid, &[]) {
                 let _ = std::fs::remove_file(&target);
-                Err(match other {
-                    Ok(o) => format!("yedek alınamadı: {}", last_line(&o.stderr)),
-                    Err(e) => e,
-                })
+                return Err(format!("konteyner yedekten sonra çözülemedi ({e}); elle çözün: lxc-unfreeze -n {}", container_name(g.vmid)));
             }
         }
+        made
     }
 
     /// Kök dosya sistemini boşaltıp arşivi yerine açar. Yapılandırma (sınırlar, ağ) değişmez.
@@ -487,12 +483,47 @@ impl Hypervisor for LxcDriver {
         Err(format!("bağlı klon {UNSUPPORTED}"))
     }
 
-    fn clone_disk(&self, _: &Guest, _: &Guest) -> Result<(), String> {
-        Err(format!("klonlama {UNSUPPORTED}"))
+    /// Kapalı konteyneri yeni adla kopyalar (`lxc-copy`), sonra yönetilen ayarları (ad, sınırlar, ağ adresi)
+    /// yeni konuğa göre yazar. Anlık görüntüler kopyalanmaz.
+    fn clone_disk(&self, source: &Guest, target: &Guest) -> Result<(), String> {
+        let new_name = container_name(target.vmid);
+        if self.cfg.lxc_path.join(&new_name).exists() {
+            return Err(format!("{new_name} adlı konteyner dizini zaten var"));
+        }
+        self.run("lxc-copy", source.vmid, &["-N", &new_name])?;
+        let _ = std::fs::remove_file(self.snapshot_map_path(target.vmid));
+        self.write_managed(target).inspect_err(|_| {
+            let _ = self.run("lxc-destroy", target.vmid, &[]);
+        })
     }
 }
 
 impl LxcDriver {
+    /// Kök dosya sistemini `target` arşivine yazar.
+    fn archive(&self, g: &Guest, target: &std::path::Path) -> Result<BackupSize, String> {
+        let rootfs = self.rootfs(g.vmid)?;
+        let file = std::fs::File::create(target).map_err(|e| format!("{} oluşturulamadı: {e}", target.display()))?;
+        let out = self
+            .userns()
+            .args(["tar", "--numeric-owner", "-C"])
+            .arg(&rootfs)
+            .args(["-czf", "-", "."])
+            .stdin(Stdio::null())
+            .stdout(file)
+            .output()
+            .map_err(|e| format!("tar çalıştırılamadı: {e}"));
+        match out {
+            Ok(o) if o.status.success() => Ok(BackupSize::full(std::fs::metadata(target).map(|m| m.len()).unwrap_or(0).div_ceil(1024 * 1024))),
+            other => {
+                let _ = std::fs::remove_file(target);
+                Err(match other {
+                    Ok(o) => format!("yedek alınamadı: {}", last_line(&o.stderr)),
+                    Err(e) => e,
+                })
+            }
+        }
+    }
+
     fn backup_path(&self, id: &str) -> Result<PathBuf, String> {
         if !crate::qemu::valid_backup_id(id) {
             return Err(format!("geçersiz yedek kimliği: {id}"));

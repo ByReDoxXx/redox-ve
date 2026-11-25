@@ -11,11 +11,13 @@ pub struct HostDriver {
     ct: Option<LxcDriver>,
     /// Güvenlik duvarı için `nft` ikilisi; `None` ise güvenlik duvarı kapalıdır.
     nft: Option<String>,
+    /// En son yüklenen kural betiği: korumalar yalnızca betik değiştiyse yeniden yüklenir.
+    loaded: std::sync::Mutex<Option<String>>,
 }
 
 impl HostDriver {
     pub fn new(vm: QemuDriver, ct: Option<LxcDriver>) -> Self {
-        HostDriver { vm, ct, nft: None }
+        HostDriver { vm, ct, nft: None, loaded: std::sync::Mutex::new(None) }
     }
 
     /// Konuk güvenlik duvarını açar (hizmetin CAP_NET_ADMIN yetkisi olmalıdır).
@@ -33,6 +35,15 @@ impl HostDriver {
             GuestKind::Vm => Ok(&self.vm),
             GuestKind::Ct => self.ct.as_ref().map(|d| d as &dyn Hypervisor).ok_or_else(|| "bu sunucuda LXC kurulu değil".to_string()),
         }
+    }
+}
+
+impl HostDriver {
+    /// Güvenlik duvarı ve ağ kartı korumalarının tam betiği. Korunan konukların arayüzleri o an QEMU
+    /// süreçlerinden okunur.
+    fn rules(&self, guests: &[Guest]) -> String {
+        let taps: Vec<_> = guests.iter().filter(|g| crate::firewall::guarded(g)).map(|g| (g.vmid, self.vm.guest_taps(g.vmid))).collect();
+        crate::firewall::ruleset_with(guests, &taps)
     }
 }
 
@@ -58,6 +69,13 @@ impl Hypervisor for HostDriver {
         match kind {
             GuestKind::Vm => self.vm.live_disk_ops(kind),
             GuestKind::Ct => self.ct.as_ref().is_some_and(|d| d.live_disk_ops(kind)),
+        }
+    }
+
+    fn live_backup(&self, kind: GuestKind) -> bool {
+        match kind {
+            GuestKind::Vm => self.vm.live_backup(kind),
+            GuestKind::Ct => self.ct.as_ref().is_some_and(|d| d.live_backup(kind)),
         }
     }
 
@@ -106,6 +124,54 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.hot_add_disk(guest, id)
     }
 
+    fn instant_from_backup(&self, guest: &Guest, backup: &str, disks: &[u8]) -> Result<(), String> {
+        self.of(guest)?.instant_from_backup(guest, backup, disks)
+    }
+
+    fn detach_backing(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.detach_backing(guest)
+    }
+
+    fn move_storage(&self, guest: &Guest, target: &str) -> Result<(), String> {
+        self.of(guest)?.move_storage(guest, target)
+    }
+
+    fn import_disk(&self, guest: &Guest, id: u8, source: &std::path::Path) -> Result<(), String> {
+        self.of(guest)?.import_disk(guest, id, source)
+    }
+
+    fn restore_machine(&self, guest: &Guest, archive: &std::path::Path) -> Result<(), String> {
+        self.of(guest)?.restore_machine(guest, archive)
+    }
+
+    fn host_cpu_vendor(&self) -> Option<&'static str> {
+        self.vm.host_cpu_vendor()
+    }
+
+    fn nested_virt(&self) -> bool {
+        self.vm.nested_virt()
+    }
+
+    fn guest_run(&self, guest: &Guest, command: &str) -> Result<(), String> {
+        self.of(guest)?.guest_run(guest, command)
+    }
+
+    fn snapshot_disk_only(&self, guest: &Guest, name: &str) -> Result<bool, String> {
+        self.of(guest)?.snapshot_disk_only(guest, name)
+    }
+
+    fn io_counters(&self, guest: &Guest) -> Option<(u64, u64)> {
+        self.of(guest).ok()?.io_counters(guest)
+    }
+
+    fn balloon_stats(&self, guest: &Guest) -> Option<redox_core::BalloonStats> {
+        self.of(guest).ok()?.balloon_stats(guest)
+    }
+
+    fn set_balloon(&self, guest: &Guest, target_mb: u64) -> Result<(), String> {
+        self.of(guest)?.set_balloon(guest, target_mb)
+    }
+
     fn hot_add_nic(&self, guest: &Guest, index: u8, network: &str) -> Result<(), String> {
         self.of(guest)?.hot_add_nic(guest, index, network)
     }
@@ -123,10 +189,26 @@ impl Hypervisor for HostDriver {
     }
 
     fn apply_firewall(&self, guests: &[Guest]) -> Result<(), String> {
-        match &self.nft {
-            Some(nft) => crate::firewall::apply(nft, &crate::firewall::ruleset(guests)),
-            None => Ok(()),
+        let Some(nft) = &self.nft else { return Ok(()) };
+        let script = self.rules(guests);
+        crate::firewall::apply(nft, &script)?;
+        *self.loaded.lock().unwrap_or_else(|e| e.into_inner()) = Some(script);
+        Ok(())
+    }
+
+    fn refresh_guards(&self, guests: &[Guest]) -> Result<(), String> {
+        let Some(nft) = &self.nft else { return Ok(()) };
+        let mut loaded = self.loaded.lock().unwrap_or_else(|e| e.into_inner());
+        if loaded.is_none() && !guests.iter().any(|g| g.hw.nic_guard) {
+            return Ok(());
         }
+        let script = self.rules(guests);
+        if loaded.as_deref() == Some(script.as_str()) {
+            return Ok(());
+        }
+        crate::firewall::apply(nft, &script)?;
+        *loaded = Some(script);
+        Ok(())
     }
 
     fn export_disks(&self, guest: &Guest) -> Result<Option<(std::path::PathBuf, Vec<(String, std::path::PathBuf, u64)>)>, String> {
@@ -234,6 +316,10 @@ impl Hypervisor for HostDriver {
             (true, None) => Ok(None),
             (false, _) => self.vm.export_backup(id, disk),
         }
+    }
+
+    fn backup_machine_file(&self, id: &str) -> Option<std::path::PathBuf> {
+        if id.starts_with("ct-") { None } else { self.vm.backup_machine_file(id) }
     }
 
     fn backup_disk_file(&self, id: &str, disk: u8) -> Option<std::path::PathBuf> {

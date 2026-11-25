@@ -25,6 +25,8 @@ stubborn = value("-name") == "inatci"
 disk_files = [a.split("file=", 1)[1].split(",if=")[0] for i, a in enumerate(args) if i and args[i - 1] == "-drive" and a.startswith("file=") and ",if=virtio" in a]
 disk_path = disk_files[0]
 devices = {"virtio%d" % i: path for i, path in enumerate(disk_files)}
+qom = {}
+blockstats = 0
 # Bağlantı noktasına oturan ek diskler kendi adlarıyla gelir: file=YOL,if=none,id=xdN,...
 for i, a in enumerate(args):
     if i and args[i - 1] == "-drive" and a.startswith("file=") and ",if=none,id=" in a:
@@ -81,7 +83,8 @@ paused = False
 
 # Konuk ajanı kanalı: adı "ajanli" ile başlayan konukta ajan yanıt verir; diğerlerinde kanal sessizdir.
 qga_path = next((a.split("path=", 1)[1].split(",")[0] for a in args if a.startswith("socket,id=qga0,")), None)
-has_agent = value("-name").startswith("ajanli")
+# Ajan: adı "ajanli" ile başlayan konuklarda ya da çalışma dizininde "ajan-var" dosyası varsa.
+has_agent = value("-name").startswith("ajanli") or os.path.exists(os.path.join(os.path.dirname(sock_path), "ajan-var"))
 
 
 def agent(listener):
@@ -99,9 +102,19 @@ def agent(listener):
                     stream.write(json.dumps({"return": 1}) + "\n")
                     reply = {"return": request["arguments"]["id"]}
                 else:
+                    arguments = request.get("arguments", {})
                     with open(qga_path + ".log", "a") as out:
-                        out.write(command + "\n")
-                    if command == "guest-fsfreeze-freeze":
+                        if command == "guest-exec":
+                            out.write("guest-exec %s %s\n" % (arguments.get("path"), " ".join(arguments.get("arg", []))))
+                        elif command != "guest-exec-status":
+                            out.write(command + "\n")
+                    if command == "guest-exec":
+                        # Çalıştırılan programın yolunda "basarisiz" geçiyorsa program hata koduyla biter.
+                        reply = {"return": {"pid": 3 if "basarisiz" in arguments.get("path", "") else 7}}
+                    elif command == "guest-exec-status":
+                        failed = arguments.get("pid") == 3
+                        reply = {"return": {"exited": True, "exitcode": 3 if failed else 0, "out-data": "dmVyaXRhYmFuaSBtZXNndWwK" if failed else "dGFtYW0K"}}
+                    elif command == "guest-fsfreeze-freeze":
                         reply = {"error": {"class": "GenericError", "desc": "freeze refused"}} if os.path.exists(qga_path + ".nofreeze") else {"return": 2}
                     elif command == "guest-fsfreeze-thaw":
                         reply = {"return": 2}
@@ -182,10 +195,28 @@ while True:
             request = json.loads(line)
             command = request["execute"]
             arguments = request.get("arguments", {})
-            if command == "query-block":
+            if command == "query-blockstats":
+                # Her sorguda artan sayaçlar: 1 MiB okuma, 2 MiB yazma.
+                blockstats += 1
+                send({"return": [{"device": name, "stats": {"rd_bytes": blockstats << 20, "wr_bytes": blockstats << 21}} for name in list(devices)[:1]]})
+            elif command == "query-block":
                 send({"return": [{"device": "ide2-cd0", "inserted": {"file": "/başka/dosya.iso"}}] + [{"device": name, "inserted": {"file": path}} for name, path in devices.items()]})
             elif command == "transaction":
+                if all(a["type"] == "blockdev-snapshot-internal-sync" for a in arguments["actions"]):
+                    # İç anlık görüntü: sahte qemu-img ile aynı yan dosyaya (<imaj>.snaps) yazılır.
+                    if any(a["data"]["device"] not in devices for a in arguments["actions"]):
+                        send({"error": {"class": "DeviceNotFound", "desc": "Cannot find device"}})
+                        continue
+                    for a in arguments["actions"]:
+                        with open(devices[a["data"]["device"]] + ".snaps", "a") as out:
+                            out.write(a["data"]["name"] + "\n")
+                    hot("disk-snapshot %s x%d" % (arguments["actions"][0]["data"]["name"], len(arguments["actions"])))
+                    send({"return": {}})
+                    continue
                 jobs = [a["data"] for a in arguments["actions"]]
+                for j in jobs:
+                    if "speed" in j:
+                        hot("backup-speed %d" % j["speed"])
                 if any(a["type"] != "drive-backup" for a in arguments["actions"]) or any(j["device"] not in devices or not j.get("job-id") for j in jobs):
                     send({"error": {"class": "DeviceNotFound", "desc": "Cannot find device"}})
                     continue
@@ -319,6 +350,43 @@ while True:
                 # Gerçek QEMU yanıttan önce olay gönderebilir; istemci bunu atlamalı.
                 send({"timestamp": {"seconds": 1, "microseconds": 0}, "event": "STOP"})
                 send({"return": {}})
+            elif command == "query-block-jobs":
+                send({"return": []})
+            elif command == "block-stream":
+                # Arkalıktaki veri diske akar ve bağ kalkar (sahte imajda arkalık "bagli:<yol>" satırıdır).
+                path = devices.get(arguments["device"])
+                if path is None:
+                    send({"error": {"class": "DeviceNotFound", "desc": "Cannot find device"}})
+                    continue
+                with open(path, "rb") as f:
+                    content = f.read()
+                if content.startswith(b"bagli:"):
+                    with open(content[6:].decode(), "rb") as base, open(path, "wb") as out:
+                        out.write(base.read())
+                hot("block-stream %s" % arguments["device"])
+                send({"return": {}})
+            elif command == "qom-set":
+                qom[arguments["property"]] = arguments["value"]
+                hot("qom-set %s=%s" % (arguments["property"], arguments["value"]))
+                send({"return": {}})
+            elif command == "qom-get":
+                if arguments["property"] == "guest-stats":
+                    # Sınama, konuğun bildireceği ölçümü yan dosyaya yazar: "<toplam MB> <kullanılabilir MB>".
+                    try:
+                        # Gerçek QEMU bildirilmeyen değeri 2^64-1 olarak verir; "yok" bunu canlandırır.
+                        missing = 18446744073709551615
+                        total, available = [missing if x == "yok" else int(x) << 20 for x in open(sock_path + ".memstats").read().split()]
+                        send({"return": {"last-update": 1700000000, "stats": {"stat-total-memory": total, "stat-available-memory": available, "stat-swap-in": missing}}})
+                    except (OSError, ValueError):
+                        send({"return": {"last-update": 0, "stats": {"stat-total-memory": 18446744073709551615, "stat-available-memory": 18446744073709551615}}})
+                else:
+                    send({"return": qom.get(arguments["property"], 0)})
+            elif command == "balloon":
+                if any("virtio-balloon" in a for a in args):
+                    hot("balloon %d" % arguments["value"])
+                    send({"return": {}})
+                else:
+                    send({"error": {"class": "DeviceNotActive", "desc": "No balloon device has been activated"}})
             elif command == "cont":
                 paused = False
                 send({"timestamp": {"seconds": 1, "microseconds": 0}, "event": "RESUME"})

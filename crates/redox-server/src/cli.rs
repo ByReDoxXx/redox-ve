@@ -13,7 +13,7 @@ Sunucu:
               [--driver sim|qemu] [--data-dir DİZİN] [--qemu-bin YOL] [--ovmf-dir DİZİN] [--swtpm-bin YOL]
               [--shutdown-timeout-secs 60] [--no-lxc] [--no-autostart] [--storage AD=DİZİN]...
               [--behind-tls-proxy] [--allow-plain-http] [--task-delay-ms 1500]
-              [--alert-webhook URL] [--alert-email DOSYA] [--peers DOSYA] [--offsite DOSYA] [--oidc DOSYA] [--firewall] [--incremental-backups [--changed-block-tracking]]
+              [--alert-webhook URL] [--alert-email DOSYA] [--peers DOSYA] [--offsite DOSYA] [--offsite-copy DOSYA]... [--oidc DOSYA] [--guestfish-bin YOL] [--backup-test-secs 60] [--backup-report SS:DD] [--backup-age-days 7] [--backup-mbps 0] [--firewall] [--incremental-backups [--changed-block-tracking]]
 
 Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da REDOX_USERS):
   redox user add <ad> [--role admin|operator|viewer]
@@ -38,11 +38,26 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
                     disk-mbps disk-iops net-mbps   (hız sınırları; 0 sınırsız. Ağ sınırı yalnızca köprüdeki kartlarda)
                     vlan=20   (birinci kartın VLAN etiketi; ek kartlarda nics=vmbr1:20)
                     shares=ortak,veri:ro   (paylaşılan klasörler; :ro salt okunur)
+                    backup-pre='/usr/local/bin/once.sh' backup-post='/usr/local/bin/sonra.sh'
+                                           (çalışan konuğun yedeğinden önce ve sonra konukta çalışır; konuk ajanı gerekir)
+                    nic-guard=true   (ağ kartı koruması: sahte MAC, DHCP sunucusu ve yönlendirici duyurusu engellenir)
+                    test-port=22 test-cmd=/usr/local/bin/saglik.sh   (yedek sınamasında denetlenecek TCP kapısı ve konukta çalıştırılacak komut)
+                    rpo=24   (yedek yaşı hedefi, saat: son yedek bundan eskiyse konuk korumasız sayılır; 0 genel ayar)
+                    nested=true   (iç içe sanallaştırma: konuğa VT-x / AMD-V gösterilir)
+                    cpu=Haswell   (işlemci modeli; cpu=host sunucunun kendi işlemcisi)   balloon=true   (bellek balonu aygıtı)
+                    ci-user=ali ci-key='ssh-ed25519 AAAA…' ci-ip=10.0.0.5/24 ci-gw=10.0.0.1 ci-dns=1.1.1.1,9.9.9.9
+                                           (cloud-init; ci-key= boş verilirse kapanır, ci-ip= boşsa DHCP)
                     nics=vmbr1,nat usb=046d:c52b pci=0000:01:00.0 firmware=bios|uefi|uefi-secure tpm firewall fw-rules   (örn. firewall=true fw-rules='tcp/22,tcp/443 from 10.0.0.0/8')
         örnek: redox vm set 103 cores=4 memory=8192 tags=prod,web backup-time=03:30
   redox vm|ct clone <kimlik> <yeni-ad>
   redox vm disk add <kimlik> <GB> | vm nic add <kimlik> <nat|köprü>   (çalışan sanal makineye de takılır)
   redox vm resize <kimlik> <GB>
+  redox vm move <kimlik> <depolama>      (kapalı sanal makinenin disklerini başka depolama alanına taşır)
+  redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
+  redox approval list | approve <no> | reject <no>   (dört göz ilkesi: bekleyen silme istekleri; kendi isteğinizi onaylayamazsınız)
+  redox backup archive | recover <yedek>   (yerelde silinmiş ama kopya hedefinde saklanan yedekler; recover listeye geri getirir)
+  redox usage | vm usage <kimlik> [reset]   (birikimli kaynak tüketimi: çekirdek-saat, GB-saat, disk G/Ç; reset sayaçları sıfırlar)
+  redox vm balloon <kimlik> auto <MB>    (dinamik bellek: hedef kullanıma göre <MB> ile belleğin tamamı arasında; 0 kapatır)
   redox vm disk add <kimlik> <GB> | disk remove <kimlik> <numara>
   redox vm suspend <kimlik> | discard-suspend <kimlik>   (askıya alır; start kaldığı yerden sürdürür)
   redox vm template <kimlik> on|off      (şablona çevirir / çıkarır)
@@ -50,9 +65,26 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox ct exec <kimlik> <komut ...>
   redox vm|ct destroy <kimlik>
   redox snapshot list <kimlik> | create|rollback|delete <kimlik> <ad>
+  redox snapshot create <kimlik> <ad> --production   (çalışan konukta belleksiz, dosya sistemi dondurulmuş denetim noktası)
+  redox backup report                     (son 24 saatin yedek raporu ve korumasız konuklar)
   redox backup list | create <kimlik> | restore <yedek> | delete <yedek>
+  redox backup restore-new <yedek> <ad>   (yedekten yeni bir sanal makine açar; özgün konuğa dokunmaz)
+  redox backup ls <yedek> [yol]           (yedeğin içindeki dosyaları listeler; sunucuda guestfish gerekir)
+        dosya indirmek: curl -H 'Authorization: Bearer TOKEN' -o dosya 'REDOX_URL/api/v1/backups/YEDEK/file?path=/etc/hostname'
+  redox backup instant <yedek> <ad>       (anında kurtarma: konuk kopyalama beklemeden yedeğin üzerinde açılır)
+  redox vm detach <kimlik>                (anında kurtarılmış konuğu yedekten ayırır; çalışırken de yapılır)
+  redox backup test <yedek>               (yedeği yalıtılmış geçici bir konuk olarak açıp sınar; sonuç: redox task list)
+  redox backup lock <yedek> <gün>         (yedeği o kadar gün silinemez yapar; kilit yalnızca uzatılır)
   redox backup push <yedek>       (dış hedefe yeniden gönderir)
   redox backup verify <yedek>     (bozulma denetimi; sonuç: redox task list)
+  redox pool list | remove <ad>                (kaynak havuzları: konuk grubuna toplam kota)
+  redox pool add <ad> [cores=32] [memory=65536] [disk=500] [guests=10]   (memory MB, disk GB; yazılmayan sınırsız)
+        konuğu havuza almak: redox vm set 103 pool=web   (pool= boş verilirse havuzdan çıkar)
+  redox job list | run <ad> | remove <ad>      (yedek işleri: birden çok konuk, tek zamanlama, sırayla)
+  redox job add <ad> time=03:00 [days=1-5] [tags=web,db] [keep=7] [weekly=4] [monthly=12] [yearly=1] [lock=14]
+        weekly/monthly/yearly: son N'e ek olarak saklanacak haftalık, aylık, yıllık yedek; lock: yedekler kaç gün silinemez
+        until=06:00: yedek penceresinin sonu (sonrasında sıradaki konuklara başlanmaz); verify=true: her yedek doğrulanır
+        tags verilmezse bütün konuklar; days verilmezse her gün; aynı adla yeniden yazmak işi günceller
   redox storage list
   redox media list | delete <dosya>            (kurulum kalıpları ve disk imajları)
   redox media fetch <https-adresi> [sha256]    (sunucu dosyayı kendisi indirir)
@@ -85,6 +117,20 @@ pub enum View {
     Snapshots,
     Backups,
     Media,
+    Jobs,
+    Pools,
+    /// Onay bekleyen istekler.
+    Approvals,
+    /// `{ "done": ... }` döndüren onay.
+    Approved,
+    /// Kaynak ölçümü: bir konuk (nesne) ya da hepsi (dizi).
+    Usage,
+    /// Yedeğin içindeki dizin listesi.
+    Files,
+    /// Düz metin yedek raporu.
+    Report,
+    /// `{ "queued": ... }` döndüren iş başlatma.
+    JobStarted,
     /// Görev döndüren işlemler.
     Task,
     /// `{ "id": ... }` döndüren yedek alma.
@@ -111,10 +157,20 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
         let (key, value) = pair.split_once('=').ok_or_else(|| format!("\"{pair}\" anahtar=değer biçiminde değil"))?;
         let number = || value.parse::<u64>().map(Value::from).map_err(|_| format!("{key} bir sayı olmalı: {value}"));
         let (field, parsed) = match key {
-            "name" | "os" | "iso" | "bridge" => (key, Value::from(value)),
+            "name" | "os" | "iso" | "bridge" | "pool" => (key, Value::from(value)),
+            "cpu" => ("cpu_type", Value::from(if value == "host" { "" } else { value })),
+            "ci-user" => ("ci_user", Value::from(value)),
+            "ci-key" => ("ci_ssh_key", Value::from(value)),
+            "ci-ip" => ("ci_ip", Value::from(value)),
+            "ci-gw" => ("ci_gw", Value::from(value)),
+            "ci-dns" => ("ci_dns", Value::from(value)),
             "cores" => ("cores", number()?),
             "memory" => ("memory_mb", number()?),
             "backup-keep" => ("backup_keep", number()?),
+            "rpo" => ("rpo_hours", number()?),
+            "backup-weekly" => ("backup_weekly", number()?),
+            "backup-monthly" => ("backup_monthly", number()?),
+            "backup-yearly" => ("backup_yearly", number()?),
             "boot-order" => ("boot_order", number()?),
             "disk-mbps" => ("disk_mbps", number()?),
             "disk-iops" => ("disk_iops", number()?),
@@ -131,8 +187,12 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
                 ("schedules", Value::from(items))
             }
             "backup-time" => ("backup_time", Value::from(value)),
-            "onboot" | "firewall" | "tpm" | "restart" => (
-                key,
+            "backup-pre" => ("backup_pre", Value::from(value)),
+            "test-port" => ("test_port", number()?),
+            "test-cmd" => ("test_cmd", Value::from(value)),
+            "backup-post" => ("backup_post", Value::from(value)),
+            "onboot" | "firewall" | "tpm" | "restart" | "balloon" | "nic-guard" | "nested" => (
+                if key == "nic-guard" { "nic_guard" } else { key },
                 Value::from(match value {
                     "true" | "1" | "evet" => true,
                     "false" | "0" | "hayır" | "hayir" => false,
@@ -154,11 +214,55 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             }
             _ => {
                 return Err(format!(
-                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci"
+                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
                 ))
             }
         };
         body.insert(field.to_string(), parsed);
+    }
+    Ok(Value::Object(body))
+}
+
+/// Yolu sorgu dizgisine konacak biçimde kodlar (harf, rakam ve `-_.~/` dışındakiler `%XX`).
+fn redox_server_path(path: &str) -> String {
+    path.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~/".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+/// `redox pool add` çiftlerini API gövdesine çevirir.
+fn pool_body(name: &str, pairs: &[&str]) -> Result<Value, String> {
+    let mut body = Map::new();
+    body.insert("name".to_string(), Value::from(name));
+    for pair in pairs {
+        let (key, value) = pair.split_once('=').ok_or_else(|| format!("\"{pair}\" anahtar=değer biçiminde değil"))?;
+        let field = match key {
+            "cores" => "cores",
+            "memory" => "memory_mb",
+            "disk" => "disk_gb",
+            "guests" => "guests",
+            _ => return Err(format!("bilinmeyen anahtar \"{key}\"; geçerli olanlar: cores memory disk guests")),
+        };
+        body.insert(field.to_string(), Value::from(value.parse::<u64>().map_err(|_| format!("{key} bir sayı olmalı: {value}"))?));
+    }
+    Ok(Value::Object(body))
+}
+
+/// `redox job add` çiftlerini API gövdesine çevirir.
+fn job_body(name: &str, pairs: &[&str]) -> Result<Value, String> {
+    let mut body = Map::new();
+    body.insert("name".to_string(), Value::from(name));
+    for pair in pairs {
+        let (key, value) = pair.split_once('=').ok_or_else(|| format!("\"{pair}\" anahtar=değer biçiminde değil"))?;
+        let parsed = match key {
+            "time" | "days" | "until" => Value::from(value),
+            "verify" => Value::from(matches!(value, "true" | "1" | "evet")),
+            "tags" => Value::from(value.split(',').map(str::trim).filter(|t| !t.is_empty()).collect::<Vec<_>>()),
+            "keep" | "weekly" | "monthly" | "yearly" | "lock" => Value::from(value.parse::<u32>().map_err(|_| format!("{key} bir sayı olmalı: {value}"))?),
+            _ => return Err(format!("bilinmeyen anahtar \"{key}\"; geçerli olanlar: time days tags keep weekly monthly yearly lock until verify")),
+        };
+        body.insert(key.to_string(), parsed);
+    }
+    if !body.contains_key("time") {
+        return Err("saat verin, örn. time=03:00".to_string());
     }
     Ok(Value::Object(body))
 }
@@ -192,6 +296,7 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             req("POST", format!("/guests/{}/exec", vmid(id)?), Some(json!({ "command": command.join(" ") })), View::Output)
         }
         ["snapshot", "list", id] => get(&format!("/guests/{}", vmid(id)?), View::Snapshots),
+        ["snapshot", "create", id, name, "--production"] => req("POST", format!("/guests/{}/snapshots", vmid(id)?), Some(json!({ "name": name, "production": true })), View::Task),
         ["snapshot", "create", id, name] => req("POST", format!("/guests/{}/snapshots", vmid(id)?), Some(json!({ "name": name })), View::Task),
         ["snapshot", "rollback", id, name] => req("POST", format!("/guests/{}/snapshots/{name}/rollback", vmid(id)?), None, View::Task),
         ["snapshot", "delete", id, name] => req("DELETE", format!("/guests/{}/snapshots/{name}", vmid(id)?), None, View::Task),
@@ -209,11 +314,52 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["media", "fetch", url] => req("POST", "/media/fetch".to_string(), Some(json!({ "url": url })), View::Done("indiriliyor; sonuç: redox task list")),
         ["media", "fetch", url, sha] => req("POST", "/media/fetch".to_string(), Some(json!({ "url": url, "sha256": sha })), View::Done("indiriliyor; sonuç: redox task list")),
         ["backup", "list"] => get("/backups", View::Backups),
+        ["backup", "report"] => get("/backups/report", View::Report),
         ["backup", "create", id] => req("POST", format!("/guests/{}/backups", vmid(id)?), None, View::BackupStarted),
         ["backup", "restore", id] => req("POST", format!("/backups/{id}/restore"), None, View::Task),
+        ["backup", "instant", id, name] => req("POST", format!("/backups/{id}/instant"), Some(json!({ "name": name })), View::Cloned),
+        ["vm", "detach", id] => req("POST", format!("/guests/{}/detach", vmid(id)?), None, View::Task),
+        ["approval", "list"] => get("/approvals", View::Approvals),
+        ["approval", "approve", id] => req("POST", format!("/approvals/{}/approve", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Approved),
+        ["approval", "reject", id] => req("DELETE", format!("/approvals/{}", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Done("istek reddedildi")),
+        ["backup", "archive"] => get("/backups/archive", View::Backups),
+        ["backup", "recover", id] => req("POST", format!("/backups/{id}/recover"), None, View::Done("yedek arşivden geri getirildi; geri yüklenirken kopya hedefinden iner")),
+        ["backup", "test", id] => req("POST", format!("/backups/{id}/test"), None, View::Done("sınama başladı; sonuç: redox task list")),
+        ["backup", "lock", id, days] => req(
+            "POST",
+            format!("/backups/{id}/lock"),
+            Some(json!({ "days": days.parse::<u32>().map_err(|_| format!("gün sayısı bir sayı olmalı: {days}"))? })),
+            View::Done("yedek kilitlendi"),
+        ),
+        ["backup", "ls", id] => get(&format!("/backups/{id}/files?path=/"), View::Files),
+        ["backup", "ls", id, path] => get(&format!("/backups/{id}/files?path={}", redox_server_path(path)), View::Files),
+        ["backup", "restore-new", id, name] => req("POST", format!("/backups/{id}/restore-new"), Some(json!({ "name": name })), View::Cloned),
         ["backup", "push", id] => req("POST", format!("/backups/{id}/push"), None, View::Done("dış hedefe gönderiliyor; sonuç: redox task list")),
         ["backup", "verify", id] => req("POST", format!("/backups/{id}/verify"), None, View::Done("doğrulanıyor; sonuç: redox task list")),
         ["backup", "delete", id] => req("DELETE", format!("/backups/{id}"), None, View::Done("yedek silindi")),
+        ["vm", "move", id, storage] => req("POST", format!("/guests/{}/move", vmid(id)?), Some(json!({ "storage": storage })), View::Task),
+        ["usage"] => get("/usage", View::Usage),
+        ["vm" | "ct", "usage", id] => get(&format!("/guests/{}/usage", vmid(id)?), View::Usage),
+        ["vm" | "ct", "usage", id, "reset"] => req("DELETE", format!("/guests/{}/usage", vmid(id)?), None, View::Done("ölçüm sayaçları sıfırlandı")),
+        ["vm", "balloon", id, "auto", min] => req(
+            "POST",
+            format!("/guests/{}/balloon", vmid(id)?),
+            Some(json!({ "min": min.parse::<u64>().map_err(|_| format!("en az bellek MB olarak bir sayı olmalı: {min}"))? })),
+            View::Done("dinamik bellek ayarlandı"),
+        ),
+        ["vm", "balloon", id, mb] => req(
+            "POST",
+            format!("/guests/{}/balloon", vmid(id)?),
+            Some(json!({ "mb": mb.parse::<u64>().map_err(|_| format!("bellek hedefi MB olarak bir sayı olmalı: {mb}"))? })),
+            View::Done("bellek hedefi ayarlandı"),
+        ),
+        ["pool", "list"] => get("/pools", View::Pools),
+        ["pool", "add", name, pairs @ ..] => req("POST", "/pools".to_string(), Some(pool_body(name, pairs)?), View::Done("havuz kaydedildi")),
+        ["pool", "remove", name] => req("DELETE", format!("/pools/{name}"), None, View::Done("havuz silindi")),
+        ["job", "list"] => get("/jobs", View::Jobs),
+        ["job", "add", name, pairs @ ..] => req("POST", "/jobs".to_string(), Some(job_body(name, pairs)?), View::Done("yedek işi kaydedildi")),
+        ["job", "run", name] => req("POST", format!("/jobs/{name}/run"), None, View::JobStarted),
+        ["job", "remove", name] => req("DELETE", format!("/jobs/{name}"), None, View::Done("yedek işi silindi")),
         ["storage", "list"] => get("/storage", View::Storage),
         ["peer", "list"] => get("/peers", View::Peers),
         ["peer", "import", peer, id] => req("POST", format!("/peers/{peer}/import/{}", vmid(id)?), None, View::Done("kopyalama başladı; sonuç: redox task list")),
@@ -322,7 +468,8 @@ pub fn render(view: View, v: &Value) -> String {
                 let frozen = if b["quiesced"].as_bool() == Some(true) { "  donduruldu" } else { "" };
                 let frozen = format!("{frozen}{}", if b["cbt"].as_bool() == Some(true) { "  hızlı" } else { "" });
                 let disks = b["disks"].as_array().filter(|d| !d.is_empty()).map(|d| format!("  +{} ek disk", d.len())).unwrap_or_default();
-                format!("{:<28} konuk {:<6} {:>7} MB  {kind}{added}{disks}{frozen}{offsite}", s(b, "id"), n(b, "vmid"), n(b, "size_mb"))
+                let odd = if b["suspicious"].is_string() { "  OLAĞAN DIŞI DEĞİŞİM" } else { "" };
+                format!("{:<28} konuk {:<6} {:>7} MB  {kind}{added}{disks}{frozen}{offsite}{odd}", s(b, "id"), n(b, "vmid"), n(b, "size_mb"))
             }),
             "yedek yok",
         ),
@@ -330,6 +477,53 @@ pub fn render(view: View, v: &Value) -> String {
             rows(&|m| format!("{:<44} {:<8} {:>8} MB", s(m, "name"), if m["iso"].as_bool() == Some(true) { "kalıp" } else { "imaj" }, m["bytes"].as_u64().unwrap_or(0).div_ceil(1024 * 1024))),
             "dosya yok",
         ),
+        View::Report => s(v, "body").trim_end().to_string(),
+        View::Files => or_none(
+            v["entries"].as_array().map(|list| list.iter().map(|e| format!("{} {}", if s(e, "kind") == "d" { "d" } else { "-" }, s(e, "name"))).collect::<Vec<_>>().join("\n")).unwrap_or_default(),
+            "dizin boş",
+        ),
+        View::Usage => {
+            let line = |u: &Value| {
+                format!(
+                    "{:<6} {:<20} açık {:>7} sa   işlemci {:>9} çekirdek-sa   bellek {:>9} GB-sa   disk okuma {:>7} MB   yazma {:>7} MB",
+                    n(u, "vmid"),
+                    s(u, "name"),
+                    n(u, "uptime_secs") / 3600,
+                    u["cpu_core_hours"].as_f64().unwrap_or(0.0),
+                    u["mem_gb_hours"].as_f64().unwrap_or(0.0),
+                    n(u, "disk_read_mb"),
+                    n(u, "disk_write_mb")
+                )
+            };
+            match v.as_array() {
+                Some(all) if all.is_empty() => "konuk yok".to_string(),
+                Some(all) => all.iter().map(line).collect::<Vec<_>>().join("\n"),
+                None => line(v),
+            }
+        }
+        View::Approvals => or_none(rows(&|a| format!("#{:<4} {:<14} {:<24} isteyen {}", n(a, "id"), s(a, "action"), s(a, "target"), s(a, "by"))), "onay bekleyen istek yok"),
+        View::Approved => s(v, "done").to_string(),
+        View::Pools => or_none(
+            rows(&|p| {
+                let limit = |key: &str, unit: &str| match n(p, key) {
+                    0 => format!("{}{unit} / sınırsız", n(&p["used"], key)),
+                    max => format!("{}{unit} / {max}{unit}", n(&p["used"], key)),
+                };
+                format!("{:<16} konuk {:<14} çekirdek {:<14} bellek {:<26} disk {}", s(p, "name"), limit("guests", ""), limit("cores", ""), limit("memory_mb", " MB"), limit("disk_gb", " GB"))
+            }),
+            "havuz yok",
+        ),
+        View::Jobs => or_none(
+            rows(&|j| {
+                let tags: Vec<&str> = j["tags"].as_array().map(|t| t.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                let scope = if tags.is_empty() { "bütün konuklar".to_string() } else { format!("etiket: {}", tags.join(",")) };
+                let queue = j["queue"].as_array().map_or(0, Vec::len) + usize::from(!j["running"].is_null());
+                let state = if queue > 0 { format!("sürüyor ({queue} konuk kaldı)") } else { format!("son: {}", s(j, "last_run")) };
+                format!("{:<16} {}  {:<12} son {:<3} {:<28} {state}", s(j, "name"), s(j, "time"), redox_core::hw::days_label(n(j, "days") as u8), n(j, "keep"), scope)
+            }),
+            "yedek işi yok",
+        ),
+        View::JobStarted => format!("iş başlatıldı: {} konuk sıraya alındı; sonuç: redox task list", n(v, "queued")),
         View::Task => format!("görev #{} başlatıldı: redox {}", n(v, "id"), s(v, "command")),
         View::BackupStarted => format!("yedek alınıyor: {}", s(v, "id")),
         View::Cloned => format!("klonlanıyor: yeni konuk {}", n(v, "vmid")),
@@ -368,6 +562,13 @@ pub fn run(args: &[String]) -> Result<String, String> {
     }
     .map_err(api_error)?;
     if let View::Done(_) = request.view {
+        // Dört göz ilkesi: silme yapılmadı, ikinci yöneticinin onayını bekliyor.
+        if response.status() == 202 {
+            if let Some(id) = response.into_json::<Value>().ok().and_then(|v| v["approval"].as_u64()) {
+                return Ok(format!("yapılmadı: ikinci bir yöneticinin onayı bekleniyor (istek #{id}). Onay: redox approval approve {id}"));
+            }
+            return Ok(render(request.view, &Value::Null));
+        }
         return Ok(render(request.view, &Value::Null));
     }
     let value: Value = response.into_json().map_err(|e| format!("sunucu yanıtı okunamadı: {e}"))?;
@@ -504,6 +705,79 @@ mod tests {
         assert!(peers.contains("1 düğüm, 2 konuk") && peers.contains("HATA: token reddedildi") && peers.contains("bekleniyor"), "{peers}");
         assert!(render(View::Peers, &json!([])).contains("tanımlı değil"));
         assert_eq!(parse(&["peer".to_string(), "list".to_string()]).unwrap().path, "/peers");
+        let args = |text: &str| text.split(' ').map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(patch_body(&["cpu=Haswell", "balloon=true"]).unwrap(), json!({"cpu_type": "Haswell", "balloon": true}));
+        assert_eq!(patch_body(&["nic-guard=true"]).unwrap(), json!({"nic_guard": true}));
+        assert_eq!(patch_body(&["nested=true"]).unwrap(), json!({"nested": true}));
+        assert_eq!(patch_body(&["rpo=24"]).unwrap(), json!({"rpo_hours": 24}));
+        assert_eq!(patch_body(&["test-port=22", "test-cmd=/bin/true"]).unwrap(), json!({"test_port": 22, "test_cmd": "/bin/true"}));
+        assert_eq!(patch_body(&["cpu=host"]).unwrap(), json!({"cpu_type": ""}), "host boş değerle gider");
+        let balloon = parse(&args("vm balloon 103 4096")).unwrap();
+        assert_eq!((balloon.path.as_str(), balloon.body.unwrap()), ("/guests/103/balloon", json!({"mb": 4096})));
+        assert!(parse(&args("vm balloon 103 cok")).unwrap_err().contains("bir sayı olmalı"));
+        assert_eq!(parsed("usage"), ("GET", "/usage".into(), None, View::Usage));
+        assert_eq!(parsed("backup archive"), ("GET", "/backups/archive".into(), None, View::Backups));
+        assert_eq!(parsed("approval list"), ("GET", "/approvals".into(), None, View::Approvals));
+        assert_eq!(parsed("approval approve 7"), ("POST", "/approvals/7/approve".into(), None, View::Approved));
+        assert_eq!(parsed("approval reject 7").1, "/approvals/7");
+        assert!(parse(&args("approval approve yedi")).is_err());
+        assert_eq!(render(View::Approvals, &json!([{"id": 3, "action": "backup-delete", "target": "vm-103-1", "by": "ayse"}])), "#3    backup-delete  vm-103-1                 isteyen ayse");
+        assert_eq!(parsed("backup recover vm-103-1").1, "/backups/vm-103-1/recover");
+        assert_eq!(parsed("vm usage 103"), ("GET", "/guests/103/usage".into(), None, View::Usage));
+        assert_eq!(parsed("ct usage 104 reset"), ("DELETE", "/guests/104/usage".into(), None, View::Done("ölçüm sayaçları sıfırlandı")));
+        let auto = parse(&args("vm balloon 103 auto 2048")).unwrap();
+        assert_eq!((auto.path.as_str(), auto.body.unwrap()), ("/guests/103/balloon", json!({"min": 2048})));
+        assert!(parse(&args("vm balloon 103 auto az")).unwrap_err().contains("bir sayı olmalı"));
+        assert_eq!(parse(&args("backup report")).unwrap().path, "/backups/report");
+        assert_eq!(render(View::Report, &json!({"subject": "x", "body": "satır 1\nsatır 2\n"})), "satır 1\nsatır 2");
+        let checkpoint = parse(&args("snapshot create 103 once --production")).unwrap();
+        assert_eq!(checkpoint.body.unwrap(), json!({"name": "once", "production": true}));
+        let instant = parse(&args("backup instant vm-103-1 acil")).unwrap();
+        assert_eq!((instant.path.as_str(), instant.body.unwrap()), ("/backups/vm-103-1/instant", json!({"name": "acil"})));
+        assert_eq!(parse(&args("vm detach 104")).unwrap().path, "/guests/104/detach");
+        assert_eq!(parse(&args("backup test vm-103-1")).unwrap().path, "/backups/vm-103-1/test");
+        assert_eq!(patch_body(&["backup-pre=/usr/local/bin/once.sh -q", "backup-post="]).unwrap(), json!({"backup_pre": "/usr/local/bin/once.sh -q", "backup_post": ""}));
+        let lock = parse(&args("backup lock vm-103-1 30")).unwrap();
+        assert_eq!((lock.path.as_str(), lock.body.unwrap()), ("/backups/vm-103-1/lock", json!({"days": 30})));
+        assert!(parse(&args("backup lock vm-103-1 cok")).unwrap_err().contains("bir sayı olmalı"));
+        let windowed = parse(&args("job add gece time=22:00 until=06:00 verify=true")).unwrap();
+        assert_eq!(windowed.body.unwrap(), json!({"name": "gece", "time": "22:00", "until": "06:00", "verify": true}));
+        let gfs = parse(&args("job add gece time=03:00 weekly=4 monthly=12 yearly=1 lock=14")).unwrap();
+        assert_eq!(gfs.body.unwrap(), json!({"name": "gece", "time": "03:00", "weekly": 4, "monthly": 12, "yearly": 1, "lock": 14}));
+        assert_eq!(patch_body(&["backup-weekly=4", "backup-monthly=6", "backup-yearly=1"]).unwrap(), json!({"backup_weekly": 4, "backup_monthly": 6, "backup_yearly": 1}));
+        assert_eq!(parse(&args("backup ls vm-103-1")).unwrap().path, "/backups/vm-103-1/files?path=/");
+        assert_eq!(parse(&["backup".to_string(), "ls".to_string(), "vm-103-1".to_string(), "/home/ali/Yeni Klasör".to_string()]).unwrap().path, "/backups/vm-103-1/files?path=/home/ali/Yeni%20Klas%C3%B6r");
+        let files = render(View::Files, &json!({"path": "/etc", "entries": [{"name": "ssh", "kind": "d"}, {"name": "hostname", "kind": "r"}]}));
+        assert_eq!(files, "d ssh\n- hostname");
+        assert_eq!(render(View::Files, &json!({"path": "/bos", "entries": []})), "dizin boş");
+        let fresh = parse(&args("backup restore-new vm-103-1 kurtarilan")).unwrap();
+        assert_eq!((fresh.path.as_str(), fresh.body.unwrap()), ("/backups/vm-103-1/restore-new", json!({"name": "kurtarilan"})));
+        let moved = parse(&args("vm move 103 hizli")).unwrap();
+        assert_eq!((moved.method, moved.path.as_str(), moved.body.unwrap()), ("POST", "/guests/103/move", json!({"storage": "hizli"})));
+        let pool = parse(&args("pool add web cores=32 memory=65536 disk=500 guests=10")).unwrap();
+        assert_eq!((pool.method, pool.path.as_str(), pool.body.unwrap()), ("POST", "/pools", json!({"name": "web", "cores": 32, "memory_mb": 65536, "disk_gb": 500, "guests": 10})));
+        assert_eq!(parse(&args("pool add bos")).unwrap().body.unwrap(), json!({"name": "bos"}));
+        assert!(parse(&args("pool add web cpu=4")).unwrap_err().contains("bilinmeyen anahtar"));
+        assert_eq!(parse(&args("pool remove web")).unwrap().path, "/pools/web");
+        assert_eq!(patch_body(&["pool=web"]).unwrap(), json!({"pool": "web"}));
+        let listed = render(View::Pools, &json!([{"name": "web", "cores": 32, "memory_mb": 0, "disk_gb": 500, "guests": 0, "used": {"guests": 2, "cores": 12, "memory_mb": 16384, "disk_gb": 160}}]));
+        assert!(listed.contains("çekirdek 12 / 32") && listed.contains("16384 MB / sınırsız") && listed.contains("disk 160 GB / 500 GB") && listed.contains("konuk 2 / sınırsız"), "{listed}");
+        assert_eq!(render(View::Pools, &json!([])), "havuz yok");
+        let ci = patch_body(&["ci-user=ali", "ci-key=ssh-ed25519 AAAA ali@x", "ci-ip=10.0.0.5/24", "ci-gw=10.0.0.1", "ci-dns=1.1.1.1,9.9.9.9"]).unwrap();
+        assert_eq!(ci, json!({"ci_user": "ali", "ci_ssh_key": "ssh-ed25519 AAAA ali@x", "ci_ip": "10.0.0.5/24", "ci_gw": "10.0.0.1", "ci_dns": "1.1.1.1,9.9.9.9"}));
+        assert_eq!(patch_body(&["ci-key="]).unwrap(), json!({"ci_ssh_key": ""}), "boş anahtar cloud-init'i kapatır");
+        let add = parse(&args("job add gece time=03:00 days=1-5 tags=web,db keep=4")).unwrap();
+        assert_eq!((add.method, add.path.as_str()), ("POST", "/jobs"));
+        assert_eq!(add.body.unwrap(), json!({"name": "gece", "time": "03:00", "days": "1-5", "tags": ["web", "db"], "keep": 4}));
+        assert!(parse(&args("job add gece days=1-5")).unwrap_err().contains("saat verin"));
+        assert!(parse(&args("job add gece time=03:00 kep=4")).unwrap_err().contains("bilinmeyen anahtar"));
+        assert_eq!(parse(&args("job run gece")).unwrap().path, "/jobs/gece/run");
+        assert_eq!(parse(&args("job remove gece")).unwrap().method, "DELETE");
+        let list = render(View::Jobs, &json!([{"name": "gece", "time": "03:00", "days": 31, "keep": 4, "tags": ["web"], "queue": [100, 101], "running": 103, "last_run": "2026-11-25"},
+            {"name": "hepsi", "time": "01:00", "days": 127, "keep": 7, "tags": [], "queue": [], "running": null, "last_run": null}]));
+        assert!(list.contains("hafta içi") && list.contains("etiket: web") && list.contains("sürüyor (3 konuk kaldı)"), "{list}");
+        assert!(list.contains("bütün konuklar") && list.contains("her gün") && list.contains("son: -"), "{list}");
+        assert_eq!(render(View::Jobs, &json!([])), "yedek işi yok");
         let g = render(View::Guest, &json!({"vmid": 103, "name": "x", "kind": "vm", "node": "n", "status": "stopped", "os": "debian", "cores": 2,
             "disk_gb": 10, "storage": "local", "bridge": "nat", "tags": ["a", "b"], "forwards": [{"host_port": 8080, "guest_port": 80}], "backup_time": "03:30", "backup_keep": 5}));
         assert!(g.contains("etiketler        a, b") && g.contains("8080:80") && g.contains("her gün 03:30, son 5 yedek"), "{g}");

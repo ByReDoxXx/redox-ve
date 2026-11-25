@@ -73,6 +73,8 @@ impl Cluster {
             backup_time: None,
             backup_keep: DEFAULT_KEEP,
             last_auto_backup: None,
+            pool: None,
+            backup_gfs: crate::retention::Gfs::default(),
             hw: Default::default(),
         };
         use GuestKind::{Ct, Vm};

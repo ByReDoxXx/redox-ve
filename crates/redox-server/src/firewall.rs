@@ -21,6 +21,53 @@ pub fn enforced(g: &Guest) -> bool {
 /// Bütün konukların kurallarını içeren nftables betiği. Tablo silinip yeniden kurulduğu ve betik
 /// tek işlemde yüklendiği için arada korumasız bir an oluşmaz.
 pub fn ruleset(guests: &[Guest]) -> String {
+    ruleset_with(guests, &[])
+}
+
+/// Ağ kartı koruması bu konuk için kurulur mu? Yalnızca çalışan sanal makinenin köprüdeki kartlarında anlamlıdır.
+pub fn guarded(g: &Guest) -> bool {
+    g.kind == GuestKind::Vm && g.hw.nic_guard && g.status != redox_core::GuestStatus::Stopped
+}
+
+/// Konuğun bütün kartlarının MAC adresleri.
+fn macs(g: &Guest) -> Vec<String> {
+    std::iter::once(mac_for(g.vmid)).chain((1..=g.hw.nics.len() as u8).map(|n| redox_core::mac_for_nic(g.vmid, n))).collect()
+}
+
+/// Ağ kartı korumaları: konuğun sunucudaki arayüzlerinden (`taps`) giren trafik köprüye ulaşmadan süzülür.
+/// Kaynak MAC konuğun kendi adreslerinden biri değilse, ya da konuk DHCP sunucusu / yönlendirici gibi
+/// davranıyorsa çerçeve düşürülür.
+fn guards(guests: &[Guest], taps: &[(redox_core::VmId, Vec<String>)]) -> String {
+    let mut jumps = String::new();
+    let mut chains = String::new();
+    for g in guests.iter().filter(|g| guarded(g)) {
+        let names: Vec<String> = taps
+            .iter()
+            .filter(|(vmid, _)| *vmid == g.vmid)
+            .flat_map(|(_, names)| names)
+            .filter(|n| crate::netlimit::valid_ifname(n))
+            .map(|n| format!("\"{n}\""))
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        jumps.push_str(&format!("        iifname {{ {} }} jump s{}\n", names.join(", "), g.vmid));
+        chains.push_str(&format!("    chain s{} {{\n", g.vmid));
+        chains.push_str(&format!("        ether saddr != {{ {} }} drop\n", macs(g).join(", ")));
+        chains.push_str("        udp sport 67 udp dport 68 drop\n");
+        chains.push_str("        udp sport 547 udp dport 546 drop\n");
+        chains.push_str("        icmpv6 type { nd-router-advert, nd-redirect } drop\n");
+        chains.push_str("    }\n");
+    }
+    if jumps.is_empty() {
+        return String::new();
+    }
+    format!("    chain prerouting {{\n        type filter hook prerouting priority -300; policy accept;\n{jumps}    }}\n{chains}")
+}
+
+/// `taps`: korunan konukların sunucudaki arayüz adları.
+pub fn ruleset_with(guests: &[Guest], taps: &[(redox_core::VmId, Vec<String>)]) -> String {
+    let guards = guards(guests, taps);
     let mut jumps = String::new();
     let mut chains = String::new();
     for g in guests.iter().filter(|g| enforced(g) && g.hw.fw_rules.iter().all(|r| r.valid())) {
@@ -45,7 +92,7 @@ pub fn ruleset(guests: &[Guest]) -> String {
     }
     // Önce tabloyu (boş da olsa) tanımla ki silme komutu ilk çalıştırmada hata vermesin.
     format!(
-        "table bridge {TABLE}\ndelete table bridge {TABLE}\ntable bridge {TABLE} {{\n    chain forward {{\n        type filter hook forward priority 0; policy accept;\n{jumps}    }}\n    chain output {{\n        type filter hook output priority 0; policy accept;\n{jumps}    }}\n{chains}}}\n"
+        "table bridge {TABLE}\ndelete table bridge {TABLE}\ntable bridge {TABLE} {{\n    chain forward {{\n        type filter hook forward priority 0; policy accept;\n{jumps}    }}\n    chain output {{\n        type filter hook output priority 0; policy accept;\n{jumps}    }}\n{chains}{guards}}}\n"
     )
 }
 
@@ -128,6 +175,38 @@ mod tests {
         // Hiç kural yokken de tablo yeniden kurulur: eski kurallar temizlenir.
         let empty = ruleset(&[]);
         assert!(empty.contains("chain forward {") && !empty.contains("jump"));
+    }
+
+    #[test]
+    fn nic_guard_filters_what_enters_from_the_guests_own_interfaces() {
+        let mut g = guest(100, "vmbr0", "");
+        g.hw.firewall = false;
+        g.hw.nic_guard = true;
+        g.status = redox_core::GuestStatus::Running;
+        g.hw.nics = vec!["vmbr1".to_string()];
+        let taps = vec![(100, vec!["tap3".to_string(), "rx100n1".to_string(), "kötü ad; drop".to_string()])];
+        let script = ruleset_with(std::slice::from_ref(&g), &taps);
+        assert!(script.contains("type filter hook prerouting priority -300; policy accept;\n        iifname { \"tap3\", \"rx100n1\" } jump s100\n"), "{script}");
+        let chain = script.split("chain s100 {").nth(1).unwrap();
+        assert_eq!(
+            chain.lines().map(str::trim).filter(|l| !l.is_empty() && *l != "}").collect::<Vec<_>>(),
+            [
+                "ether saddr != { 52:54:00:00:00:64, 52:54:01:00:00:64 } drop",
+                "udp sport 67 udp dport 68 drop",
+                "udp sport 547 udp dport 546 drop",
+                "icmpv6 type { nd-router-advert, nd-redirect } drop",
+            ]
+        );
+        assert!(!script.contains("kötü"), "geçersiz arayüz adı betiğe girmez");
+
+        // Arayüzü bilinmeyen, kapalı ya da koruması kapalı konuk için kural kurulmaz; betik eskisiyle aynıdır.
+        assert_eq!(ruleset_with(std::slice::from_ref(&g), &[]), ruleset(std::slice::from_ref(&g)));
+        assert!(!ruleset(std::slice::from_ref(&g)).contains("prerouting"));
+        g.status = redox_core::GuestStatus::Stopped;
+        assert!(!ruleset_with(std::slice::from_ref(&g), &taps).contains("prerouting"));
+        g.status = redox_core::GuestStatus::Running;
+        g.hw.nic_guard = false;
+        assert!(!ruleset_with(&[g], &taps).contains("prerouting"));
     }
 
     #[test]

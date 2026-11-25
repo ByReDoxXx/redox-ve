@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::process::Command;
 
-fn valid_ifname(name: &str) -> bool {
+pub fn valid_ifname(name: &str) -> bool {
     !name.is_empty() && name.len() <= 15 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
 }
 

@@ -56,6 +56,24 @@ case $OP in
 esac
 "#;
 
+/// lxc-copy: kapalı konteynerin dizinini yeni adla kopyalar ve yapılandırmadaki adı değiştirir.
+const COPY_TOOL: &str = r#"#!/bin/sh
+P=; N=; NEW=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -P) P=$2; shift ;;
+    -n) N=$2; shift ;;
+    -N) NEW=$2; shift ;;
+  esac
+  shift
+done
+[ -d "$P/$N" ] || { echo "lxc-copy: $N diye bir konteyner yok" >&2; exit 1; }
+[ "$(cat "$P/$N/state")" = STOPPED ] || { echo "lxc-copy: konteyner çalışırken kopyalanamaz" >&2; exit 1; }
+[ -e "$P/copy-fail" ] && { echo "lxc-copy: diskte yer kalmadı" >&2; exit 1; }
+cp -a "$P/$N" "$P/$NEW"
+sed -i "s/$N/$NEW/g" "$P/$NEW/config"
+"#;
+
 /// lxc-usernsexec: eşleme argümanlarını kaydeder ve komutu doğrudan çalıştırır.
 const USERNS_TOOL: &str = r#"#!/bin/sh
 MAPS=
@@ -118,7 +136,7 @@ fn setup() -> (LxcConfig, PathBuf) {
         let path = bin.join(name);
         write_script(&path, &format!("#!/bin/sh\n{HEAD}{body}\n"));
     }
-    for (name, script) in [("lxc-snapshot", SNAPSHOT_TOOL), ("lxc-usernsexec", USERNS_TOOL)] {
+    for (name, script) in [("lxc-snapshot", SNAPSHOT_TOOL), ("lxc-usernsexec", USERNS_TOOL), ("lxc-copy", COPY_TOOL)] {
         let path = bin.join(name);
         write_script(&path, script);
     }
@@ -257,7 +275,7 @@ fn failures_and_unsupported_operations_are_explained() {
     assert_eq!(d.apply(&broken, Action::Start).unwrap_err(), "lxc-start: konteyner başlatılamadı");
     assert_eq!(status(&d, &broken), GuestStatus::Stopped);
 
-    for err in [d.resize_disk(&broken, 20).unwrap_err(), d.clone_disk(&broken, &broken).unwrap_err()] {
+    for err in [d.resize_disk(&broken, 20).unwrap_err(), d.link_disk(&broken, &broken).unwrap_err()] {
         assert!(err.contains("konteynerlerde desteklenmiyor"), "{err}");
     }
     assert!(d.supports(GuestKind::Ct) && !d.supports(GuestKind::Vm));
@@ -294,10 +312,25 @@ fn host_driver_routes_containers_and_vms() {
     assert_eq!(state.exec(id, "echo tamam", "admin").unwrap(), "tamam\n");
     assert_eq!(state.snapshot().tasks[0].command, format!("ct exec {id}"));
 
-    // Çalışan konteynerde anlık görüntü ve yedek reddedilir (canlı işlem yalnızca sanal makinelerde).
+    // Çalışan konteynerde anlık görüntü ve klon reddedilir; yedek alınır (konteyner o sırada dondurulur).
     assert!(matches!(state.snapshot_create(id, "s1", "admin"), Err(Error::RequiresStopped { .. })));
-    assert!(matches!(state.backup_create(id, "admin"), Err(Error::RequiresStopped { .. })));
+    assert!(matches!(state.clone_guest(id, "kopya", "admin"), Err(Error::RequiresStopped { .. })));
+    let live = state.backup_create(id, "admin").unwrap();
+    assert_eq!(state.snapshot().tasks[0].status, TaskStatus::Ok, "{:?}", state.snapshot().tasks[0].message);
+    assert!(cfg.backups_dir.join(format!("{live}.tar.gz")).is_file());
+    state.refresh(None, None);
+    assert_eq!(state.snapshot().guest(id).unwrap().status, GuestStatus::Running, "yedekten sonra çalışmayı sürdürür");
+    state.backup_delete(&live, "admin").unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
     state.run_action(id, Action::Stop, "admin").unwrap();
+
+    // Kapalı konteyner klonlanır: kopya kendi kimliğiyle ayrı bir konteynerdir.
+    let copy = state.clone_guest(id, "kopya", "admin").unwrap();
+    assert_eq!(state.snapshot().tasks[0].status, TaskStatus::Ok, "{:?}", state.snapshot().tasks[0].message);
+    assert!(cfg.lxc_path.join(format!("redox-{copy}/config")).is_file());
+    assert_eq!(state.snapshot().guest(copy).unwrap().kind, GuestKind::Ct);
+    state.delete_guest(copy, "admin").unwrap();
+    assert!(!cfg.lxc_path.join(format!("redox-{copy}")).exists());
 
     state.snapshot_create(id, "s1", "admin").unwrap();
     let backup = state.backup_create(id, "admin").unwrap();
@@ -520,5 +553,93 @@ fn generated_ruleset_loads_into_a_real_kernel() {
     assert!(listed.contains(&format!("ether daddr {} jump g{}", redox_core::mac_for(vm.vmid), vm.vmid)), "{listed}");
     assert!(listed.contains("ip saddr 10.0.0.0/8 tcp dport 22 accept") && listed.contains("tcp dport 80-443 accept"), "{listed}");
     assert_eq!(listed.matches("drop").count(), 2, "her konuğun zinciri düşürmeyle biter:\n{listed}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn containers_are_cloned_with_their_own_identity() {
+    let (cfg, dir) = setup();
+    let d = LxcDriver::new(cfg.clone()).unwrap();
+    let source = guest(&dir, "kutu", "alpine-3.20");
+    d.create(&source).unwrap();
+    let rootfs = cfg.lxc_path.join("redox-100/rootfs");
+    std::fs::create_dir_all(rootfs.join("etc")).unwrap();
+    std::fs::write(rootfs.join("etc/veri"), "kaynak").unwrap();
+    d.snapshot(&source, SnapshotOp::Create("once")).unwrap();
+
+    let mut target = source.clone();
+    (target.vmid, target.name, target.cores) = (101, "kutu-kopya".into(), 1);
+    d.clone_disk(&source, &target).unwrap();
+    let copy = cfg.lxc_path.join("redox-101");
+    assert_eq!(std::fs::read_to_string(copy.join("rootfs/etc/veri")).unwrap(), "kaynak", "kök dosya sistemi kopyalanır");
+    let config = std::fs::read_to_string(copy.join("config")).unwrap();
+    assert!(config.contains("lxc.uts.name = kutu-kopya") && !config.contains("lxc.uts.name = kutu\n"), "kopya kendi adını alır: {config}");
+    assert!(config.contains(&format!("lxc.net.0.hwaddr = {}", redox_core::mac_for(101))) && !config.contains(&redox_core::mac_for(100)), "kopya kendi ağ adresini alır");
+    assert!(config.contains("lxc.cgroup2.cpu.max = 100000 100000"), "sınırlar hedef konuğun kaydına göre yazılır");
+    assert!(!copy.join("redox-snapshots").exists(), "anlık görüntü eşlemesi kopyalanmaz");
+    // Kaynak değişmez; kopya bağımsızdır.
+    std::fs::write(copy.join("rootfs/etc/veri"), "kopya").unwrap();
+    assert_eq!(std::fs::read_to_string(rootfs.join("etc/veri")).unwrap(), "kaynak");
+    assert!(std::fs::read_to_string(cfg.lxc_path.join("redox-100/config")).unwrap().contains("lxc.uts.name = kutu\n"));
+    d.apply(&target, Action::Start).unwrap();
+    assert_eq!(status(&d, &target), GuestStatus::Running);
+
+    // Var olan hedefin üstüne yazılmaz; çalışan kaynak kopyalanmaz; araç hatası olduğu gibi aktarılır.
+    assert!(d.clone_disk(&source, &target).unwrap_err().contains("zaten var"));
+    let mut third = source.clone();
+    (third.vmid, third.name) = (102, "ucuncu".into());
+    std::fs::write(cfg.lxc_path.join("copy-fail"), "").unwrap();
+    assert_eq!(d.clone_disk(&source, &third).unwrap_err(), "lxc-copy: diskte yer kalmadı");
+    assert!(!cfg.lxc_path.join("redox-102").exists());
+    std::fs::remove_file(cfg.lxc_path.join("copy-fail")).unwrap();
+    d.apply(&source, Action::Start).unwrap();
+    assert_eq!(d.clone_disk(&source, &third).unwrap_err(), "lxc-copy: konteyner çalışırken kopyalanamaz");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn running_containers_are_frozen_for_the_backup_and_thawed_after() {
+    let (cfg, dir) = setup();
+    let d = LxcDriver::new(cfg.clone()).unwrap();
+    assert!(d.live_backup(GuestKind::Ct) && !d.live_disk_ops(GuestKind::Ct), "yedek çalışırken alınır, anlık görüntü alınmaz");
+    let g = guest(&dir, "kutu", "alpine-3.20");
+    d.create(&g).unwrap();
+    let home = cfg.lxc_path.join("redox-100");
+    std::fs::create_dir_all(home.join("rootfs/etc")).unwrap();
+    std::fs::write(home.join("rootfs/etc/veri"), "canli").unwrap();
+    let bin = cfg.bin_dir.clone().unwrap();
+    // Sahte dondurma ve çözme araçları çağrıldıklarını kaydeder; tar sırasında durum FROZEN olmalıdır.
+    let log = dir.join("freeze-log");
+    for (tool, state) in [("lxc-freeze", "FROZEN"), ("lxc-unfreeze", "RUNNING")] {
+        write_script(&bin.join(tool), &format!("#!/bin/sh\n{HEAD}need\n[ -e \"$P/{tool}-fail\" ] && {{ echo \"{tool}: cgroup yazılamadı\" >&2; exit 1; }}\necho {state} > \"$D/state\"\necho {tool} >> '{}'\n", log.display()));
+    }
+    d.apply(&g, Action::Start).unwrap();
+    d.backup(&g, "ct-100-1").unwrap();
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "lxc-freeze\nlxc-unfreeze\n");
+    assert_eq!(status(&d, &g), GuestStatus::Running, "yedekten sonra konteyner çalışmayı sürdürür");
+    assert!(cfg.backups_dir.join("ct-100-1.tar.gz").is_file());
+
+    // Kapalı ve zaten duraklatılmış konteynere dokunulmaz.
+    std::fs::remove_file(&log).unwrap();
+    d.apply(&g, Action::Pause).unwrap();
+    std::fs::remove_file(&log).unwrap();
+    d.backup(&g, "ct-100-2").unwrap();
+    assert!(!log.exists() && status(&d, &g) == GuestStatus::Paused, "duraklatılmış konteyner duraklatılmış kalır");
+    d.apply(&g, Action::Resume).unwrap();
+    d.apply(&g, Action::Stop).unwrap();
+    let _ = std::fs::remove_file(&log);
+    d.backup(&g, "ct-100-3").unwrap();
+    assert!(!log.exists());
+
+    // Dondurulamazsa yedek alınmaz; çözülemezse yedek bırakılmaz ve ne yapılacağı söylenir.
+    d.apply(&g, Action::Start).unwrap();
+    std::fs::write(cfg.lxc_path.join("lxc-freeze-fail"), "").unwrap();
+    assert!(d.backup(&g, "ct-100-4").unwrap_err().contains("dondurulamadı"));
+    assert!(!cfg.backups_dir.join("ct-100-4.tar.gz").exists());
+    std::fs::remove_file(cfg.lxc_path.join("lxc-freeze-fail")).unwrap();
+    std::fs::write(cfg.lxc_path.join("lxc-unfreeze-fail"), "").unwrap();
+    let err = d.backup(&g, "ct-100-5").unwrap_err();
+    assert!(err.contains("çözülemedi") && err.contains("lxc-unfreeze -n redox-100"), "{err}");
+    assert!(!cfg.backups_dir.join("ct-100-5.tar.gz").exists());
     std::fs::remove_dir_all(dir).unwrap();
 }

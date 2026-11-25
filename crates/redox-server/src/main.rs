@@ -35,11 +35,18 @@ struct ServeOptions {
     firewall: bool,
     incremental_backups: bool,
     cbt: bool,
+    backup_mbps: u64,
     alert_webhook: Option<String>,
     alert_email: Option<PathBuf>,
     peers: Option<PathBuf>,
     offsite: Option<PathBuf>,
     oidc: Option<PathBuf>,
+    guestfish_bin: Option<String>,
+    backup_test_secs: Option<u64>,
+    backup_report: Option<String>,
+    offsite_copies: Vec<PathBuf>,
+    backup_age_days: Option<u64>,
+    four_eyes: bool,
 }
 
 fn default_users_path() -> PathBuf {
@@ -66,11 +73,18 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         firewall: false,
         incremental_backups: false,
         cbt: false,
+        backup_mbps: 0,
         alert_webhook: None,
         alert_email: None,
         peers: None,
         offsite: None,
         oidc: None,
+        guestfish_bin: None,
+        backup_test_secs: None,
+        backup_report: None,
+        offsite_copies: Vec::new(),
+        backup_age_days: None,
+        four_eyes: false,
     };
     let mut delay_given = false;
     let mut it = args.iter();
@@ -85,15 +99,22 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--allow-plain-http" => opts.allow_plain_http = true,
             "--no-lxc" => opts.no_lxc = true,
             "--no-autostart" => opts.no_autostart = true,
+            "--four-eyes" => opts.four_eyes = true,
             "--storage" => opts.storages.push(host::parse_storage(value()?)?),
             "--firewall" => opts.firewall = true,
             "--incremental-backups" => opts.incremental_backups = true,
             "--changed-block-tracking" => opts.cbt = true,
+            "--backup-mbps" => opts.backup_mbps = number(value()?)?,
             "--alert-webhook" => opts.alert_webhook = Some(value()?.clone()),
             "--alert-email" => opts.alert_email = Some(PathBuf::from(value()?)),
             "--peers" => opts.peers = Some(PathBuf::from(value()?)),
             "--offsite" => opts.offsite = Some(PathBuf::from(value()?)),
             "--oidc" => opts.oidc = Some(PathBuf::from(value()?)),
+            "--guestfish-bin" => opts.guestfish_bin = Some(value()?.clone()),
+            "--backup-test-secs" => opts.backup_test_secs = Some(number(value()?)?),
+            "--backup-report" => opts.backup_report = Some(value()?.clone()),
+            "--offsite-copy" => opts.offsite_copies.push(PathBuf::from(value()?)),
+            "--backup-age-days" => opts.backup_age_days = Some(number(value()?)?),
             "--driver" => opts.driver = value()?.clone(),
             "--data-dir" => opts.data_dir = PathBuf::from(value()?),
             "--qemu-bin" => opts.qemu_bin = Some(value()?.clone()),
@@ -169,6 +190,7 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
             cfg.kvm = kvm_available();
             cfg.incremental_backups = opts.incremental_backups;
             cfg.cbt = opts.cbt;
+            cfg.backup_mbps = opts.backup_mbps.min(100_000);
             cfg.storages = opts.storages.clone();
             if let Some(dir) = &opts.ovmf_dir {
                 cfg.ovmf_dir = dir.clone();
@@ -282,11 +304,46 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         println!("Tek oturum açma açık: {} (eşleşen alan: {}).", config.issuer, config.claim);
         state.set_oidc(config);
     }
+    if opts.four_eyes {
+        state.set_four_eyes(true);
+        println!("Dört göz ilkesi açık: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.");
+    }
+    if let Some(days) = opts.backup_age_days {
+        state.set_backup_age_days(days.min(3650) as u32);
+    }
+    if let Some(time) = &opts.backup_report {
+        let minute = redox_core::parse_time(time).ok_or_else(|| format!("--backup-report SS:DD biçiminde olmalı (örn. 07:30): {time}"))?;
+        if opts.alert_email.is_none() {
+            return Err("--backup-report için e-posta ayarı gerekir (--alert-email DOSYA)".to_string());
+        }
+        state.set_backup_report(minute);
+        println!("Yedek raporu her gün {time} saatinde e-postayla gönderilecek.");
+    }
+    if let Some(secs) = opts.backup_test_secs {
+        state.set_boot_test_wait(Duration::from_secs(secs.clamp(5, 3600)));
+    }
+    // Dosya düzeyinde geri yükleme: guestfish kuruluysa açılır; açıkça verilen yol bulunamazsa hata.
+    let guestfish = opts.guestfish_bin.clone().unwrap_or_else(|| "guestfish".to_string());
+    if redox_server::guestfs::detect(&guestfish) {
+        println!("Yedeklerin içindeki dosyalar okunabilir (guestfish: {guestfish}).");
+        state.set_guestfish(Some(guestfish));
+    } else if opts.guestfish_bin.is_some() {
+        return Err(format!("{guestfish} çalıştırılamadı; --guestfish-bin yolunu denetleyin (sudo apt install libguestfs-tools)"));
+    }
     if let Some(path) = &opts.offsite {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
         let config = redox_server::offsite::Config::parse(&text)?;
         println!("Yedekler sunucu dışına da kopyalanacak: {}", config.describe());
         state.set_offsite(config);
+    }
+    if !opts.offsite_copies.is_empty() && opts.offsite.is_none() {
+        return Err("--offsite-copy için önce asıl dış hedef gerekir (--offsite DOSYA)".to_string());
+    }
+    for path in &opts.offsite_copies {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
+        let config = redox_server::offsite::Config::parse(&text)?;
+        println!("Yedeklerin ek kopyası: {}", config.describe());
+        state.add_offsite_copy(config);
     }
     if let Some(path) = &opts.peers {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
@@ -317,6 +374,11 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
             let _ = tokio::task::spawn_blocking(move || {
                 // Önce yeniden başlatma: uyarı turu aynı kapanışı "beklenmedik kapanma" olarak yine bildirir.
                 st.ha_tick();
+                st.dynamic_memory_tick();
+                st.archive_tick();
+                if let Err(e) = st.guards_tick() {
+                    eprintln!("ağ kartı korumaları yüklenemedi: {e}");
+                }
                 let events = st.alerts_tick();
                 for e in &events {
                     println!("uyarı: {}", e.text(&st.snapshot().name));
@@ -340,6 +402,10 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
             let _ = tokio::task::spawn_blocking(move || {
                 let (today, weekday, minute) = redox_server::state::local_now();
                 st.power_tick(&today, weekday, minute);
+                st.jobs_tick(&today, weekday, minute);
+                if let Some(Err(e)) = st.report_tick(&today, minute) {
+                    eprintln!("yedek raporu gönderilemedi: {e}");
+                }
                 st.scheduler_tick(&today, minute)
             })
             .await;

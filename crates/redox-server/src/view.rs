@@ -68,8 +68,14 @@ pub struct Page<'a> {
     pub ct: bool,
     /// Sanal makinelerde anlık görüntü ve yedek, konuk çalışırken de alınabiliyor mu?
     pub live: bool,
+    /// Konteyner yedeği, konteyner çalışırken de (dondurularak) alınabiliyor mu?
+    pub live_ct: bool,
     /// Çalışan sanal makineye disk ve ağ kartı takılabiliyor mu?
     pub hotplug: bool,
+    /// Yedeklerin içindeki dosyalar okunabiliyor mu (sunucuda guestfish var mı)?
+    pub files: bool,
+    /// Bu kadar gündür yedeği olmayan konuk "korumasız" sayılır; 0 kapalı.
+    pub backup_age: u32,
     /// Yedeklerin sunucu dışı hedefinin kısa tanımı; yapılandırılmadıysa `None`.
     pub offsite: Option<&'a str>,
     /// Grafiklerin zaman aralığı.
@@ -330,6 +336,8 @@ fn rail(p: &Page) -> Markup {
                 (item("/storage", "storage", "Depolama", p.current == Current::Storage, none()))
                 (item("/backups", "backup", "Yedekler", p.current == Current::Backups,
                     html! { @if !p.cluster.backups.is_empty() { span class="count" { (p.cluster.backups.len()) } } }))
+                (item("/pools", "cpu", "Havuzlar", at("/pools"),
+                    html! { @if !p.cluster.pools.is_empty() { span class="count" { (p.cluster.pools.len()) } } }))
                 (item("/cluster", "network", "Küme", p.current == Current::Peers, none()))
                 div class="eyebrow" { "Yönetim" }
                 (item("/tasks", "clock", "Görevler", p.current == Current::Tasks,
@@ -388,7 +396,21 @@ fn top(p: &Page, crumbs: &[(&str, &str)]) -> Markup {
 }
 
 fn flash(p: &Page) -> Markup {
+    let pending = if p.admin { p.cluster.pending_approvals(p.now) } else { Vec::new() };
     html! {
+        // Dört göz ilkesi: onay bekleyen silme istekleri her sayfada yöneticilere gösterilir.
+        @for a in &pending {
+            div class="flash" role="status" {
+                (icon("alert"))
+                span { "Onay bekliyor (#" (a.id) "): " strong { (a.by) } ", " (a.describe()) " istiyor. " }
+                @if a.by == p.user {
+                    span class="muted" { "Başka bir yönetici onaylamalı. " }
+                } @else {
+                    form class="inline" method="post" action={ "/approvals/" (a.id) "/approve" } { button class="btn sm danger" type="submit" { "Onayla" } }
+                }
+                form class="inline" method="post" action={ "/approvals/" (a.id) "/reject" } { button class="btn sm" type="submit" { @if a.by == p.user { "Geri Çek" } @else { "Reddet" } } }
+            }
+        }
         @if let Some(n) = p.notice {
             div class="flash" role="status" { (icon("check")) span { (n) } }
         }
@@ -786,7 +808,7 @@ fn guest_actions(p: &Page, g: &Guest) -> Markup {
     let can = |a: Action| free && a.target(g.status).is_some();
     let toggle = if g.status == GuestStatus::Paused { Action::Resume } else { Action::Pause };
     let stopped = g.status == GuestStatus::Stopped;
-    let live = p.live && g.kind == GuestKind::Vm;
+    let live = if g.kind == GuestKind::Vm { p.live } else { p.live_ct };
     let can_backup = free && (stopped || live);
     html! {
         form class="acts" method="post" action={ (base) "/action" } {
@@ -848,8 +870,8 @@ fn guest_head(p: &Page, g: &Guest, tab: &str) -> Markup {
         tabs.push(link("Konsol", "konsol"));
     }
     tabs.extend([link("Donanım", "donanim"), link("Seçenekler", "secenekler"), link("Anlık Görüntüler", "goruntuler"), link("Yedekler", "yedekler")]);
-    if p.admin && disk_ops(p, g) {
-        tabs.push(link("Çoğalt ve Taşı", "cogalt"));
+    if p.admin {
+        tabs.push(link(if disk_ops(p, g) { "Çoğalt ve Taşı" } else { "Çoğalt" }, "cogalt"));
     }
     let cli = format!("{} show {}", g.kind, g.vmid);
     let mut facts = vec![guest_state(g), html! { a href={ "/nodes/" (g.node) } { (g.node) } }];
@@ -916,6 +938,19 @@ fn overview(p: &Page, g: &Guest) -> Markup {
             div class="cols" {
                 div class="stack" {
                     (usage_card(p, &format!("guest:{}", g.vmid), g.vmid as u64, if g.status == GuestStatus::Running { g.cpu_pct } else { 0 }, mp))
+                    @if p.real {
+                        @let u = c.usage_of(g.vmid);
+                        div class="card" {
+                            header { h2 { "Kaynak ölçümü" } span class="note" { @if u.since > 0 { (datetime(u.since)) " tarihinden beri" } @else { "henüz ölçüm yok" } } }
+                            dl class="kv" {
+                                dt { "Açık kaldığı süre" } dd class="mono" { (uptime(u.uptime_secs)) }
+                                dt { "İşlemci" } dd class="mono" { (format!("{:.2}", u.cpu_core_hours())) " çekirdek-saat" }
+                                dt { "Bellek" } dd class="mono" { (format!("{:.2}", u.mem_gb_hours())) " GB-saat" }
+                                dt { "Disk okuma / yazma" } dd class="mono" { (u.disk_read_bytes >> 20) " MB / " (u.disk_write_bytes >> 20) " MB" }
+                            }
+                            footer { "Birikimli sayaçlardır: konuk kapanıp açılsa da sürer. Dışa aktarım: " span class="mono" { "redox usage" } " ya da " span class="mono" { "GET /api/v1/usage" } "." }
+                        }
+                    }
                     div class="card" {
                         header { h2 { "Bu konuğun etkinliği" } div class="end" { a class="btn sm quiet" href={ "/tasks?q=" (g.vmid) } { "Tümü" } } }
                         (feed(&mine, "Bu konuk için kayıtlı görev yok."))
@@ -992,6 +1027,9 @@ fn overview(p: &Page, g: &Guest) -> Markup {
                                 (firewall_text(g))
                                 @if g.hw.firewall && p.real && !crate::firewall::enforced(g) { span class="pill warn" { (icon("alert")) "NAT'ta etkisiz" } }
                             }
+                            @if g.hw.nic_guard {
+                                dt { "Ağ kartı koruması" } dd { "açık · sahte MAC, DHCP sunucusu ve RA engellenir" }
+                            }
                             dt { "Port yönlendirme" } dd class="mono" {
                                 @if g.forwards.is_empty() { "-" }
                                 @for f in &g.forwards { (f.host_port) " → " (f.guest_port) " " }
@@ -1034,7 +1072,7 @@ pub fn guest(p: &Page, g: &Guest, tab: &str, opts: &FormOptions) -> String {
     let known = ["konsol", "donanim", "secenekler", "goruntuler", "yedekler", "cogalt"];
     let allowed = match tab {
         "konsol" => p.may_operate(g),
-        "cogalt" => p.admin && disk_ops(p, g),
+        "cogalt" => p.admin,
         _ => true,
     };
     let tab = if known.contains(&tab) && allowed { tab } else { "ozet" };
@@ -1308,29 +1346,289 @@ pub fn backups(p: &Page) -> String {
             "backup list",
             &[],
         ))
-        div class="card" {
+        (unprotected_card(p))
+        (archive_card(p))
+        (jobs_card(p))
+        div class="card" style="margin-top:var(--s4)" {
+            header { h2 { "Yedekler" } }
             @if all.is_empty() {
                 p class="empty" { "Henüz yedek yok. Yedek, bir konuğun sayfasındaki Yedekler sekmesinden ya da zamanlamayla alınır." }
             } @else {
                 div class="tw" { table {
-                    thead { tr { th { "Yedek" } th { "Konuk" } th { "Alındığı an" } th class="num" { "Boyut" } th { "Dış kopya" } } }
+                    thead { tr { th { "Yedek" } th { "Konuk" } th { "Alındığı an" } th class="num" { "Boyut" } th { "Dış kopya" } th { span class="sr" { "İşlemler" } } } }
                     tbody { @for b in &all { tr {
                         td class="mono" {
                             a class="link" href={ "/guests/" (b.vmid) "?tab=yedekler" } { (b.id) }
                             @if b.auto { " " span class="tag" { "otomatik" } }
+                            @if let Some(job) = &b.job { " " span class="tag" { "iş: " (job) } }
+                            @if let Some(test) = &b.tested { " " span class="tag" title=(test.note) { @if test.ok { "sınandı: " (redox_core::retention::date_label(test.at)) } @else { "sınama başarısız" } } }
+                            @if b.is_locked(crate::state::now()) { " " span class="tag gold" title="Bu tarihe kadar silinemez" { "kilitli: " (redox_core::retention::date_label(b.locked_until.unwrap_or(0))) } }
+                            @if b.machine { " " span class="tag" { "UEFI/TPM" } }
                             @if b.new_mb.is_some() { " " span class="tag gold" { "artımlı" } }
                         }
                         td class="name" { a href={ "/guests/" (b.vmid) } { span class="mono dim" { (b.vmid) } " " (b.guest_name) } }
                         td class="mono muted" { (datetime(b.created)) }
                         td class="num mono" { (b.size_mb) " MB" }
-                        td { @if b.offsite { span class="pill ok" { (icon("check")) "Var" } } @else { span class="pill idle" { "yalnızca yerel" } } }
+                        td {
+                            @if b.offsite { span class="pill ok" { (icon("check")) "Var" } } @else { span class="pill idle" { "yalnızca yerel" } }
+                            @if b.copies > 0 { " " span class="tag" title="Ek dış hedeflerdeki kopya sayısı" { "+" (b.copies) " kopya" } }
+                            @if b.offsite && !b.offsite_bound { " " span class="pill warn" title="Bu kopya eski biçimde gönderilmiş: hedefte başka bir yedeğin dosyasıyla değiştirilirse fark edilmez. Konuğun Yedekler sekmesinden yeniden gönderin." { "ada bağlı değil" } }
+                        }
+                        td class="act" {
+                            @if p.admin && b.id.starts_with("vm-") {
+                                form method="post" action={ "/backups/" (b.id) "/restore-new" } { button class="btn sm" type="submit" aria-label={ (b.id) " yedeğinden yeni konuk aç" } { (icon("plus")) "Yeni Konuk" } }
+                            }
+                        }
                     } } }
                 } }
-                footer { "Geri yükleme, doğrulama ve silme konuğun Yedekler sekmesinden yapılır." }
+                footer { "Geri yükleme, doğrulama ve silme konuğun Yedekler sekmesinden yapılır. Yeni Konuk, yedeği özgün konuğa dokunmadan ayrı bir sanal makine olarak açar; konuğu silinmiş yedekler de böyle kurtarılır." }
             }
         }
     };
     layout(p, "Yedekler", &[("Yedekler", "/backups")], false, body)
+}
+
+/// Yedeğin içindeki bir dizin: alt dizinlere inilir, dosyalar tek tek ya da dizin tar olarak indirilir.
+pub fn backup_files(p: &Page, b: &redox_core::Backup, disk: u8, path: &str, listed: &Result<Vec<crate::guestfs::Entry>, String>) -> String {
+    let link = |target: &str| format!("/backups/{}/files?disk={disk}&path={}", b.id, enc(target));
+    let download = |target: &str, tar: bool| format!("/backups/{}/file?disk={disk}&path={}{}", b.id, enc(target), if tar { "&tar=1" } else { "" });
+    let body = html! {
+        (page_head(
+            html! { "Yedeğin içindeki dosyalar" },
+            sub(vec![
+                html! { span class="mono" { (b.id) } },
+                html! { a href={ "/guests/" (b.vmid) "?tab=yedekler" } { (b.vmid) " " (b.guest_name) } },
+                html! { span { (datetime(b.created)) } },
+            ]),
+            html! {},
+            &format!("backup ls {} {path}", b.id),
+            &[],
+        ))
+        @if !b.disks.is_empty() {
+            nav class="tabs" aria-label="Diskler" {
+                a href={ "/backups/" (b.id) "/files?disk=0&path=/" } aria-current=[(disk == 0).then_some("page")] { "Asıl disk" }
+                @for d in &b.disks { a href={ "/backups/" (b.id) "/files?disk=" (d.id) "&path=/" } aria-current=[(disk == d.id).then_some("page")] { "Disk " (d.id) } }
+            }
+        }
+        div class="card" {
+            header {
+                h2 class="mono" { (path) }
+                @if path != "/" { a class="btn sm end" href=(download(path, true)) download { (icon("disk")) "Bu klasörü indir (tar)" } }
+            }
+            @match listed {
+                Err(message) => div class="notice err" role="alert" { (icon("alert")) span { (message) } },
+                Ok(entries) => {
+                    div class="tw" { table {
+                        thead { tr { th { "Ad" } th { "Tür" } th { span class="sr" { "İndir" } } } }
+                        tbody {
+                            @if path != "/" { tr { td class="mono" { a class="link" href=(link(&crate::guestfs::parent(path))) { ".." } } td class="muted" { "üst klasör" } td {} } }
+                            @for e in entries {
+                                @let full = crate::guestfs::join(path, &e.name);
+                                tr {
+                                    td class="mono" { @if e.is_dir() { a class="link" href=(link(&full)) { (e.name) "/" } } @else { (e.name) } }
+                                    td class="muted" { @match e.kind { 'd' => "klasör", 'r' => "dosya", 'l' => "bağ", _ => "özel" } }
+                                    td class="act" {
+                                        @if e.kind == 'r' { a class="btn sm" href=(download(&full, false)) download { (icon("disk")) "İndir" } }
+                                        @if e.is_dir() { a class="btn sm" href=(download(&full, true)) download { (icon("disk")) "tar" } }
+                                    }
+                                }
+                            }
+                        }
+                    } }
+                    @if entries.is_empty() { p class="empty" { "Bu klasör boş." } }
+                }
+            }
+            footer {
+                "Yedek salt okunur açılır; konuğa ve yedeğe dokunulmaz. Her listeleme birkaç saniye sürer (artımlı yedekte önce disk geçici bir dosyaya dökülür). "
+                "Yedeğin içeriği konuğun bütün dosyalarıdır: bu sayfayı yalnızca yöneticiler açabilir ve her erişim denetim günlüğüne yazılır."
+            }
+        }
+    };
+    layout(p, "Yedekteki dosyalar", &[("Yedekler", "/backups"), (b.id.as_str(), "")], false, body)
+}
+
+/// Kaynak havuzları: konuk gruplarına toplam kota.
+pub fn pools(p: &Page) -> String {
+    let c = p.cluster;
+    let full = c.pools.len() >= redox_core::MAX_POOLS;
+    // "12 / 32" ya da sınırsızsa "12 / –"; doluluk çubuğu yalnızca sınır varken çizilir.
+    let quota = |used: u64, limit: u64, unit: &str| {
+        html! {
+            span class="mono" { (used) " / " @if limit == 0 { "sınırsız" } @else { (limit) } @if !unit.is_empty() { " " (unit) } }
+            @if limit > 0 {
+                @let pct = (used * 100 / limit).min(100);
+                span class="bar" { i class=(if pct >= 90 { "hot" } else { "" }) style={ "width:" (pct) "%" } {} }
+            }
+        }
+    };
+    let body = html! {
+        (page_head(
+            html! { "Havuzlar" },
+            sub(vec![html! { span { (c.pools.len()) " havuz" } }, html! { span { (c.guests.iter().filter(|g| g.pool.is_some()).count()) " konuk havuzda" } }]),
+            html! {},
+            "pool list",
+            &[],
+        ))
+        div class="card" {
+            header { h2 { "Kaynak havuzları" } span class="note" { "ayrılan kaynak / kota · " (c.pools.len()) " / " (redox_core::MAX_POOLS) } }
+            @if c.pools.is_empty() {
+                p class="empty" { "Havuz yok. Havuz, bir grup konuğun toplam çekirdek, bellek ve disk ayırmasına sınır koyar; konuğu havuza Seçenekler sekmesinden alırsınız." }
+            } @else {
+                div class="tw" { table {
+                    thead { tr { th { "Havuz" } th { "Konuk" } th { "Çekirdek" } th { "Bellek" } th { "Disk" } th { span class="sr" { "Sil" } } } }
+                    tbody { @for pool in &c.pools {
+                        @let used = c.pool_usage(&pool.name, None);
+                        tr {
+                            td class="mono" { a class="link" href={ "/guests?q=" (pool.name) } { (pool.name) } }
+                            td { (quota(used.guests as u64, pool.guests as u64, "")) }
+                            td { (quota(used.cores as u64, pool.cores as u64, "")) }
+                            td { (quota(used.memory_mb, pool.memory_mb, "MB")) }
+                            td { (quota(used.disk_gb, pool.disk_gb, "GB")) }
+                            td class="act" {
+                                @if p.admin { form method="post" action={ "/pools/" (pool.name) "/delete" } { button class="btn sm danger" type="submit" disabled[used.guests > 0] aria-label={ (pool.name) " havuzunu sil" } { (icon("trash")) "Sil" } } }
+                            }
+                        }
+                    } }
+                } }
+            }
+            @if p.admin {
+                form class="inline" method="post" action="/pools" {
+                    label for="pool-name" { "Yeni havuz" }
+                    input id="pool-name" name="name" type="text" required placeholder="ad (örn. web)" maxlength="24" disabled[full];
+                    input name="cores" type="text" inputmode="numeric" placeholder="çekirdek" aria-label="Çekirdek kotası" style="max-width:7rem" disabled[full];
+                    input name="memory_mb" type="text" inputmode="numeric" placeholder="bellek (MB)" aria-label="Bellek kotası (MB)" style="max-width:8rem" disabled[full];
+                    input name="disk_gb" type="text" inputmode="numeric" placeholder="disk (GB)" aria-label="Disk kotası (GB)" style="max-width:7rem" disabled[full];
+                    input name="guests" type="text" inputmode="numeric" placeholder="konuk sayısı" aria-label="En fazla konuk" style="max-width:8rem" disabled[full];
+                    button class="btn sm" type="submit" disabled[full] { (icon("plus")) "Kaydet" }
+                }
+            }
+            footer {
+                "Kota, konukların ayrılmış kaynaklarına uygulanır (o anki kullanıma değil); boş bırakılan alan sınırsızdır. Kota dolduğunda havuza konuk alınamaz, "
+                "havuzdaki konuğun çekirdeği, belleği ve diski artırılamaz, konuk klonlanamaz. Var olan bir havuzun adını yazarsanız kotaları güncellenir. İçinde konuk olan havuz silinmez. "
+                "Komut satırından: " code { "redox pool add web cores=32 memory=65536 disk=500" }
+            }
+        }
+    };
+    layout(p, "Havuzlar", &[("Havuzlar", "/pools")], false, body)
+}
+
+/// Arşiv: yerelde silinmiş ama kopya hedefinde saklanan yedekler. Boşsa kart çizilmez.
+fn archive_card(p: &Page) -> Markup {
+    let list = &p.cluster.archive;
+    html! {
+        @if !list.is_empty() {
+            div class="card" style="margin-bottom:var(--s4)" {
+                header { h2 { "Arşiv" } span class="note" { (list.len()) " yedek yalnızca kopya hedefinde duruyor" } }
+                div class="tw" { table {
+                    thead { tr { th { "Yedek" } th { "Konuk" } th { "Alındığı an" } th class="num" { "Boyut" } } }
+                    tbody { @for b in list { tr {
+                        td class="mono" { (b.id) }
+                        td { (b.guest_name) " " span class="mono muted" { (b.vmid) } }
+                        td class="mono muted" { (datetime(b.created)) }
+                        td class="num mono" { (b.size_mb) " MB" }
+                    } } }
+                } }
+                footer { "Bu yedekler yerelde silindi; kopya hedefinin saklama süresi (keep_days) dolana kadar orada durur. Geri getirmek için: " span class="mono" { "redox backup recover <yedek>" } " — sonra olağan bir yedek gibi geri yüklenir." }
+            }
+        }
+    }
+}
+
+/// Korumasız konuklar: belirlenen süredir yedeği alınmamış olanlar. Hepsi korunuyorsa kart çizilmez.
+fn unprotected_card(p: &Page) -> Markup {
+    let now = crate::state::now();
+    let list = p.cluster.unprotected(now, p.backup_age);
+    html! {
+        @if !list.is_empty() {
+            div class="card" style="margin-bottom:var(--s4)" {
+                header { h2 { "Korumasız konuklar" } span class="pill warn" { (icon("alert")) (list.len()) " konuk" } span class="note" { @if p.backup_age > 0 { (p.backup_age) " gündür ya da kendi hedefinden uzun süredir yedeği yok" } @else { "yedek yaşı hedefini kaçıranlar" } } }
+                div class="tw" { table {
+                    thead { tr { th { "Konuk" } th { "Son yedek" } th { "Zamanlama" } } }
+                    tbody { @for (vmid, name, last) in &list {
+                        @let guest = p.cluster.guest(*vmid).ok();
+                        tr {
+                            td class="name" { a href={ "/guests/" (vmid) "?tab=yedekler" } { span class="mono dim" { (vmid) } " " (name) } }
+                            td class="mono muted" {
+                                @match last {
+                                    Some(ts) => { (redox_core::retention::date_label(*ts)) " · " (now.saturating_sub(*ts) / redox_core::retention::DAY_SECS) " gün önce" },
+                                    None => "hiç yedeği yok",
+                                }
+                            }
+                            td class="muted" {
+                                @let in_job = guest.is_some_and(|g| p.cluster.jobs.iter().any(|j| p.cluster.job_guests(j).contains(&g.vmid)));
+                                @if guest.is_some_and(|g| g.backup_time.is_some()) { "kendi zamanlaması var" } @else if in_job { "bir yedek işinin kapsamında" } @else { "zamanlanmamış" }
+                            }
+                        }
+                    } }
+                } }
+                footer { "Zamanlaması olduğu halde burada görünen konuğun yedekleri alınamıyor olabilir: Görevler sayfasına bakın. Süre " code { "--backup-age-days" } " ile değişir (0 kapatır)." }
+            }
+        }
+    }
+}
+
+/// Yedek işleri: birden çok konuğu tek zamanlamayla, sırayla yedekler.
+fn jobs_card(p: &Page) -> Markup {
+    let c = p.cluster;
+    let full = c.jobs.len() >= redox_core::MAX_JOBS;
+    html! {
+        div class="card" {
+            header { h2 { "Yedek işleri" } span class="note" { "sunucu saatiyle · " (c.jobs.len()) " / " (redox_core::MAX_JOBS) } }
+            @if c.jobs.is_empty() {
+                p class="empty" { "Yedek işi yok. Bir iş, seçtiğiniz etiketteki (ya da bütün) konukları belirlediğiniz gün ve saatte sırayla yedekler." }
+            } @else {
+                div class="tw" { table {
+                    thead { tr { th { "İş" } th { "Saat" } th { "Günler" } th { "Kapsam" } th class="num" { "Saklama" } th { "Durum" } th { span class="sr" { "İşlemler" } } } }
+                    tbody { @for j in &c.jobs { tr {
+                        td class="mono" { (j.name) }
+                        td class="mono" { (j.time) @if let Some(until) = &j.until { "–" (until) } }
+                        td { (j.days_label()) @if j.verify { " " span class="tag" title="Her yedekten sonra bozulma denetimi yapılır" { "doğrulamalı" } } }
+                        td { (j.selection_label()) " " span class="muted" { "(" (c.job_guests(j).len()) " konuk)" } }
+                        td class="num mono" { (j.retention_label()) }
+                        td {
+                            @if j.active() {
+                                span class="pill warn" { "Sürüyor" } " " span class="muted" { (j.queue.len() + usize::from(j.running.is_some())) " konuk kaldı" }
+                            } @else {
+                                span class="mono muted" { "son: " (j.last_run.as_deref().unwrap_or("-")) }
+                            }
+                        }
+                        td class="act" {
+                            @if p.admin {
+                                form method="post" action={ "/backups/jobs/" (j.name) "/run" } { button class="btn sm" type="submit" disabled[j.active()] aria-label={ (j.name) " işini şimdi çalıştır" } { (icon("play")) "Şimdi Çalıştır" } }
+                                form method="post" action={ "/backups/jobs/" (j.name) "/delete" } { button class="btn sm danger" type="submit" aria-label={ (j.name) " işini sil" } { (icon("trash")) "Sil" } }
+                            }
+                        }
+                    } } }
+                } }
+            }
+            @if p.admin {
+                form class="inline" method="post" action="/backups/jobs" {
+                    label for="job-name" { "Yeni iş" }
+                    input id="job-name" name="name" type="text" required placeholder="ad (örn. gece)" maxlength="24" disabled[full];
+                    input name="time" type="time" required aria-label="Saat" disabled[full];
+                    @for (n, day) in ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"].iter().enumerate() {
+                        label class="check" { input type="checkbox" name="day" value=(n + 1) checked disabled[full]; (day) }
+                    }
+                    input name="tags" type="text" placeholder="etiketler (boş: hepsi)" aria-label="Etiketler" disabled[full];
+                    input name="keep" type="text" inputmode="numeric" value=(redox_core::DEFAULT_KEEP) aria-label="Saklanacak yedek sayısı" style="max-width:5rem" disabled[full];
+                    input name="weekly" type="text" inputmode="numeric" placeholder="haftalık" aria-label="Saklanacak haftalık yedek" style="max-width:6rem" disabled[full];
+                    input name="monthly" type="text" inputmode="numeric" placeholder="aylık" aria-label="Saklanacak aylık yedek" style="max-width:6rem" disabled[full];
+                    input name="yearly" type="text" inputmode="numeric" placeholder="yıllık" aria-label="Saklanacak yıllık yedek" style="max-width:6rem" disabled[full];
+                    input name="lock" type="text" inputmode="numeric" placeholder="kilit (gün)" aria-label="Yedekler kaç gün silinemez" style="max-width:7rem" disabled[full];
+                    label for="job-until" { "pencere sonu" }
+                    input id="job-until" name="until" type="time" aria-label="Yedek penceresinin sonu" disabled[full];
+                    label class="check" { input type="checkbox" name="verify" value="1" disabled[full]; "Doğrula" }
+                    button class="btn sm" type="submit" disabled[full] { (icon("plus")) "Kaydet" }
+                }
+            }
+            footer {
+                "Konuklar tek tek yedeklenir: biri bitmeden sıradaki başlamaz. Saklama sayısı konuk başınadır ve yalnızca bu işin aldığı yedeklere uygulanır. "
+                "Haftalık, aylık ve yıllık alanlar son N yedeğe ek olarak saklanacak dönem yedekleridir; kilit, işin aldığı yedekleri o kadar gün silinemez yapar. "
+                "Pencere sonu verilirse o saatten sonra sıradaki konuklara başlanmaz (süren yedek kesilmez; elle başlatılan tur pencereye bakmaz). Doğrula, her yedekten sonra bozulma denetimi yapar. "
+                "Var olan bir işin adını yazarsanız iş güncellenir. Komut satırından: " code { "redox job add gece time=03:00 days=1-5 tags=web" }
+            }
+        }
+    }
 }
 
 /// Konuk oluşturma formunun (doğrulanmamış) alanları.

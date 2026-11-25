@@ -33,14 +33,32 @@ pub fn routes() -> Router<AppState> {
         .route("/guests/{vmid}/resize", post(resize))
         .route("/guests/{vmid}/disks", post(disk_add))
         .route("/guests/{vmid}/nics", post(nic_add))
+        .route("/guests/{vmid}/balloon", post(balloon))
+        .route("/guests/{vmid}/usage", get(usage).delete(usage_reset))
+        .route("/usage", get(usage_all))
+        .route("/guests/{vmid}/move", post(storage_move))
         .route("/guests/{vmid}/disks/{id}", delete_route(disk_remove))
         .route("/guests/{vmid}/exec", post(exec))
         .route("/backups", get(backups))
+        .route("/backups/report", get(backup_report))
         .route("/backups/{id}", delete_route(backup_delete))
         .route("/backups/{id}/restore", post(backup_restore))
+        .route("/backups/{id}/restore-new", post(backup_restore_new))
+        .route("/backups/{id}/lock", post(backup_lock))
+        .route("/backups/{id}/instant", post(backup_instant))
+        .route("/guests/{vmid}/detach", post(guest_detach))
+        .route("/backups/{id}/test", post(backup_test))
+        .route("/backups/archive", get(backup_archive))
+        .route("/approvals", get(approvals))
+        .route("/approvals/{id}/approve", post(approval_approve))
+        .route("/approvals/{id}", delete_route(approval_reject))
+        .route("/backups/{id}/recover", post(backup_recover))
         .route("/backups/{id}/push", post(backup_push))
         .route("/backups/{id}/verify", post(backup_verify))
         .route("/backups/{id}/download", get(crate::ui_ops::backup_download))
+        .route("/backups/{id}/machine", get(backup_machine))
+        .route("/backups/{id}/files", get(backup_files))
+        .route("/backups/{id}/file", get(crate::ui_ops::backup_file))
         .route("/guests/{vmid}/{action}", post(act))
         .route("/storage", get(storage))
         .route("/media", get(media_list))
@@ -48,6 +66,11 @@ pub fn routes() -> Router<AppState> {
         .route("/media/{name}", axum::routing::put(media_put).delete(media_delete))
         .route("/peers", get(peers))
         .route("/peers/{name}/import/{vmid}", post(peer_import))
+        .route("/pools", get(pools).post(pool_put))
+        .route("/pools/{name}", delete_route(pool_delete))
+        .route("/jobs", get(jobs).post(job_put))
+        .route("/jobs/{name}", delete_route(job_delete))
+        .route("/jobs/{name}/run", post(job_run))
         .route("/tasks", get(tasks))
         .route("/tasks/{id}", get(task))
 }
@@ -183,8 +206,28 @@ async fn delete(
     State(st): State<AppState>,
     Extension(me): Extension<Identity>,
     Path(vmid): Path<VmId>,
-) -> Result<StatusCode, ApiError> {
-    st.delete_guest(vmid, &me.user)?;
+) -> Result<Response, ApiError> {
+    Ok(queued(st.request_guest_delete(vmid, &me.user)?))
+}
+
+/// Silme yanıtı: yapıldıysa 204; dört göz ilkesi yüzünden onay bekliyorsa 202 ve isteğin numarası.
+fn queued(approval: Option<u64>) -> Response {
+    match approval {
+        None => StatusCode::NO_CONTENT.into_response(),
+        Some(id) => (StatusCode::ACCEPTED, Json(json!({ "approval": id, "message": "ikinci bir yöneticinin onayı bekleniyor" }))).into_response(),
+    }
+}
+
+async fn approvals(State(st): State<AppState>) -> Json<Vec<redox_core::Approval>> {
+    Json(st.snapshot().pending_approvals(crate::state::now()).into_iter().cloned().collect())
+}
+
+async fn approval_approve(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<u64>) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(json!({ "done": st.approve(id, &me.user)? })))
+}
+
+async fn approval_reject(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<u64>) -> Result<StatusCode, ApiError> {
+    st.reject(id, &me.user)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -212,6 +255,9 @@ async fn update(
 #[derive(serde::Deserialize)]
 struct SnapshotBody {
     name: String,
+    /// Üretim denetim noktası: bellek durumu olmadan, dosya sistemleri dondurularak.
+    #[serde(default)]
+    production: bool,
 }
 
 fn accepted(st: &AppState, id: TaskId) -> Result<(StatusCode, Json<Task>), ApiError> {
@@ -224,7 +270,7 @@ async fn snapshot_create(
     Path(vmid): Path<VmId>,
     Json(body): Json<SnapshotBody>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
-    let id = st.snapshot_create(vmid, &body.name, &me.user)?;
+    let id = if body.production { st.snapshot_create_production(vmid, &body.name, &me.user)? } else { st.snapshot_create(vmid, &body.name, &me.user)? };
     accepted(&st, id)
 }
 
@@ -371,6 +417,216 @@ async fn backup_push(State(st): State<AppState>, Extension(me): Extension<Identi
     Ok(StatusCode::ACCEPTED)
 }
 
+/// Yedeğin makine durumu arşivi (UEFI değişkenleri, sanal TPM durumu): başka sunucuya taşıma içindir.
+/// TPM durumu disk şifreleme anahtarlarını korur; yalnızca yönetici indirebilir.
+async fn backup_machine(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Response {
+    if !me.can_write() {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "makine durumunu yalnızca yönetici indirebilir", "code": "forbidden" }))).into_response();
+    }
+    let missing = || (StatusCode::NOT_FOUND, Json(json!({ "error": "bu yedekte makine durumu yok", "code": "not_found" }))).into_response();
+    if st.snapshot().backup(&id).map(|b| !b.machine).unwrap_or(true) {
+        return missing();
+    }
+    let Some(path) = st.driver().backup_machine_file(&id) else { return missing() };
+    match tokio::task::spawn_blocking(move || std::fs::read(path)).await {
+        Ok(Ok(bytes)) => ([(axum::http::header::CONTENT_TYPE, "application/x-tar")], bytes).into_response(),
+        _ => missing(),
+    }
+}
+
+/// Yedeğin içindeki bir dizini listeler (yalnızca yönetici; sunucuda guestfish gerekir).
+async fn backup_files(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Extension(crate::ClientIp(ip)): Extension<crate::ClientIp>,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<crate::ui_ops::FilesQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !me.can_write() {
+        return Err(ApiError::Core(Error::InvalidSpec("yedeğin içindeki dosyaları yalnızca yönetici görebilir".to_string())));
+    }
+    let entries = crate::ui_ops::list_backup_files(&st, &me.user, &ip, &id, query.disk, &query.path()).await?;
+    Ok(Json(json!({ "path": crate::guestfs::normalize(&query.path()), "entries": entries })))
+}
+
+/// Yedeği geçici bir konuk olarak açıp sınar; sonuç yedeğin kaydına ve görev günlüğüne yazılır.
+/// Arşiv: yerelde silinmiş ama kopya hedefinde saklanan yedekler.
+async fn backup_archive(State(st): State<AppState>) -> Json<Vec<Backup>> {
+    Json(st.snapshot().archive)
+}
+
+async fn backup_recover(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    st.backup_recover(&id, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn backup_test(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    st.backup_test(&id, &me.user)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Anında kurtarma: yedeğin üzerinde çalışan yeni bir konuk oluşturur; yeni konuğun kimliğini döndürür.
+async fn backup_instant(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>, Json(body): Json<RestoreNewBody>) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let vmid = st.backup_instant(&id, &body.name, &me.user)?;
+    Ok((StatusCode::CREATED, Json(json!({ "vmid": vmid }))))
+}
+
+/// Anında kurtarılmış konuğu yedekten bağımsızlaştırır.
+async fn guest_detach(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let id = st.guest_detach(vmid, &me.user)?;
+    accepted(&st, id)
+}
+
+/// Şimdiki yedek raporu: son 24 saat, korumasız konuklar ve toplamlar.
+async fn backup_report(State(st): State<AppState>) -> Json<serde_json::Value> {
+    let report = st.backup_report();
+    Json(json!({ "subject": report.subject, "body": report.body, "taken": report.taken, "failed": report.failed, "unprotected": report.unprotected }))
+}
+
+#[derive(serde::Deserialize)]
+struct LockBody {
+    days: u32,
+}
+
+/// Yedeği belirtilen gün kadar silinemez yapar; kilidin bittiği anı döndürür.
+async fn backup_lock(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>, Json(body): Json<LockBody>) -> Result<Json<serde_json::Value>, ApiError> {
+    let until = st.backup_lock(&id, body.days, &me.user)?;
+    Ok(Json(json!({ "locked_until": until })))
+}
+
+#[derive(serde::Deserialize)]
+struct RestoreNewBody {
+    name: String,
+}
+
+/// Yedekten yeni bir sanal makine oluşturur; yeni konuğun kimliğini döndürür.
+async fn backup_restore_new(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>, Json(body): Json<RestoreNewBody>) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let vmid = st.backup_restore_new(&id, &body.name, &me.user)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "vmid": vmid }))))
+}
+
+#[derive(serde::Deserialize)]
+struct MoveBody {
+    storage: String,
+}
+
+/// Kapalı konuğun disklerini başka bir depolama alanına taşır.
+async fn storage_move(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<MoveBody>) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let id = st.storage_move(vmid, body.storage.trim(), &me.user)?;
+    accepted(&st, id)
+}
+
+#[derive(serde::Deserialize)]
+struct BalloonBody {
+    /// Hedef bellek (MB); 0 belleğin tamamı.
+    #[serde(default)]
+    mb: u64,
+    /// Dinamik bellek: alt sınır (MB); 0 kapatır. Verilirse `mb` yok sayılır.
+    #[serde(default)]
+    min: Option<u64>,
+}
+
+async fn balloon(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<BalloonBody>) -> Result<StatusCode, ApiError> {
+    match body.min {
+        Some(min) => st.dynamic_memory_set(vmid, min, &me.user)?,
+        None => st.balloon_set(vmid, body.mb, &me.user)?,
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Havuzlar, kotaları ve şimdiki kullanımlarıyla.
+fn usage_json(c: &redox_core::Cluster, g: &redox_core::Guest) -> serde_json::Value {
+    let u = c.usage_of(g.vmid);
+    json!({
+        "vmid": g.vmid, "name": g.name, "pool": g.pool, "since": u.since, "uptime_secs": u.uptime_secs,
+        "cpu_core_hours": (u.cpu_core_hours() * 1000.0).round() / 1000.0, "mem_gb_hours": (u.mem_gb_hours() * 1000.0).round() / 1000.0,
+        "disk_read_mb": u.disk_read_bytes >> 20, "disk_write_mb": u.disk_write_bytes >> 20,
+    })
+}
+
+/// Konuğun birikimli kaynak tüketimi.
+async fn usage(State(st): State<AppState>, Path(vmid): Path<VmId>) -> Result<Json<serde_json::Value>, ApiError> {
+    let c = st.snapshot();
+    Ok(Json(usage_json(&c, c.guest(vmid)?)))
+}
+
+/// Bütün konukların tüketimi (faturalama için dışa aktarım).
+async fn usage_all(State(st): State<AppState>) -> Json<Vec<serde_json::Value>> {
+    let c = st.snapshot();
+    Json(c.guests.iter().map(|g| usage_json(&c, g)).collect())
+}
+
+async fn usage_reset(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>) -> Result<StatusCode, ApiError> {
+    st.usage_reset(vmid, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn pools(State(st): State<AppState>) -> Json<Vec<serde_json::Value>> {
+    let c = st.snapshot();
+    Json(c.pools.iter().map(|p| json!({ "name": p.name, "cores": p.cores, "memory_mb": p.memory_mb, "disk_gb": p.disk_gb, "guests": p.guests, "used": c.pool_usage(&p.name, None) })).collect())
+}
+
+/// Havuzu ekler; aynı adda havuz varsa kotalarını günceller.
+async fn pool_put(State(st): State<AppState>, Json(pool): Json<redox_core::Pool>) -> Result<StatusCode, ApiError> {
+    st.pool_put(pool)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn pool_delete(State(st): State<AppState>, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
+    st.pool_remove(&name)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn jobs(State(st): State<AppState>) -> Json<Vec<redox_core::BackupJob>> {
+    Json(st.snapshot().jobs)
+}
+
+#[derive(serde::Deserialize)]
+struct JobBody {
+    name: String,
+    time: String,
+    /// `1-5` biçiminde; verilmezse her gün.
+    #[serde(default)]
+    days: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    keep: Option<u32>,
+    /// Saklanacak haftalık, aylık ve yıllık yedekler (0: kapalı).
+    #[serde(default)]
+    weekly: u32,
+    #[serde(default)]
+    monthly: u32,
+    #[serde(default)]
+    yearly: u32,
+    /// İşin aldığı yedekler kaç gün silinemez olsun.
+    #[serde(default)]
+    lock: u32,
+    /// Yedek penceresinin sonu (`SS:DD`); boşsa sınırsız.
+    #[serde(default)]
+    until: String,
+    /// Her yedekten sonra bozulma denetimi yapılsın mı?
+    #[serde(default)]
+    verify: bool,
+}
+
+/// Yedek işini ekler; aynı adda iş varsa günceller.
+async fn job_put(State(st): State<AppState>, Json(body): Json<JobBody>) -> Result<StatusCode, ApiError> {
+    let gfs = redox_core::Gfs { weekly: body.weekly, monthly: body.monthly, yearly: body.yearly };
+    st.job_put(redox_core::BackupJob::from_text(&body.name, &body.time, &body.days, &body.tags.join(","), body.keep)?.with_retention(gfs, body.lock)?.with_window(&body.until, body.verify)?)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn job_delete(State(st): State<AppState>, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
+    st.job_remove(&name)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn job_run(State(st): State<AppState>, Path(name): Path<String>) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let queued = st.job_run(&name)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "queued": queued }))))
+}
+
 async fn media_list(State(st): State<AppState>) -> Json<Vec<crate::media::Media>> {
     Json(crate::media::list(&st))
 }
@@ -419,9 +675,8 @@ async fn backup_verify(State(st): State<AppState>, Extension(me): Extension<Iden
     Ok(StatusCode::ACCEPTED)
 }
 
-async fn backup_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    st.backup_delete(&id, &me.user)?;
-    Ok(StatusCode::NO_CONTENT)
+async fn backup_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<Response, ApiError> {
+    Ok(queued(st.request_backup_delete(&id, &me.user)?))
 }
 
 async fn storage(State(st): State<AppState>) -> Json<Vec<Storage>> {

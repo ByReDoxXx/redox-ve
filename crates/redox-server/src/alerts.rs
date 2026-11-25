@@ -145,6 +145,11 @@ impl Alerts {
         *lock(&self.email) = Some(config);
     }
 
+    /// E-posta ayarı (yedek raporu da bunu kullanır).
+    pub fn email(&self) -> Option<crate::mail::Config> {
+        lock(&self.email).clone()
+    }
+
     /// Bir turun olaylarını tek e-postada gönderir. Gönderilen ileti sayısını döndürür (0 ya da 1).
     pub fn deliver_email(&self, cluster: &str, events: &[Event]) -> Result<usize, String> {
         let Some(config) = lock(&self.email).clone() else { return Ok(0) };

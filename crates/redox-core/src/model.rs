@@ -281,6 +281,12 @@ pub struct Guest {
     /// Son otomatik yedeğin alındığı gün (`YYYY-AA-GG`); aynı gün ikinci kez alınmaz.
     #[serde(default)]
     pub last_auto_backup: Option<String>,
+    /// Konuğun kaynak havuzu; havuzun kotası bu konuğun ayrılmış kaynaklarını da sayar.
+    #[serde(default)]
+    pub pool: Option<String>,
+    /// Otomatik yedeklerde "son N"e ek olarak saklanacak haftalık, aylık ve yıllık yedek sayıları.
+    #[serde(default)]
+    pub backup_gfs: crate::retention::Gfs,
     /// İsteğe bağlı donanım ve ilk kurulum ayarları (JSON'da konuğun kendi alanları olarak durur).
     #[serde(flatten)]
     pub hw: crate::hw::Hardware,
@@ -317,9 +323,16 @@ pub struct PortForward {
 pub struct Snapshot {
     pub name: String,
     pub created: u64,
+    /// Üretim denetim noktası: konuk çalışırken yalnızca diskler kaydedildi (bellek durumu yok).
+    /// Geri dönünce konuk o andaki diskle **yeniden açılır**; bu yüzden dönüş konuk kapalıyken yapılır.
+    #[serde(default)]
+    pub disk_only: bool,
+    /// Görüntü alınırken dosya sistemleri konuk ajanıyla donduruldu mu (uygulama tutarlı)?
+    #[serde(default)]
+    pub quiesced: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Backup {
     /// Yedek dosyasının adı (uzantısız), örn. `vm-103-1800000000`.
     pub id: String,
@@ -353,6 +366,29 @@ pub struct Backup {
     /// (eski biçimli) bir dosya kabul edilmez. Eski kayıtlarda `false`.
     #[serde(default)]
     pub offsite_bound: bool,
+    /// Yedeği alan yedek işinin adı; konuğun kendi zamanlamasıyla ya da elle alındıysa `None`.
+    #[serde(default)]
+    pub job: Option<String>,
+    /// Yedeğin yanında makine durumu (UEFI değişken deposu, sanal TPM) da var mı?
+    #[serde(default)]
+    pub machine: bool,
+    /// Yedeğin kaç ek dış hedefte (yedek kopyalama hedefleri) kopyası var?
+    #[serde(default)]
+    pub copies: u8,
+    /// Yedeğin açılarak sınanmasının son sonucu; hiç sınanmadıysa `None`.
+    #[serde(default)]
+    pub tested: Option<BackupTest>,
+    /// Olağan dışı değişim uyarısı: yedekte değişen veri önceki yedeklere göre çok fazlaysa nedeni burada
+    /// yazar (toplu şifreleme, yani fidye yazılımı belirtisi olabilir). Olağansa `None`.
+    #[serde(default)]
+    pub suspicious: Option<String>,
+    /// Bu ana (epoch saniyesi) kadar silinemez ve budanmaz; `None` ise kilitsiz.
+    #[serde(default)]
+    pub locked_until: Option<u64>,
+    /// Konuğun yedek alındığı andaki tanımı: yedekten yeni bir konuk açmak için (konuk silinmiş olsa da).
+    /// Bu özellikten önce alınmış yedeklerde yoktur.
+    #[serde(default)]
+    pub spec: Option<Box<GuestSpec>>,
 }
 
 /// Konuk ayarlarında istenen değişiklikler; `None` alanlar olduğu gibi kalır.
@@ -373,7 +409,14 @@ pub struct GuestPatch {
     /// `SS:DD`; boş dizge zamanlamayı kapatır.
     pub backup_time: Option<String>,
     pub backup_keep: Option<u32>,
+    /// Yedek yaşı hedefi (RPO, saat); 0 sunucunun genel ayarına bırakır.
+    pub rpo_hours: Option<u32>,
+    /// Yedek sınamasında denetlenecek TCP kapısı (0: yok) ve konukta çalıştırılacak komut (boş: yok).
+    pub test_port: Option<u16>,
+    pub test_cmd: Option<String>,
     pub firewall: Option<bool>,
+    /// Ağ kartı koruması (MAC sahteciliği, DHCP sunucusu ve yönlendirici duyurusu engeli).
+    pub nic_guard: Option<bool>,
     pub fw_rules: Option<Vec<crate::hw::FwRule>>,
     pub firmware: Option<crate::hw::Firmware>,
     pub secure_boot: Option<bool>,
@@ -400,6 +443,36 @@ pub struct GuestPatch {
     pub restart: Option<bool>,
     /// Paylaşılan klasörlerin tam listesi (verilirse eskisinin yerine geçer).
     pub shares: Option<Vec<crate::hw::Share>>,
+    /// cloud-init ayarları; boş metin alanı temizler. Anahtar boşaltılırsa cloud-init kapanır.
+    pub ci_user: Option<String>,
+    pub ci_ssh_key: Option<String>,
+    /// Sabit IPv4 adresi (`10.0.0.5/24`); boşsa DHCP.
+    pub ci_ip: Option<String>,
+    pub ci_gw: Option<String>,
+    /// Ad sunucuları, virgülle.
+    pub ci_dns: Option<String>,
+    /// İşlemci modeli; boş metin sunucunun kendi işlemcisi.
+    pub cpu_type: Option<String>,
+    /// Bellek balonu aygıtı.
+    pub balloon: Option<bool>,
+    /// İç içe sanallaştırma.
+    pub nested: Option<bool>,
+    /// Kaynak havuzu; boş metin konuğu havuzdan çıkarır.
+    pub pool: Option<String>,
+    /// Yedekten önce ve sonra konukta çalıştırılacak komutlar; boş metin kaldırır.
+    pub backup_pre: Option<String>,
+    pub backup_post: Option<String>,
+    /// Saklanacak haftalık, aylık ve yıllık otomatik yedek sayıları (0: kapalı).
+    pub backup_weekly: Option<u32>,
+    pub backup_monthly: Option<u32>,
+    pub backup_yearly: Option<u32>,
+}
+
+impl GuestPatch {
+    /// cloud-init alanlarını donanım kaydına uygular; bir şey değiştiyse `true`.
+    pub fn apply_cloud_init(&self, hw: &mut crate::hw::Hardware) -> bool {
+        hw.apply_cloud_init(self.ci_user.as_deref(), self.ci_ssh_key.as_deref(), self.ci_ip.as_deref(), self.ci_gw.as_deref(), self.ci_dns.as_deref())
+    }
 }
 
 /// Konuğun ağ kipi olarak "köprü yok": kullanıcı kipinde NAT.
@@ -426,6 +499,29 @@ pub fn mac_for(vmid: VmId) -> String {
 pub fn mac_for_nic(vmid: VmId, index: u8) -> String {
     let b = vmid.to_be_bytes();
     format!("52:54:{index:02x}:{:02x}:{:02x}:{:02x}", b[1], b[2], b[3])
+}
+
+/// Yedeğin geçici bir konuk olarak açılıp çalıştığının sınanması.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupTest {
+    pub at: u64,
+    pub ok: bool,
+    /// Neyin doğrulandığı ya da neden başarısız olduğu.
+    pub note: String,
+}
+
+impl Backup {
+    pub fn is_locked(&self, now: u64) -> bool {
+        self.locked_until.is_some_and(|until| until > now)
+    }
+}
+
+/// Yedekten açılan konuğun önerilen adı: `<ad>-yedekten`, ad sınırına sığacak biçimde kısaltılır.
+pub fn restored_name(original: &str) -> String {
+    const SUFFIX: &str = "-yedekten";
+    let keep: String = original.chars().take(63usize.saturating_sub(SUFFIX.len())).collect();
+    let name = format!("{}{SUFFIX}", keep.trim_end_matches('-'));
+    if valid_name(&name) { name } else { "yedekten".to_string() }
 }
 
 pub fn valid_tag(tag: &str) -> bool {
@@ -464,6 +560,25 @@ impl Guest {
     }
 
     /// Asıl disk ve ek disklerin toplam boyutu (depolama hesabı bununla yapılır).
+    /// Konuğun, aynısını yeniden oluşturmaya yetecek tanımı.
+    pub fn to_spec(&self) -> GuestSpec {
+        GuestSpec {
+            vmid: None,
+            name: self.name.clone(),
+            kind: self.kind,
+            node: self.node.clone(),
+            cores: self.cores,
+            memory_mb: self.mem_total_mb,
+            disk_gb: self.disk_gb,
+            storage: self.storage.clone(),
+            os: self.os.clone(),
+            bridge: self.bridge.clone(),
+            onboot: self.onboot,
+            iso: None,
+            hw: self.hw.clone(),
+        }
+    }
+
     pub fn total_disk_gb(&self) -> u64 {
         self.disk_gb + self.hw.disks.iter().map(|d| d.size_gb).sum::<u64>()
     }
