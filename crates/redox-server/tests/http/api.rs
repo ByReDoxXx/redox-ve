@@ -72,3 +72,14 @@ pub(super) async fn api_create_and_delete() {
 }
 
 // ---------- Kimlik doğrulama ve yetki ----------
+
+#[tokio::test]
+pub(super) async fn openapi_document_lists_the_api() {
+    let (app, _) = setup();
+    let (status, doc) = api(&app, get("/api/v1/openapi.json")).await;
+    assert_eq!((status, doc["openapi"].as_str(), doc["servers"][0]["url"].as_str()), (StatusCode::OK, Some("3.0.3"), Some("/api/v1")));
+    assert_eq!(doc["paths"]["/guests"]["post"]["summary"], "Create a guest (virtual machine or container)");
+    assert!(doc["paths"]["/openapi.json"]["get"].is_object());
+    // Oturumsuz okunamaz.
+    assert_eq!(send(&app, anon(Method::GET, "/api/v1/openapi.json").body(Body::empty()).unwrap()).await.0, StatusCode::UNAUTHORIZED);
+}

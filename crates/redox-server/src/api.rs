@@ -15,6 +15,7 @@ use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/openapi.json", get(openapi))
         .route("/cluster", get(cluster))
         .route("/nodes", get(nodes))
         .route("/nodes/{id}", get(node))
@@ -605,6 +606,10 @@ struct FailoverBody {
 async fn replica_failover(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((peer, vmid)): Path<(String, VmId)>, Json(body): Json<FailoverBody>) -> Result<StatusCode, ApiError> {
     st.replica_failover_set(&peer, vmid, body.minutes, &me.user)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn openapi() -> Json<serde_json::Value> {
+    Json(crate::openapi::document())
 }
 
 async fn replica_run(State(st): State<AppState>, Path((peer, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
