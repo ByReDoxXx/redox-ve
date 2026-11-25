@@ -61,9 +61,14 @@ certificate. The whole life cycle of an Alpine container was also tried with rea
 create, start, getting an address, running a command, the memory limit, backup while running, restart, stop,
 snapshot and rollback, restore from backup, clone (with its own name and address) and delete.
 
-**Not tested yet:** installation on a physical machine, UEFI boot, booting from a USB stick, the installer's
-interactive flow, `install.sh` on Ubuntu, and running virtual machines on this installation. Containers were only
-tried with the Alpine image and NAT networking; a bridged container and other distributions were not. Containers
+Also tried: the BIOS and UEFI boot menus (the first entry is *Install RedoX VE*; after Enter the installer's
+language screen appears), starting bridged (`vmbr0`) and NAT virtual machines with nested KVM on the installed
+system, and a bridged Debian 13 container.
+
+**Not tested yet:** installation on a physical machine, booting from a USB stick, the installer's interactive flow
+beyond the language screen (the unattended variant was installed end to end), a complete installation under UEFI
+(only the menu and first screen), and `install.sh` on Ubuntu. No operating system was installed inside the virtual
+machines; the Ubuntu and Rocky Linux container images were not tried. Containers
 need systemd 254 or later (Debian 13, Ubuntu 24.04).
 
 ## Security model (summary)

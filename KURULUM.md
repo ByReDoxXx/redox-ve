@@ -57,9 +57,14 @@ yanıt vermesi. Gerçek LXC ile bir Alpine konteynerinin bütün yaşam döngüs
 başlatma, adres alma, içinde komut çalıştırma, bellek sınırı, çalışırken yedek, yeniden başlatma, durdurma, anlık
 görüntü ve geri dönüş, yedekten geri yükleme, klon (kendi adı ve adresiyle) ve silme.
 
-**Henüz sınanmadı:** fiziksel bir makinede kurulum, UEFI ile önyükleme, USB bellekten açılış, kurucunun soru soran
-(etkileşimli) akışı, Ubuntu üzerinde `install.sh` ve sanal makinelerin bu kurulumda çalıştırılması. Konteynerler
-yalnızca Alpine imajıyla ve NAT ağıyla denendi; köprüye bağlı konteyner ve diğer dağıtımlar denenmedi.
+Ayrıca denendi: BIOS ve UEFI açılış menüleri (ilk seçenek *RedoX VE kur*; Enter'dan sonra kurucunun dil ekranı
+açılıyor), kurulan sistemde köprüye (`vmbr0`) bağlı ve NAT'lı sanal makinelerin iç içe KVM ile başlatılması ve
+köprüye bağlı bir Debian 13 konteyneri.
+
+**Henüz sınanmadı:** fiziksel bir makinede kurulum, USB bellekten açılış, kurucunun soru soran akışının dil
+ekranından sonrası (soru sormayan sürüm baştan sona kuruldu), UEFI ile kurulumun tamamı (yalnızca menü ve ilk ekran)
+ve Ubuntu üzerinde `install.sh`. Sanal makinelerin içine işletim sistemi kurulmadı; Ubuntu ve Rocky Linux
+konteyner imajları denenmedi.
 Konteynerlerin çalışması için systemd 254 ya da sonrası gerekir (Debian 13, Ubuntu 24.04).
 
 ## Güvenlik modeli (özet)

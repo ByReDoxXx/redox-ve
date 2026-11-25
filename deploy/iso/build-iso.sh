@@ -91,6 +91,13 @@ label redox
 EOF
     MAPS="$MAPS -map $WORK/txt.cfg /isolinux/txt.cfg"
 fi
+# Debian'ın BIOS menüsü 30 saniye tuşa basılmazsa sesli (erişilebilir) kurulumu kendiliğinden başlatır; bu
+# sayaç kaldırılır, menü seçim yapılana dek bekler. Sesli kurulum seçeneği menüde durur.
+if extract /isolinux/spkgtk.cfg "$WORK/spkgtk.cfg"; then
+    chmod u+w "$WORK/spkgtk.cfg"
+    grep -Ev '^(timeout|ontimeout|menu autoboot)' "$WORK/spkgtk.cfg" > "$WORK/spkgtk.new" && mv "$WORK/spkgtk.new" "$WORK/spkgtk.cfg"
+    MAPS="$MAPS -map $WORK/spkgtk.cfg /isolinux/spkgtk.cfg"
+fi
 if extract /boot/grub/grub.cfg "$WORK/grub.cfg"; then
     chmod u+w "$WORK/grub.cfg"
     # Var olan menünün başına RedoX girdisi eklenir; yazı tipi ve tema satırları korunur.

@@ -9,3 +9,4 @@ redox-users.json
 /design/*
 !/design/wordmark/
 graphify-out/
+dist/
