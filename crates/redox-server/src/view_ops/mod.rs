@@ -6,7 +6,7 @@ use crate::i18n::{tfmt, tx};
 use redox_core::{Guest, GuestKind, GuestStatus};
 
 use crate::console::SPECIAL_KEYS;
-use crate::view::{datetime, guest_label, guest_name, guest_state, icon, layout, page_head, FormOptions, Page};
+use crate::view::{tip, datetime, guest_label, guest_name, guest_state, icon, layout, page_head, FormOptions, Page};
 
 mod backups;
 mod clone;

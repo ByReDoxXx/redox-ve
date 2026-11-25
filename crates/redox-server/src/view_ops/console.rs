@@ -50,7 +50,7 @@ pub(super) fn exec_form(base: &str, command: &str) -> Markup {
 pub(super) fn container_console(p: &Page, g: &Guest) -> Markup {
     html! {
         div class="card" {
-            header { h2 { (tx("Komut çalıştır")) } span class="note" { (tx("konteynerde kök olarak")) } }
+            header { h2 { (tx("Komut çalıştır")) } (tip("Konteynerin içinde bir komut çalıştırır ve çıktısını gösterir.")) span class="note" { (tx("konteynerde kök olarak")) } }
             @if !p.real {
                 p class="empty" { (tx("Simülasyon sürücüsünde konteynere komut gönderilemez.")) }
             } @else if g.status != GuestStatus::Running {

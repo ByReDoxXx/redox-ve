@@ -79,7 +79,7 @@ pub fn login(theme: &str, next: &str, username: &str, error: Option<&str>, sso: 
                             div class="field" {
                                 label for="code" { (tx("Doğrulama kodu")) }
                                 input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}";
-                                span class="hint" { (tx("Yalnızca iki adımlı doğrulamayı açtıysanız.")) }
+                                span class="hint" tabindex="0" role="note" { (tx("Yalnızca iki adımlı doğrulamayı açtıysanız.")) }
                             }
                             button class="btn primary" type="submit" { (tx("Giriş Yap")) }
                             @let other = crate::i18n::current().other();

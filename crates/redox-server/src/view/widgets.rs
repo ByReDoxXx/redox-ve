@@ -30,6 +30,11 @@ pub(crate) fn datetime(ts: u64) -> String {
     }
 }
 
+/// (?) açıklama balonu: üstüne gelince ya da odaklanınca açıklamayı gösterir (JavaScript'siz).
+pub fn tip(text: &'static str) -> Markup {
+    html! { span class="tip" tabindex="0" role="note" aria-label=(tx(text)) { "?" span { (tx(text)) } } }
+}
+
 pub fn icon(name: &str) -> Markup {
     icon_c(name, "")
 }

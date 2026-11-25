@@ -38,7 +38,7 @@ pub fn datacenter(p: &Page) -> String {
             div class="cols" {
                 div class="stack" {
                     div class="card" {
-                        header { h2 { (tx("En çok kaynak kullananlar")) } span class="note" { (tx("çalışan konuklar")) } div class="end" { a class="btn sm quiet" href="/guests" { (tx("Tüm konuklar")) } } }
+                        header { h2 { (tx("En çok kaynak kullananlar")) } (tip("İşlemciyi en çok kullanan çalışan konuklar.")) span class="note" { (tx("çalışan konuklar")) } div class="end" { a class="btn sm quiet" href="/guests" { (tx("Tüm konuklar")) } } }
                         @if busy.is_empty() {
                             p class="empty" { (tx("Çalışan konuk yok.")) @if p.admin && c.guests.is_empty() { " " a href="/guests/new?kind=vm" { (tx("İlk sanal makineyi oluşturun")) } "." } }
                         } @else {
@@ -54,7 +54,7 @@ pub fn datacenter(p: &Page) -> String {
                         }
                     }
                     div class="card" {
-                        header { h2 { (tx("Düğümler")) } span class="note" { (s.nodes_online) " / " (s.nodes_total) (tx(" çevrimiçi")) } }
+                        header { h2 { (tx("Düğümler")) } (tip("Kümedeki sunucular ve anlık yükleri.")) span class="note" { (s.nodes_online) " / " (s.nodes_total) (tx(" çevrimiçi")) } }
                         div class="tw" { table {
                             thead { tr { th { (tx("Düğüm")) } th { (tx("Durum")) } th { "CPU" } th { (tx("Bellek")) } th class="num" { (tx("Konuk")) } } }
                             tbody { @for n in &c.nodes { tr {
@@ -67,7 +67,7 @@ pub fn datacenter(p: &Page) -> String {
                         } }
                     }
                     div class="card" {
-                        header { h2 { (tx("Yedek durumu")) } div class="end" { a class="btn sm quiet" href="/backups" { (tx("Tüm yedekler")) } } }
+                        header { h2 { (tx("Yedek durumu")) } (tip("Otomatik yedeği açık konuk sayısı ve son alınan yedekler.")) div class="end" { a class="btn sm quiet" href="/backups" { (tx("Tüm yedekler")) } } }
                         dl class="kv" {
                             dt { (tx("Son yedek")) } dd {
                                 @match last {
@@ -90,7 +90,7 @@ pub fn datacenter(p: &Page) -> String {
                     }
                 }
                 div class="card" {
-                    header { h2 { (tx("Etkinlik")) } div class="end" { a class="btn sm quiet" href="/tasks" { (tx("Tümü")) } } }
+                    header { h2 { (tx("Etkinlik")) } (tip("Son görevler: kim, ne zaman, ne yaptı ve sonucu.")) div class="end" { a class="btn sm quiet" href="/tasks" { (tx("Tümü")) } } }
                     (feed(&recent, (tx("Henüz görev yok. Bir konuğu başlattığınızda ya da oluşturduğunuzda burada görünür."))))
                 }
             }
@@ -126,7 +126,7 @@ pub fn node(p: &Page, n: &Node) -> String {
             (usage_card(p, "node", n.cores as u64, n.cpu_pct, mp))
             @if p.admin && !p.cluster.maintenance {
                 div class="card" {
-                    header { h2 { (tx("Bakım")) } span class="note" { (tx("sunucuyu güncellemeden ya da yeniden başlatmadan önce")) } }
+                    header { h2 { (tx("Bakım")) } (tip("Sunucuyu güncellemeden önce konukları düzenli kapatır; bakım bitince yeniden başlatır.")) span class="note" { (tx("sunucuyu güncellemeden ya da yeniden başlatmadan önce")) } }
                     div class="inline" {
                         form method="post" action="/maintenance/drain" { button class="btn sm" type="submit" { (icon("stop")) (tx("Konukları Kapat ve Bakıma Al")) } }
                         form method="post" action="/maintenance/on" { button class="btn sm quiet" type="submit" { (tx("Yalnızca Bakıma Al")) } }
@@ -166,7 +166,7 @@ pub fn storage(p: &Page, media: &[crate::media::Media]) -> String {
         ))
         div class="stack" {
             div class="card" {
-                header { h2 { (tx("Depolama alanları")) } }
+                header { h2 { (tx("Depolama alanları")) } (tip("Konuk disklerinin, kalıpların ve yedeklerin durduğu alanlar ve dolulukları.")) }
                 div class="tw" { table {
                     thead { tr { th { (tx("Alan")) } th { (tx("Tür")) } th { (tx("İçerik")) } th style="width:34%" { (tx("Kullanım")) } th class="num" { (tx("Dolu / Toplam")) } } }
                     tbody { @for s in &c.storages { tr {
@@ -183,7 +183,7 @@ pub fn storage(p: &Page, media: &[crate::media::Media]) -> String {
             }
             @if p.real {
                 div class="card" {
-                    header { h2 { (tx("Kalıplar ve disk imajları")) } span class="note" { (tx("konuk oluştururken seçilir")) } }
+                    header { h2 { (tx("Kalıplar ve disk imajları")) } (tip("Kurulum kalıpları (ISO) ve hazır disk imajları. Konuk oluştururken seçilirler.")) span class="note" { (tx("konuk oluştururken seçilir")) } }
                     @if media.is_empty() {
                         p class="empty" { (tx("Henüz dosya yok. Kurulum kalıbı (.iso) ya da hazır disk imajı (.qcow2, .img, .vmdk, .ova …) yükleyin; konuk oluştururken seçilebilir olurlar.")) }
                     } @else {
@@ -249,7 +249,7 @@ fn replicas_card(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
     html! {
         @if !peers.is_empty() || !list.is_empty() {
             div class="card" {
-                header { h2 { (tx("Çoğaltma")) } span class="note" { (list.len()) " / " (redox_core::replicas::MAX_REPLICAS) } }
+                header { h2 { (tx("Çoğaltma")) } (tip("Eş sunucudaki bir konuğun kopyasını burada düzenli tazeler. O sunucu ölürse kopyayı buradan başlatırsınız.")) span class="note" { (list.len()) " / " (redox_core::replicas::MAX_REPLICAS) } }
                 @if list.is_empty() {
                     p class="empty" { (tx("Çoğaltma yok. Eş sunucudaki bir sanal makinenin kopyası burada düzenli tazelenir; o sunucu ölürse kopyayı buradan başlatırsınız.")) }
                 } @else {
@@ -313,7 +313,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
         div class="stack" {
             (replicas_card(p, peers))
             div class="card" {
-                header { h2 { (tx("Sunucular")) } }
+                header { h2 { (tx("Sunucular")) } (tip("Bu sunucu ve tanımlı eş sunucular. Her sunucu kendi konuklarını yönetir.")) }
                 div class="tw" { table {
                     thead { tr { th { (tx("Sunucu")) } th { (tx("Küme adı")) } th { (tx("Durum")) } th class="num" { (tx("Düğüm")) } th class="num" { (tx("Konuk")) } th { (tx("Son okuma")) } } }
                     tbody {
@@ -469,7 +469,7 @@ pub fn pools(p: &Page) -> String {
             &[],
         ))
         div class="card" {
-            header { h2 { (tx("Kaynak havuzları")) } span class="note" { (tx("ayrılan kaynak / kota · ")) (c.pools.len()) " / " (redox_core::MAX_POOLS) } }
+            header { h2 { (tx("Kaynak havuzları")) } (tip("Bir grup konuğun toplam çekirdek, bellek ve disk ayırmasına kota koyar.")) span class="note" { (tx("ayrılan kaynak / kota · ")) (c.pools.len()) " / " (redox_core::MAX_POOLS) } }
             @if c.pools.is_empty() {
                 p class="empty" { (tx("Havuz yok. Havuz, bir grup konuğun toplam çekirdek, bellek ve disk ayırmasına sınır koyar; konuğu havuza Seçenekler sekmesinden alırsınız.")) }
             } @else {

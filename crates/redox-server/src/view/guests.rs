@@ -201,7 +201,7 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
                     @if p.real {
                         @let u = c.usage_of(g.vmid);
                         div class="card" {
-                            header { h2 { (tx("Kaynak ölçümü")) } span class="note" { @if u.since > 0 { (datetime(u.since)) (tx(" tarihinden beri")) } @else { (tx("henüz ölçüm yok")) } } }
+                            header { h2 { (tx("Kaynak ölçümü")) } (tip("Konuğun birikimli tüketimi: açık kalma süresi, işlemci, bellek, disk ve ağ. Faturalama için dışa aktarılır.")) span class="note" { @if u.since > 0 { (datetime(u.since)) (tx(" tarihinden beri")) } @else { (tx("henüz ölçüm yok")) } } }
                             dl class="kv" {
                                 dt { (tx("Açık kaldığı süre")) } dd class="mono" { (uptime(u.uptime_secs)) }
                                 dt { (tx("İşlemci")) } dd class="mono" { (format!("{:.2}", u.cpu_core_hours())) (tx(" çekirdek-saat")) }
@@ -213,13 +213,13 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
                         }
                     }
                     div class="card" {
-                        header { h2 { (tx("Bu konuğun etkinliği")) } div class="end" { a class="btn sm quiet" href={ "/tasks?q=" (g.vmid) } { (tx("Tümü")) } } }
+                        header { h2 { (tx("Bu konuğun etkinliği")) } (tip("Bu konukta yapılan son işlemler.")) div class="end" { a class="btn sm quiet" href={ "/tasks?q=" (g.vmid) } { (tx("Tümü")) } } }
                         (feed(&mine, (tx("Bu konuk için kayıtlı görev yok."))))
                     }
                 }
                 div class="stack" {
                     div class="card" {
-                        header { h2 { (tx("Konuk")) } span class="note mono" { (g.vmid) ".conf" } }
+                        header { h2 { (tx("Konuk")) } (tip("Konuğun türü, işletim sistemi, ağ adresi ve ayarlarının özeti.")) span class="note mono" { (g.vmid) ".conf" } }
                         dl class="kv" {
                             dt { (tx("Tür")) } dd { (tx(g.kind.long_label())) " (" (g.kind.backend()) ")" }
                             dt { (tx("İşletim sistemi")) } dd class="mono" { (g.os) }
@@ -307,7 +307,7 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
                         }
                     }
                     div class="card" {
-                        header { h2 { (tx("Koruma")) } }
+                        header { h2 { (tx("Koruma")) } (tip("Konuğun yedek ve anlık görüntü durumu.")) }
                         dl class="kv" {
                             dt { (tx("Son yedek")) } dd {
                                 @match last {

@@ -10,7 +10,7 @@ pub fn snapshots_tab(p: &Page, g: &Guest) -> Markup {
     let can_create = p.may_operate(g) && g.lock.is_none() && (g.status == GuestStatus::Stopped || live);
     html! {
         div class="card" {
-            header { h2 { (tx("Anlık görüntüler")) } span class="note mono" { (g.snapshots.len()) " / " (redox_core::MAX_SNAPSHOTS) } }
+            header { h2 { (tx("Anlık görüntüler")) } (tip("Diskin belirli bir andaki hali. Sorun çıkarsa o ana dönersiniz. Yedek değildir: aynı diskte durur.")) span class="note mono" { (g.snapshots.len()) " / " (redox_core::MAX_SNAPSHOTS) } }
             @if g.snapshots.is_empty() {
                 p class="empty" { (tx("Henüz anlık görüntü yok. Riskli bir değişiklikten önce alın; sorun çıkarsa diske o ana dönersiniz.")) }
             } @else {
@@ -154,7 +154,7 @@ pub fn backups_tab(p: &Page, g: &Guest) -> Markup {
             }
             div class="stack" {
                 div class="card" {
-                    header { h2 { (tx("Zamanlama")) } @if p.admin { div class="end" { a class="btn sm" href={ (base) "?tab=secenekler" } { (tx("Zamanlamayı değiştir")) } } } }
+                    header { h2 { (tx("Zamanlama")) } (tip("Bu konuğun otomatik yedeğinin saati ve kaç yedeğin saklanacağı.")) @if p.admin { div class="end" { a class="btn sm" href={ (base) "?tab=secenekler" } { (tx("Zamanlamayı değiştir")) } } } }
                     @match &g.backup_time {
                         Some(t) => dl class="kv" {
                             dt { (tx("Sıklık")) } dd { (tx("Otomatik yedek: her gün ")) b class="mono" { (t) } }
@@ -164,7 +164,7 @@ pub fn backups_tab(p: &Page, g: &Guest) -> Markup {
                     }
                 }
                 div class="card" {
-                    header { h2 { (tx("Dış kopya")) } }
+                    header { h2 { (tx("Dış kopya")) } (tip("Yedeklerin sunucu dışındaki kopyası: sunucunun diski bozulursa yedekler oradan geri gelir.")) }
                     @match p.offsite {
                         Some(target) => {
                             dl class="kv" {
@@ -178,7 +178,7 @@ pub fn backups_tab(p: &Page, g: &Guest) -> Markup {
                 }
                 @if incremental {
                     div class="card" {
-                        header { h2 { (tx("Depo kullanımı")) } }
+                        header { h2 { (tx("Depo kullanımı")) } (tip("Artımlı yedeklerin ortak parça deposunda kapladığı yer.")) }
                         dl class="kv" {
                             dt { (tx("Eklenen veri")) } dd class="mono" { (stored) " MB" }
                             dt { (tx("Tek tek dursaydı")) } dd class="mono" { (apart) " MB" }

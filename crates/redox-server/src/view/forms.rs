@@ -92,7 +92,7 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                 label for=(name) { (label) @if required { " " span class="req" aria-hidden="true" { "*" } } }
                 (control)
                 @if let Some(m) = e { span class="err" id={ (name) "-err" } { (m) } }
-                @else if !hint.is_empty() { span class="hint" { (hint) } }
+                @else if !hint.is_empty() { span class="hint" tabindex="0" role="note" { (hint) } }
             }
         }
     };
@@ -166,7 +166,7 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                         div class="field full" {
                             label for="ci_ssh_key" { (tx("SSH açık anahtarı")) }
                             textarea id="ci_ssh_key" name="ci_ssh_key" rows="3" spellcheck="false" autocomplete="off" { (f.ci_ssh_key) }
-                            span class="hint" { (tx("Tek satır: ssh-ed25519 AAAA… Bulut imajlarında parola ile giriş kapalıdır; anahtar vermezseniz giriş yapamazsınız.")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Tek satır: ssh-ed25519 AAAA… Bulut imajlarında parola ile giriş kapalıdır; anahtar vermezseniz giriş yapamazsınız.")) }
                         }
                     }
                 }
@@ -204,6 +204,7 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                         div class="field" {
                             span class="label" { (tx("Güvenlik yongası")) }
                             label class="check" { input type="checkbox" name="tpm" value="1" checked[f.tpm.is_some()]; (tx("Sanal TPM 2.0 ekle")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Sanal TPM 2.0. Windows 11 ve disk şifreleme (BitLocker) için gerekir.")) }
                         }
                     }
                 }
@@ -226,6 +227,7 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                     div class="field" {
                         span class="label" { (tx("Açılış")) }
                         label class="check" { input type="checkbox" name="onboot" value="1" checked[f.onboot.is_some()]; (tx("Düğüm açıldığında başlat")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Sunucu açıldığında konuk kendiliğinden başlatılır.")) }
                     }
                 }
             }

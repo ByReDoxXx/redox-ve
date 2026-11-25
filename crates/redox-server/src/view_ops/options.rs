@@ -10,12 +10,12 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
             fieldset disabled[off] {
                 legend { (tx("Genel")) }
                 div class="form" {
-                    div class="field" { label for="name" { (tx("Ad")) } input id="name" name="name" type="text" value=(f.name) required autocomplete="off"; }
-                    div class="field" { label for="os" { (tx("İşletim sistemi")) } input id="os" name="os" type="text" value=(f.os); }
+                    div class="field" { label for="name" { (tx("Ad")) } input id="name" name="name" type="text" value=(f.name) required autocomplete="off"; span class="hint" tabindex="0" role="note" { (tx("Konuğun adı: küçük harf, rakam ve tire.")) } }
+                    div class="field" { label for="os" { (tx("İşletim sistemi")) } input id="os" name="os" type="text" value=(f.os); span class="hint" tabindex="0" role="note" { (tx("Bilgi amaçlı etiket; konteynerde dağıtım şablonunu belirler.")) } }
                     div class="field" {
                         label for="tags" { (tx("Etiketler")) }
                         input id="tags" name="tags" type="text" value=(f.tags) autocomplete="off";
-                        span class="hint" { (tx("Virgülle ayırın; küçük harf, rakam ve tire. En fazla ")) (redox_core::MAX_TAGS) "." }
+                        span class="hint" tabindex="0" role="note" { (tx("Virgülle ayırın; küçük harf, rakam ve tire. En fazla ")) (redox_core::MAX_TAGS) "." }
                     }
                     div class="field" {
                         label for="pool" { (tx("Kaynak havuzu")) }
@@ -23,7 +23,7 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                             option value="" selected[f.pool.is_empty()] { (tx("Havuz yok")) }
                             @for pool in &p.cluster.pools { option value=(pool.name) selected[f.pool == pool.name] { (pool.name) } }
                         }
-                        span class="hint" { (tx("Havuzun kotası bu konuğun çekirdek, bellek ve disklerini de sayar. Havuzlar ")) a class="link" href="/pools" { (tx("Havuzlar")) } (tx(" sayfasından tanımlanır.")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Havuzun kotası bu konuğun çekirdek, bellek ve disklerini de sayar. Havuzlar ")) a class="link" href="/pools" { (tx("Havuzlar")) } (tx(" sayfasından tanımlanır.")) }
                     }
                 }
             }
@@ -33,22 +33,22 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                     div class="field" {
                         span class="label" { (tx("Açılış")) }
                         label class="check" { input type="checkbox" name="onboot" value="1" checked[f.onboot.is_some()]; (tx("Düğüm açıldığında başlat")) }
-                        span class="hint" { (tx("Sunucu yeniden açıldığında, kapalıysa başlatılır. Hizmetin yeniden başlaması konuklara dokunmaz.")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Sunucu yeniden açıldığında, kapalıysa başlatılır. Hizmetin yeniden başlaması konuklara dokunmaz.")) }
                     }
                     div class="field" {
                         span class="label" { (tx("Beklenmedik kapanma")) }
                         label class="check" { input type="checkbox" name="restart" value="1" checked[f.restart.is_some()]; (tx("Kendiliğinden kapanırsa yeniden başlat")) }
-                        span class="hint" { (tx("Konuk çökerse ya da içinden kapatılırsa yaklaşık 15 saniye içinde yeniden açılır (10 dakikada en çok ")) (crate::ha::MAX_RESTARTS) (tx(" kez). Kalıcı kapatmak için panelden kapatın.")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Konuk çökerse ya da içinden kapatılırsa yaklaşık 15 saniye içinde yeniden açılır (10 dakikada en çok ")) (crate::ha::MAX_RESTARTS) (tx(" kez). Kalıcı kapatmak için panelden kapatın.")) }
                     }
                     div class="field" {
                         label for="boot_order" { (tx("Başlatma sırası")) }
                         input id="boot_order" name="boot_order" type="text" inputmode="numeric" value=(f.boot_order);
-                        span class="hint" { (tx("1 ilk başlar. 0 sırasızdır: sıralılardan sonra, kimlik sırasıyla başlar. En çok ")) (redox_core::hw::MAX_BOOT_ORDER) "." }
+                        span class="hint" tabindex="0" role="note" { (tx("1 ilk başlar. 0 sırasızdır: sıralılardan sonra, kimlik sırasıyla başlar. En çok ")) (redox_core::hw::MAX_BOOT_ORDER) "." }
                     }
                     div class="field" {
                         label for="boot_delay" { (tx("Sonraki konuktan önce bekle (saniye)")) }
                         input id="boot_delay" name="boot_delay" type="text" inputmode="numeric" value=(f.boot_delay);
-                        span class="hint" { (tx("Örneğin veritabanı açıldıktan 30 saniye sonra uygulama sunucusu başlasın. En çok ")) (redox_core::hw::MAX_BOOT_DELAY) "." }
+                        span class="hint" tabindex="0" role="note" { (tx("Örneğin veritabanı açıldıktan 30 saniye sonra uygulama sunucusu başlasın. En çok ")) (redox_core::hw::MAX_BOOT_DELAY) "." }
                     }
                 }
             }
@@ -58,16 +58,17 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                     div class="field" {
                         label for="backup_time" { (tx("Her gün saat")) }
                         input id="backup_time" name="backup_time" type="time" value=(f.backup_time);
-                        span class="hint" { (tx("Sunucu saatiyle. Boş bırakırsanız otomatik yedek alınmaz.")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Sunucu saatiyle. Boş bırakırsanız otomatik yedek alınmaz.")) }
                     }
                     div class="field" {
                         label for="backup_keep" { (tx("Saklanacak otomatik yedek")) }
                         input id="backup_keep" name="backup_keep" type="text" inputmode="numeric" value=(f.backup_keep);
+                        span class="hint" tabindex="0" role="note" { (tx("Bu sayıdan fazla otomatik yedek olursa en eskisi silinir.")) }
                     }
                     div class="field" {
                         label for="rpo_hours" { (tx("Yedek yaşı hedefi (RPO, saat)")) }
                         input id="rpo_hours" name="rpo_hours" type="text" inputmode="numeric" value=(f.rpo_hours);
-                        span class="hint" { (tx("Son yedek bundan eskiyse konuk Yedekler sayfasında ve günlük raporda \"korumasız\" görünür. 0: sunucunun genel ayarı.")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Son yedek bundan eskiyse konuk Yedekler sayfasında ve günlük raporda \"korumasız\" görünür. 0: sunucunun genel ayarı.")) }
                     }
                     div class="field" {
                         label for="backup_weekly" { (tx("Ek olarak sakla: haftalık / aylık / yıllık")) }
@@ -76,30 +77,30 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                             input name="backup_monthly" type="text" inputmode="numeric" value=(f.backup_monthly) aria-label=(tx("Aylık yedek sayısı")) style="max-width:5rem";
                             input name="backup_yearly" type="text" inputmode="numeric" value=(f.backup_yearly) aria-label=(tx("Yıllık yedek sayısı")) style="max-width:5rem";
                         }
-                        span class="hint" { (tx("Son N yedeğe ek olarak, yedeği olan son N haftanın, ayın ve yılın en yeni otomatik yedeği saklanır. 0 kapalı.")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Son N yedeğe ek olarak, yedeği olan son N haftanın, ayın ve yılın en yeni otomatik yedeği saklanır. 0 kapalı.")) }
                     }
                     @if g.kind == GuestKind::Vm {
                         div class="field" {
                             label for="backup_pre" { (tx("Yedekten önce konukta çalıştır")) }
                             input id="backup_pre" name="backup_pre" type="text" value=(f.backup_pre) placeholder="/usr/local/bin/yedek-oncesi.sh" autocomplete="off" spellcheck="false";
-                            span class="hint" { (tx("Konuk çalışırken alınan yedekten hemen önce, konuk ajanıyla çalışır (ör. veritabanını tutarlı duruma getirmek için). Başarısız olursa yedek alınmaz.")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Konuk çalışırken alınan yedekten hemen önce, konuk ajanıyla çalışır (ör. veritabanını tutarlı duruma getirmek için). Başarısız olursa yedek alınmaz.")) }
                         }
                         div class="field" {
                             label for="backup_post" { (tx("Yedekten sonra konukta çalıştır")) }
                             input id="backup_post" name="backup_post" type="text" value=(f.backup_post) placeholder="/usr/local/bin/yedek-sonrasi.sh" autocomplete="off" spellcheck="false";
-                            span class="hint" { (tx("Disk görüntüsü alınır alınmaz çalışır. Mutlak program yolu ve argümanları yazın; kabuk kullanılmaz. Konukta qemu-guest-agent gerekir.")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Disk görüntüsü alınır alınmaz çalışır. Mutlak program yolu ve argümanları yazın; kabuk kullanılmaz. Konukta qemu-guest-agent gerekir.")) }
                         }
                         div class="field" {
                             label for="test_port" { (tx("Yedek sınamasında denetlenecek TCP kapısı")) }
                             input id="test_port" name="test_port" type="text" inputmode="numeric" value=(f.test_port);
-                            span class="hint" { (tx("Yedek açılarak sınanırken bu kapıdaki hizmetten yanıt beklenir (ör. 22, 80, 3306). 0: denetlenmez. Veri göndermeyen hizmetler için aşağıdaki komutu kullanın.")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Yedek açılarak sınanırken bu kapıdaki hizmetten yanıt beklenir (ör. 22, 80, 3306). 0: denetlenmez. Veri göndermeyen hizmetler için aşağıdaki komutu kullanın.")) }
                         }
                         div class="field" {
                             label for="test_cmd" { (tx("Yedek sınamasında konukta çalıştır")) }
                             input id="test_cmd" name="test_cmd" type="text" value=(f.test_cmd) placeholder="/usr/local/bin/saglik.sh" autocomplete="off" spellcheck="false";
-                            span class="hint" { (tx("Yedekten açılan geçici konukta konuk ajanıyla çalışır; 0 ile bitmezse sınama başarısız sayılır (ör. veritabanı tutarlılık denetimi).")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Yedekten açılan geçici konukta konuk ajanıyla çalışır; 0 ile bitmezse sınama başarısız sayılır (ör. veritabanı tutarlılık denetimi).")) }
                         }
-                        span class="hint" { (tx("Fazlası en eskiden başlayarak silinir. Elle aldıklarınıza dokunulmaz.")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Fazlası en eskiden başlayarak silinir. Elle aldıklarınıza dokunulmaz.")) }
                     }
                 }
             }
@@ -109,7 +110,7 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                     div class="field" {
                         span class="label" { (tx("Durum")) }
                         label class="check" { input type="checkbox" name="firewall" value="1" checked[f.firewall.is_some()]; (tx("Gelen trafiği kısıtla")) }
-                        span class="hint" {
+                        span class="hint" tabindex="0" role="note" {
                             (tx("Açıkken yalnızca aşağıdaki kurallara uyan gelen bağlantılar geçer; konuğun başlattığı bağlantılar serbesttir. "))
                             @if g.kind == GuestKind::Vm { (tx("Yalnızca köprüye bağlı sanal makinede etkilidir; NAT'ta dışarıdan zaten yalnızca yönlendirilen kapılara erişilir.")) }
                         }
@@ -118,13 +119,13 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                         div class="field" {
                             span class="label" { (tx("Ağ kartı koruması")) }
                             label class="check" { input type="checkbox" name="nic_guard" value="1" checked[f.nic_guard.is_some()]; (tx("Sahte MAC, DHCP sunucusu ve yönlendirici duyurusunu engelle")) }
-                            span class="hint" { (tx("Konuk yalnızca kendi MAC adresiyle konuşabilir; ağa DHCP yanıtı ya da IPv6 yönlendirici duyurusu (RA) gönderemez. Köprüye bağlı kartlarda etkilidir; çalışırken de açılıp kapanır (en geç 15 saniyede uygulanır).")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Konuk yalnızca kendi MAC adresiyle konuşabilir; ağa DHCP yanıtı ya da IPv6 yönlendirici duyurusu (RA) gönderemez. Köprüye bağlı kartlarda etkilidir; çalışırken de açılıp kapanır (en geç 15 saniyede uygulanır).")) }
                         }
                     }
                     div class="field" {
                         label for="fw_rules" { (tx("İzin verilen gelen trafik")) }
                         textarea id="fw_rules" name="fw_rules" rows="4" spellcheck="false" autocomplete="off" placeholder="tcp/22 from 10.0.0.0/8" { (f.fw_rules) }
-                        span class="hint" { (tx("Satır başına bir kural: tcp/22, tcp/80-443, udp/53 from 192.168.1.0/24, icmp. En fazla ")) (redox_core::hw::MAX_FW_RULES) "." }
+                        span class="hint" tabindex="0" role="note" { (tx("Satır başına bir kural: tcp/22, tcp/80-443, udp/53 from 192.168.1.0/24, icmp. En fazla ")) (redox_core::hw::MAX_FW_RULES) "." }
                     }
                 }
             }
@@ -154,7 +155,7 @@ pub(super) fn schedules_card(p: &Page, g: &Guest) -> Markup {
     let full = g.hw.schedules.len() >= redox_core::hw::MAX_SCHEDULES;
     html! {
         div class="card" style="margin-top:var(--s4)" {
-            header { h2 { (tx("Zamanlanmış güç işlemleri")) } span class="note" { "sunucu saatiyle · " (g.hw.schedules.len()) " / " (redox_core::hw::MAX_SCHEDULES) } }
+            header { h2 { (tx("Zamanlanmış güç işlemleri")) } (tip("Konuğu belirli gün ve saatlerde başlatır, kapatır ya da yeniden başlatır.")) span class="note" { "sunucu saatiyle · " (g.hw.schedules.len()) " / " (redox_core::hw::MAX_SCHEDULES) } }
             @if g.hw.schedules.is_empty() {
                 p class="empty" { (tx("Zamanlanmış işlem yok. Konuğu belirli gün ve saatlerde başlatmak, kapatmak ya da yeniden başlatmak için ekleyin.")) }
             } @else {
@@ -198,7 +199,7 @@ pub(super) fn storage_card(p: &Page, g: &Guest, stopped: bool) -> Markup {
     let size = g.total_disk_gb();
     html! {
         div class="card" {
-            header { h2 { (tx("Depolama alanı")) } span class="note" { (tx("şimdi: ")) span class="mono" { (g.storage) } " · " (size) " GB" } }
+            header { h2 { (tx("Depolama alanı")) } (tip("Konuğun disklerinin durduğu alan.")) span class="note" { (tx("şimdi: ")) span class="mono" { (g.storage) } " · " (size) " GB" } }
             div class="op" {
                 div {
                     h3 { (tx("Diskleri başka alana taşı")) }

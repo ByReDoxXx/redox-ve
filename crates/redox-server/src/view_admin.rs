@@ -6,7 +6,7 @@ use crate::i18n::tx;
 
 use crate::audit::AuditEntry;
 use crate::auth::{Role, User, MIN_PASSWORD_CHARS};
-use crate::view::{datetime, icon, layout, page_head, Page};
+use crate::view::{tip, datetime, icon, layout, page_head, Page};
 
 fn role_label(r: Role) -> &'static str {
     match r {
@@ -33,7 +33,7 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
         (page_head(html! { (tx("Kullanıcılar")) }, html! {}, html! {}, "user list", &[]))
         div class="stack" {
             div class="card" {
-                header { h2 { (tx("Hesaplar")) } span class="note mono" { (users.len()) (tx(" kullanıcı")) } }
+                header { h2 { (tx("Hesaplar")) } (tip("Panele girebilen kullanıcılar, rolleri ve yetki kapsamları.")) span class="note mono" { (users.len()) (tx(" kullanıcı")) } }
                 div class="tw" { table {
                     thead { tr { th { (tx("Ad")) } th { (tx("Rol")) } th { (tx("İki adımlı doğrulama")) } th { (tx("API token'ları")) } th { span class="sr" { (tx("İşlem")) } } } }
                     tbody { @for u in users { tr {
@@ -77,19 +77,19 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
             }
             div class="cols even" {
                 form class="card" method="post" action="/users" {
-                    header { h2 { (tx("Kullanıcı ekle")) } }
+                    header { h2 { (tx("Kullanıcı ekle")) } (tip("Yeni bir hesap açar. Yönetici her şeyi, operatör kapsamındaki konuklarda güç ve yedek işlemlerini yapar; izleyici yalnızca okur.")) }
                     div class="form" {
                         div class="field" { label for="new-name" { (tx("Ad")) } input id="new-name" name="name" type="text" required autocomplete="off" autocapitalize="none";
-                            span class="hint" { (tx("Küçük harf, rakam, nokta, tire, alt çizgi.")) } }
+                            span class="hint" tabindex="0" role="note" { (tx("Küçük harf, rakam, nokta, tire, alt çizgi.")) } }
                         div class="field" { label for="new-role" { (tx("Rol")) } select id="new-role" name="role" { option value="viewer" { (tx("İzleyici (salt okunur)")) } option value="operator" { (tx("Operatör (güç, konsol, yedek)")) } option value="admin" { (tx("Yönetici")) } } }
                         div class="field full" { label for="new-pw" { (tx("Parola")) } input id="new-pw" name="password" type="password" required autocomplete="new-password" minlength=(MIN_PASSWORD_CHARS);
-                            span class="hint" { (tx("En az ")) (MIN_PASSWORD_CHARS) (tx(" karakter. Kullanıcı ilk girişte Hesabım sayfasından değiştirebilir.")) } }
+                            span class="hint" tabindex="0" role="note" { (tx("En az ")) (MIN_PASSWORD_CHARS) (tx(" karakter. Kullanıcı ilk girişte Hesabım sayfasından değiştirebilir.")) } }
                         div class="btns field full" { button class="btn primary" type="submit" { (icon("plus")) (tx("Ekle")) } }
                     }
                 }
                 div class="stack" {
                     form class="card" method="post" action="/users/-/password" {
-                        header { h2 { (tx("Parola sıfırla")) } }
+                        header { h2 { (tx("Parola sıfırla")) } (tip("Bir kullanıcının parolasını değiştirir; açık oturumları kapanır.")) }
                         div class="form" {
                             div class="field" { label for="pw-user" { (tx("Kullanıcı")) } select id="pw-user" name="name" { @for u in users { option value=(u.name) { (u.name) } } } }
                             div class="field" { label for="pw-new" { (tx("Yeni parola")) } input id="pw-new" name="password" type="password" required autocomplete="new-password" minlength=(MIN_PASSWORD_CHARS); }
@@ -98,10 +98,10 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
                         footer { (tx("Kullanıcının açık oturumları hemen kapanır.")) }
                     }
                     form class="card" method="post" action="/users/-/tokens" {
-                        header { h2 { (tx("API token'ı oluştur")) } }
+                        header { h2 { (tx("API token'ı oluştur")) } (tip("Komut satırının ve betiklerin kullanıcı adına bağlanmasını sağlayan anahtar. Değeri yalnızca bir kez gösterilir.")) }
                         div class="form" {
                             div class="field" { label for="tk-user" { (tx("Kullanıcı")) } select id="tk-user" name="name" { @for u in users { option value=(u.name) { (u.name) } } } }
-                            div class="field" { label for="tk-label" { (tx("Etiket")) } input id="tk-label" name="label" type="text" required autocomplete="off" placeholder=(tx("örn. dizustu")); }
+                            div class="field" { label for="tk-label" { (tx("Etiket")) } input id="tk-label" name="label" type="text" required autocomplete="off" placeholder=(tx("örn. dizustu")); span class="hint" tabindex="0" role="note" { (tx("Token'ı tanımanız için bir ad (ör. betik, izleme).")) } }
                             div class="btns field full" { button class="btn" type="submit" { (tx("Oluştur")) } }
                         }
                     }
@@ -140,11 +140,11 @@ pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>) -> String 
         (page_head(html! { (tx("Hesabım")) }, html! { span class="pill idle" { (role_label(user.role)) } }, html! {}, "", &[]))
         div class="stack" {
             form class="card" method="post" action="/account/password" {
-                header { h2 { (tx("Parola değiştir")) } }
+                header { h2 { (tx("Parola değiştir")) } (tip("Kendi parolanızı değiştirir; bütün oturumlarınız kapanır.")) }
                 div class="form" {
                     div class="field" { label for="current" { (tx("Şimdiki parola")) } input id="current" name="current" type="password" required autocomplete="current-password"; }
                     div class="field" { label for="password" { (tx("Yeni parola")) } input id="password" name="password" type="password" required autocomplete="new-password" minlength=(MIN_PASSWORD_CHARS);
-                        span class="hint" { (tx("En az ")) (MIN_PASSWORD_CHARS) " karakter." } }
+                        span class="hint" tabindex="0" role="note" { (tx("En az ")) (MIN_PASSWORD_CHARS) " karakter." } }
                     div class="btns field full" { button class="btn primary" type="submit" { (tx("Değiştir")) } }
                 }
                 footer { (tx("Değişiklikten sonra bütün oturumlarınız kapanır ve yeniden giriş yaparsınız.")) }
@@ -180,7 +180,7 @@ pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>) -> String 
                 }
             }
             div class="card" {
-                header { h2 { (tx("API token'larım")) } }
+                header { h2 { (tx("API token'larım")) } (tip("Adınıza bağlanan komut satırı ve betikler için anahtarlar.")) }
                 div class="body" {
                     div class="tokens" { (token_list("/account", user)) }
                     form class="inline flat" method="post" action="/account/tokens" {

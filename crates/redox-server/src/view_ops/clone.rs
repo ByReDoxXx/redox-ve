@@ -13,7 +13,7 @@ pub fn clone_tab(p: &Page, g: &Guest) -> Markup {
                 div class="notice" role="status" { (icon("alert")) span { (tx("Klonlamak için önce konteyneri kapatın.")) } }
             }
             div class="card" {
-                header { h2 { (tx("Klonla")) } }
+                header { h2 { (tx("Klonla")) } (tip("Konuğun bağımsız bir kopyasını yeni bir kimlikle oluşturur.")) }
                 div class="op" {
                     div {
                         h3 { (tx("Bu konteynerin kopyası")) }
@@ -34,7 +34,7 @@ pub fn clone_tab(p: &Page, g: &Guest) -> Markup {
         }
         div class="stack" {
             div class="card" {
-                header { h2 { (tx("Klonla")) } }
+                header { h2 { (tx("Klonla")) } (tip("Konuğun bağımsız bir kopyasını yeni bir kimlikle oluşturur.")) }
                 div class="op" {
                     div {
                         h3 { @if g.hw.template { (tx("Bu şablondan yeni konuk")) } @else { (tx("Bu konuğun kopyası")) } }
@@ -53,7 +53,7 @@ pub fn clone_tab(p: &Page, g: &Guest) -> Markup {
                 }
             }
             div class="card" {
-                header { h2 { (tx("Şablon")) } }
+                header { h2 { (tx("Şablon")) } (tip("Şablon başlatılamaz; ondan saniyeler içinde bağlı klonlar üretilir.")) }
                 div class="op" {
                     div {
                         @if g.hw.template {
@@ -89,7 +89,7 @@ pub fn clone_tab(p: &Page, g: &Guest) -> Markup {
             }
             @if let Some(backup) = &g.hw.instant {
                 div class="card" {
-                    header { h2 { (tx("Yedeğin üzerinde çalışıyor")) } span class="note" { (tx("anında kurtarma · ")) span class="mono" { (backup) } } }
+                    header { h2 { (tx("Yedeğin üzerinde çalışıyor")) } (tip("Bu konuk anında kurtarmayla bir yedeğin üzerinde açıldı; ayırınca bağımsız olur.")) span class="note" { (tx("anında kurtarma · ")) span class="mono" { (backup) } } }
                     div class="op" {
                         div {
                             h3 { (tx("Yedekten ayır")) }
@@ -104,7 +104,7 @@ pub fn clone_tab(p: &Page, g: &Guest) -> Markup {
             }
             (storage_card(p, g, stopped))
             div class="card" {
-                header { h2 { (tx("Dışa aktar ve taşı")) } }
+                header { h2 { (tx("Dışa aktar ve taşı")) } (tip("Konuğu OVA dosyası olarak indirir, disklerini başka alana ya da konuğu başka sunucuya taşır.")) }
                 @if p.real {
                     div class="op" {
                         div {

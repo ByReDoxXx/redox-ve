@@ -41,7 +41,7 @@ pub fn backups(p: &Page) -> String {
         (archive_card(p))
         (jobs_card(p))
         div class="card" style="margin-top:var(--s4)" {
-            header { h2 { (tx("Yedekler")) } }
+            header { h2 { (tx("Yedekler")) } (tip("Bütün konukların yedekleri. Yedek, konuğun disklerinin sunucudaki yedek dizinine alınmış kopyasıdır.")) }
             @if all.is_empty() {
                 p class="empty" { (tx("Henüz yedek yok. Yedek, bir konuğun sayfasındaki Yedekler sekmesinden ya da zamanlamayla alınır.")) }
             } @else {
@@ -144,7 +144,7 @@ pub(super) fn archive_card(p: &Page) -> Markup {
     html! {
         @if !list.is_empty() {
             div class="card" style="margin-bottom:var(--s4)" {
-                header { h2 { (tx("Arşiv")) } span class="note" { (list.len()) (tx(" yedek yalnızca kopya hedefinde duruyor")) } }
+                header { h2 { (tx("Arşiv")) } (tip("Yerelde silinmiş ama saklama süresi olan kopya hedefinde duran yedekler. Geri getirilip geri yüklenebilirler.")) span class="note" { (list.len()) (tx(" yedek yalnızca kopya hedefinde duruyor")) } }
                 div class="tw" { table {
                     thead { tr { th { (tx("Yedek")) } th { (tx("Konuk")) } th { (tx("Alındığı an")) } th class="num" { (tx("Boyut")) } th { span class="sr" { (tx("İşlem")) } } } }
                     tbody { @for b in list { tr {
@@ -168,7 +168,7 @@ pub(super) fn unprotected_card(p: &Page) -> Markup {
     html! {
         @if !list.is_empty() {
             div class="card" style="margin-bottom:var(--s4)" {
-                header { h2 { (tx("Korumasız konuklar")) } span class="pill warn" { (icon("alert")) (list.len()) " konuk" } span class="note" { @if p.backup_age > 0 { (p.backup_age) (tx(" gündür ya da kendi hedefinden uzun süredir yedeği yok")) } @else { (tx("yedek yaşı hedefini kaçıranlar")) } } }
+                header { h2 { (tx("Korumasız konuklar")) } (tip("Son yedeği belirlenen süreden eski olan ya da hiç yedeği olmayan konuklar.")) span class="pill warn" { (icon("alert")) (list.len()) " konuk" } span class="note" { @if p.backup_age > 0 { (p.backup_age) (tx(" gündür ya da kendi hedefinden uzun süredir yedeği yok")) } @else { (tx("yedek yaşı hedefini kaçıranlar")) } } }
                 div class="tw" { table {
                     thead { tr { th { (tx("Konuk")) } th { (tx("Son yedek")) } th { (tx("Zamanlama")) } } }
                     tbody { @for (vmid, name, last) in &list {
@@ -200,7 +200,7 @@ pub(super) fn jobs_card(p: &Page) -> Markup {
     let full = c.jobs.len() >= redox_core::MAX_JOBS;
     html! {
         div class="card" {
-            header { h2 { (tx("Yedek işleri")) } span class="note" { "sunucu saatiyle · " (c.jobs.len()) " / " (redox_core::MAX_JOBS) } }
+            header { h2 { (tx("Yedek işleri")) } (tip("Bir etiketteki (ya da bütün) konukları belirlenen gün ve saatte sırayla yedekleyen zamanlamalar.")) span class="note" { "sunucu saatiyle · " (c.jobs.len()) " / " (redox_core::MAX_JOBS) } }
             @if c.jobs.is_empty() {
                 p class="empty" { (tx("Yedek işi yok. Bir iş, seçtiğiniz etiketteki (ya da bütün) konukları belirlediğiniz gün ve saatte sırayla yedekler.")) }
             } @else {
