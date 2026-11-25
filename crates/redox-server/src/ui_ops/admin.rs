@@ -1,0 +1,61 @@
+//! Kaynak havuzları ve dört göz onayları.
+
+use super::*;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct PoolForm {
+    name: String,
+    cores: String,
+    memory_mb: String,
+    disk_gb: String,
+    guests: String,
+}
+
+/// Havuzlar sayfasındaki form: ekler ya da aynı adlı havuzun kotalarını günceller. Boş alan sınırsızdır.
+pub async fn pool_save(State(st): State<AppState>, Form(f): Form<PoolForm>) -> Redirect {
+    let number = |raw: &str, label: &str| -> Result<u64, String> {
+        match raw.trim() {
+            "" => Ok(0),
+            text => text.parse().map_err(|_| format!("{label} bir tam sayı olmalı.")),
+        }
+    };
+    let parsed = (|| {
+        Ok::<_, String>(redox_core::Pool {
+            name: f.name.trim().to_string(),
+            cores: number(&f.cores, "Çekirdek kotası")?.min(u32::MAX as u64) as u32,
+            memory_mb: number(&f.memory_mb, "Bellek kotası")?,
+            disk_gb: number(&f.disk_gb, "Disk kotası")?,
+            guests: number(&f.guests, "Konuk sayısı")?.min(u32::MAX as u64) as u32,
+        })
+    })();
+    let pool = match parsed {
+        Ok(pool) => pool,
+        Err(message) => return flash("/pools", "error", &message),
+    };
+    let name = pool.name.clone();
+    match st.pool_put(pool) {
+        Ok(()) => flash("/pools", "notice", &format!("{name} havuzu kaydedildi.")),
+        Err(e) => failed("/pools", &e),
+    }
+}
+
+pub async fn pool_delete(State(st): State<AppState>, Path(name): Path<String>) -> Redirect {
+    match st.pool_remove(&name) {
+        Ok(()) => flash("/pools", "notice", &format!("{name} havuzu silindi.")),
+        Err(e) => failed("/pools", &e),
+    }
+}
+
+/// Dört göz ilkesi: bekleyen isteği onaylar ya da reddeder (`op`: `approve` / `reject`).
+pub async fn approval_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((id, op)): Path<(u64, String)>) -> Redirect {
+    let result = match op.as_str() {
+        "approve" => st.approve(id, &me.user).map(|done| capitalize(&done)),
+        "reject" => st.reject(id, &me.user).map(|()| format!("İstek #{id} reddedildi.")),
+        _ => return flash("/", "error", &format!("Bilinmeyen işlem: {op}")),
+    };
+    match result {
+        Ok(text) => flash("/", "notice", &text),
+        Err(e) => failed("/", &e),
+    }
+}
