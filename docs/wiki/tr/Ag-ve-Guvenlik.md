@@ -25,7 +25,8 @@ redox net vxlan vmbr100 100 10.0.0.2 10.0.0.1,10.0.0.3     # 2. sunucuda
 
 Çıktıdaki `ip` komutlarını çalıştırdıktan sonra konuklarda köprü olarak `vmbr100` seçilir. Tünel 50 bayt yer kaplar:
 konuklarda MTU 1450 kullanın ya da sunucular arası ağda MTU'yu yükseltin. Komutlar yeniden başlatmada kalıcı
-değildir; kalıcı olması için bir systemd birimine ya da ağ yapılandırmanıza ekleyin. Tünel şifrelenmez: güvenilmeyen
+değildir; kalıcı olması için aynı komutun sonuna `--unit` yazın: çıktı, her açılışta tüneli kuran hazır bir systemd
+birimidir (`/etc/systemd/system/redox-vxlan-100.service` olarak kaydedip `systemctl enable --now` ile açın). Tünel şifrelenmez: güvenilmeyen
 ağ üzerinden geçiyorsa WireGuard gibi şifreli bir bağlantının içinden geçirin.
 
 **Sınandı:** üretilen komutlar gerçek `iproute2` ile iki yalıtılmış ağ alanı arasında çalıştırıldı ve tünelden

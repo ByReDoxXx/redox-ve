@@ -24,8 +24,9 @@ redox net vxlan vmbr100 100 10.0.0.2 10.0.0.1,10.0.0.3     # on server 2
 ```
 
 After running the printed `ip` commands, pick `vmbr100` as the bridge in guests. The tunnel takes 50 bytes: use MTU
-1450 in guests or raise the MTU between the servers. The commands do not survive a reboot; add them to a systemd unit
-or your network configuration. The tunnel is not encrypted: over an untrusted network, run it inside an encrypted
+1450 in guests or raise the MTU between the servers. The commands do not survive a reboot; to make them
+permanent add `--unit` to the same command: the output is a ready systemd unit that builds the tunnel at every boot
+(save it as `/etc/systemd/system/redox-vxlan-100.service` and turn it on with `systemctl enable --now`). The tunnel is not encrypted: over an untrusted network, run it inside an encrypted
 link such as WireGuard.
 
 **Tested:** the generated commands were run with real `iproute2` between two isolated network namespaces and ping

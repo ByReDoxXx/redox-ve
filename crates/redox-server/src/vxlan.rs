@@ -8,8 +8,8 @@ use std::net::IpAddr;
 
 pub const PORT: u16 = 4789;
 
-/// `peers`: virgülle ayrılmış eş sunucu adresleri.
-pub fn plan(bridge: &str, vni: &str, local: &str, peers: &str) -> Result<String, String> {
+/// Kurulum komutları: (VNI, eş sayısı, komutlar).
+fn commands(bridge: &str, vni: &str, local: &str, peers: &str) -> Result<(u32, usize, Vec<String>), String> {
     if !redox_core::valid_bridge(bridge) || bridge == redox_core::NAT || bridge.len() > 15 {
         return Err(format!("geçersiz köprü adı \"{bridge}\""));
     }
@@ -24,16 +24,44 @@ pub fn plan(bridge: &str, vni: &str, local: &str, peers: &str) -> Result<String,
         return Err("eş adresleri yerel adresten farklı ve aynı türde (IPv4 ya da IPv6) olmalı".to_string());
     }
     let device = format!("vx{vni}");
-    let mut out = vec![
-        format!("# VXLAN {vni}: {bridge} köprüsünü {} eş sunucuyla birleştirir. Bu sunucuda root olarak çalıştırın.", peers.len()),
-        "# Tünel 50 bayt yer kaplar: konuklarda MTU 1450 kullanın ya da sunucular arası ağda MTU'yu 1550 yapın.".to_string(),
-        format!("ip link add {device} type vxlan id {vni} local {local} dstport {PORT}"),
-    ];
+    let mut out = vec![format!("ip link add {device} type vxlan id {vni} local {local} dstport {PORT}")];
     out.extend(peers.iter().map(|peer| format!("bridge fdb append 00:00:00:00:00:00 dev {device} dst {peer}")));
     out.push(format!("ip link show {bridge} >/dev/null 2>&1 || ip link add {bridge} type bridge"));
     out.push(format!("ip link set {device} master {bridge}"));
     out.push(format!("ip link set {device} up"));
     out.push(format!("ip link set {bridge} up"));
+    Ok((vni, peers.len(), out))
+}
+
+const MTU_NOTE: &str = "# Tünel 50 bayt yer kaplar: konuklarda MTU 1450 kullanın ya da sunucular arası ağda MTU'yu 1550 yapın.";
+
+/// Elle çalıştırılacak komutlar. `peers`: virgülle ayrılmış eş sunucu adresleri.
+pub fn plan(bridge: &str, vni: &str, local: &str, peers: &str) -> Result<String, String> {
+    let (vni, count, commands) = commands(bridge, vni, local, peers)?;
+    let mut out = vec![format!("# VXLAN {vni}: {bridge} köprüsünü {count} eş sunucuyla birleştirir. Bu sunucuda root olarak çalıştırın."), MTU_NOTE.to_string()];
+    out.extend(commands);
+    Ok(out.join("\n") + "\n")
+}
+
+/// Aynı kurulumu her açılışta yapan systemd birimi (`/etc/systemd/system/redox-vxlan-<vni>.service`).
+pub fn unit(bridge: &str, vni: &str, local: &str, peers: &str) -> Result<String, String> {
+    let (vni, _, commands) = commands(bridge, vni, local, peers)?;
+    let mut out = vec![
+        format!("# /etc/systemd/system/redox-vxlan-{vni}.service dosyasına kaydedin; sonra: systemctl daemon-reload && systemctl enable --now redox-vxlan-{vni}"),
+        MTU_NOTE.to_string(),
+        "[Unit]".to_string(),
+        format!("Description=RedoX VE VXLAN {vni} ({bridge})"),
+        "After=network-online.target".to_string(),
+        "Wants=network-online.target".to_string(),
+        String::new(),
+        "[Service]".to_string(),
+        "Type=oneshot".to_string(),
+        "RemainAfterExit=yes".to_string(),
+    ];
+    // Komutlarda tırnak ve yüzde imi yoktur (girdiler doğrulanmıştır); kabuk yalnızca yol araması ve `||` içindir.
+    out.extend(commands.iter().map(|command| format!("ExecStart=/bin/sh -c \"{command}\"")));
+    out.push(format!("ExecStop=/bin/sh -c \"ip link del vx{vni}\""));
+    out.extend([String::new(), "[Install]".to_string(), "WantedBy=multi-user.target".to_string()]);
     Ok(out.join("\n") + "\n")
 }
 
@@ -58,6 +86,20 @@ mod tests {
             ]
         );
         assert!(plan("vmbr1", "5", "fd00::1", "fd00::2").unwrap().contains("local fd00::1"));
+        let unit = unit("vmbr100", "100", "10.0.0.1", "10.0.0.2").unwrap();
+        for needle in [
+            "redox-vxlan-100.service",
+            "[Unit]\nDescription=RedoX VE VXLAN 100 (vmbr100)",
+            "Type=oneshot\nRemainAfterExit=yes",
+            "ExecStart=/bin/sh -c \"ip link add vx100 type vxlan id 100 local 10.0.0.1 dstport 4789\"",
+            "ExecStart=/bin/sh -c \"ip link show vmbr100 >/dev/null 2>&1 || ip link add vmbr100 type bridge\"",
+            "ExecStop=/bin/sh -c \"ip link del vx100\"",
+            "[Install]\nWantedBy=multi-user.target",
+        ] {
+            assert!(unit.contains(needle), "{needle}\n{unit}");
+        }
+        assert_eq!(unit.matches("ExecStart=").count(), 6);
+        assert!(super::unit("nat", "1", "10.0.0.1", "10.0.0.2").is_err());
         for (bridge, vni, local, peers, needle) in [
             ("vmbr1; rm -rf /", "5", "10.0.0.1", "10.0.0.2", "köprü adı"),
             ("nat", "5", "10.0.0.1", "10.0.0.2", "köprü adı"),

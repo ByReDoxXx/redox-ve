@@ -637,7 +637,8 @@ fn main() -> ExitCode {
         Some("user" | "token") => manage_users(&args),
         Some("net") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
             ["net", "vxlan", bridge, vni, local, peers] => redox_server::vxlan::plan(bridge, vni, local, peers).map(|script| print!("{}", redox_server::i18n::cli_text(&script))),
-            _ => Err("kullanım: redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,<eş-adres>...]".to_string()),
+            ["net", "vxlan", bridge, vni, local, peers, "--unit"] => redox_server::vxlan::unit(bridge, vni, local, peers).map(|unit| print!("{}", redox_server::i18n::cli_text(&unit))),
+            _ => Err("kullanım: redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,<eş-adres>...] [--unit]".to_string()),
         },
         Some(_) => cli::run(&args).map(|out| {
             use std::io::Write;

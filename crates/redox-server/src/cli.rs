@@ -67,7 +67,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
   redox replica list | add <eş> <kimlik> [dakika] | run <eş> <kimlik> | remove <eş> <kimlik>
   redox replica failover <eş> <kimlik> <dakika|off>    # kaynak ölünce yedek kopyayı hakem onayıyla başlat
-  redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,...]   # sunucular arası ortak ağın kurulum komutlarını yazar
+  redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,...] [--unit]   # sunucular arası ortak ağın kurulum komutlarını (ya da kalıcı systemd birimini) yazar
         (eş sunucudaki sanal makinenin buradaki yedek kopyasını düzenli tazeler; varsayılan 60 dakikada bir)
   redox maintenance status | on [--drain] | off   (bakım kipi: konuk başlatılmaz, zamanlanmış işler durur;
         --drain çalışan konukları sırayla kapatır, off onları yeniden başlatır)
