@@ -19,8 +19,23 @@ Hardware settings (the *Hardware* tab) change while the guest is **stopped**, ex
 | Firmware | BIOS, UEFI, UEFI + secure boot. Windows 11 needs UEFI + secure boot + TPM. |
 | Virtual TPM 2.0 | Needs `swtpm`. Its state is included in backups. |
 | Passthrough | USB (`lsusb` ID) and PCI (`lspci -D` address). **Not tried with real hardware.** |
+| Graphics card sharing (vGPU) | Enter a mediated device ID (mdev UUID) in the PCI field instead of an address; one card is split between several guests. You create the mediated device on the server (the card and its driver must support vGPU). **Not tried with real hardware.** |
 | Shared folders | virtio-9p. In the guest: `mount -t 9p -o trans=virtio,version=9p2000.L name /mnt/name` |
 | cloud-init | User, SSH key, static address, gateway, name servers. |
+
+## Storage on ZFS and LVM
+
+A storage is a directory (`--storage name=/path`); disks live there as qcow2 image files. The directory may be a ZFS
+dataset, a file system on an LVM (or LVM-thin) volume, or an NFS share: RedoX detects this when the server starts
+and shows it in the **Type** column of the *Storages* table. ZFS features such as compression, checksums and
+snapshots come from the file system itself.
+
+```
+zfs create -o mountpoint=/srv/fast tank/redox     # or: lvcreate -V 500G -T vg0/pool -n redox && mkfs.ext4 …
+redox serve … --storage fast=/srv/fast
+```
+
+There is no built-in pool management that puts every disk on its own ZFS volume (zvol) or logical volume.
 
 ## Moving between storages
 

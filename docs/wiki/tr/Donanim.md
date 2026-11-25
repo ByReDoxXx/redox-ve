@@ -19,8 +19,23 @@ Donanım ayarları (*Donanım* sekmesi) konuk **kapalıyken** değişir; aşağ�
 | Donanım yazılımı | BIOS, UEFI, UEFI + güvenli önyükleme. Windows 11 için UEFI + güvenli önyükleme + TPM. |
 | Sanal TPM 2.0 | `swtpm` gerekir. Durumu yedeklere dahildir. |
 | Aygıt aktarımı | USB (`lsusb` kimliği) ve PCI (`lspci -D` adresi). **Gerçek donanımla denenmedi.** |
+| Ekran kartı paylaşımı (vGPU) | PCI alanına adres yerine aracılı aygıtın kimliği (mdev UUID) yazılır; aynı kart birkaç konuğa bölünür. Aracılı aygıtı sunucuda siz oluşturursunuz (kart ve sürücüsü vGPU desteklemelidir). **Gerçek donanımla denenmedi.** |
 | Paylaşılan klasörler | virtio-9p. Konukta: `mount -t 9p -o trans=virtio,version=9p2000.L ad /mnt/ad` |
 | cloud-init | Kullanıcı, SSH anahtarı, sabit adres, ağ geçidi, ad sunucuları. |
+
+## ZFS ve LVM üzerinde depolama
+
+Depolama alanı bir dizindir (`--storage ad=/dizin`); diskler orada qcow2 imaj dosyası olarak durur. Dizin bir ZFS
+veri kümesi, bir LVM (ya da LVM-thin) biriminin üzerindeki dosya sistemi ya da bir NFS paylaşımı olabilir: RedoX bunu
+sunucu başlarken tanır ve *Depolama alanları* tablosundaki **Tür** sütununda gösterir. Sıkıştırma, sağlama toplamı
+ve anlık görüntü gibi ZFS özellikleri dosya sisteminin kendisinden gelir.
+
+```
+zfs create -o mountpoint=/srv/hizli tank/redox     # ya da: lvcreate -V 500G -T vg0/havuz -n redox && mkfs.ext4 …
+redox serve … --storage hizli=/srv/hizli
+```
+
+Her diski ayrı bir ZFS birimine (zvol) ya da mantıksal birime koyan yerleşik havuz yönetimi yoktur.
 
 ## Depolama alanları arasında taşıma
 

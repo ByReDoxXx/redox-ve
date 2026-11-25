@@ -12,6 +12,26 @@
   `/etc/qemu/bridge.conf` (INSTALL.md section 9).
 - **VLAN:** a tag on a bridged card (`vmbr1:20`). The bridge needs VLAN filtering and the service CAP_NET_ADMIN.
 
+## A network shared between servers (VXLAN)
+
+RedoX VE does not create network devices; guests attach to bridges you set up. To put guests on several servers in
+the same network you can join the bridges with a VXLAN tunnel. RedoX writes the commands and you run them as root on
+each server:
+
+```
+redox net vxlan vmbr100 100 10.0.0.1 10.0.0.2,10.0.0.3     # on server 1 (local address, then the peers)
+redox net vxlan vmbr100 100 10.0.0.2 10.0.0.1,10.0.0.3     # on server 2
+```
+
+After running the printed `ip` commands, pick `vmbr100` as the bridge in guests. The tunnel takes 50 bytes: use MTU
+1450 in guests or raise the MTU between the servers. The commands do not survive a reboot; add them to a systemd unit
+or your network configuration. The tunnel is not encrypted: over an untrusted network, run it inside an encrypted
+link such as WireGuard.
+
+**Tested:** the generated commands were run with real `iproute2` between two isolated network namespaces and ping
+passed through the tunnel. Not tried on two physical servers or with running guests. There is no centrally managed
+SDN (zones, virtual network definitions, automatic rollout).
+
 ## Guest firewall
 
 Start the service with `--firewall` (nftables). With **Restrict incoming traffic** on in the guest's *Options* tab only

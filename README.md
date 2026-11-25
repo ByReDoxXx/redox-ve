@@ -61,6 +61,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Disk usage inside guests (through the agent) with alerts; alerts by webhook, e-mail, ntfy and Telegram.
 - Read-only API tokens and an optional API rate limit.
 - Local backup encryption (`--backup-passphrase-file`): incremental backup chunks are stored encrypted on disk.
+- VXLAN setup commands for a guest network shared between servers (`redox net vxlan`), graphics card sharing through mediated devices (vGPU), and detection of ZFS, LVM and NFS under a storage.
 - Automatic failover with a witness: the standby copy starts when the source server dies and a third server agrees.
 - Incremental replication: after the first run only the changed 4 MiB blocks cross the network, each verified by hash.
 - Containers can be copied and replicated between servers; a forecast of when the backup storage fills up; CSV export
@@ -423,7 +424,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-507 tests pass on Linux and 436 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+509 tests pass on Linux and 438 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
@@ -449,11 +450,11 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
 - Moving a running VM keeps its memory but pauses it while disk and memory are copied. It is not a
   zero-downtime live migration.
 - Automatic failover exists only for replicated guests and needs a witness server; there is no fencing and no shared-state cluster. It has not been tried in a real outage.
-- No LVM or ZFS storage pools.
+- Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
 - CPU and memory cannot be added to a running VM (the balloon only lowers and restores memory).
 - Containers cannot be moved to another storage or to another server.
 - The live console has no clipboard or audio.
-- The interface is Turkish only.
+- The interface is in Turkish and English only.
 
 ## License
 

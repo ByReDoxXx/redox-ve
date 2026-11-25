@@ -281,6 +281,7 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
                 }
             };
             host::sync_storages(&mut cluster, &opts.storages)?;
+            host::detect_storage_kinds(&mut cluster, &images, &opts.storages);
             Ok((Box::new(driver), cluster, Some(state_file), Some(images)))
         }
         other => Err(format!("bilinmeyen sürücü \"{other}\"; \"sim\" ya da \"qemu\" olmalı")),
@@ -628,6 +629,10 @@ fn main() -> ExitCode {
                 .block_on(serve(opts))
         }),
         Some("user" | "token") => manage_users(&args),
+        Some("net") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+            ["net", "vxlan", bridge, vni, local, peers] => redox_server::vxlan::plan(bridge, vni, local, peers).map(|script| print!("{}", redox_server::i18n::cli_text(&script))),
+            _ => Err("kullanım: redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,<eş-adres>...]".to_string()),
+        },
         Some(_) => cli::run(&args).map(|out| {
             use std::io::Write;
             // Çıktı `head` gibi erken kapanan bir boruya gidiyorsa hata vermeden biter.

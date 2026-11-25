@@ -12,6 +12,26 @@
   olmalıdır (KURULUM.md 9. bölüm).
 - **VLAN:** köprüdeki karta etiket (`vmbr1:20`). Köprüde VLAN süzme açık ve hizmette CAP_NET_ADMIN olmalıdır.
 
+## Sunucular arası ortak ağ (VXLAN)
+
+RedoX VE ağ aygıtı oluşturmaz; konuklar sizin kurduğunuz köprülere bağlanır. Birkaç sunucudaki konukların aynı ağda
+olması için köprüleri VXLAN tüneliyle birleştirebilirsiniz. Komutları RedoX yazar, siz her sunucuda root olarak
+çalıştırırsınız:
+
+```
+redox net vxlan vmbr100 100 10.0.0.1 10.0.0.2,10.0.0.3     # 1. sunucuda (yerel adres, sonra eşler)
+redox net vxlan vmbr100 100 10.0.0.2 10.0.0.1,10.0.0.3     # 2. sunucuda
+```
+
+Çıktıdaki `ip` komutlarını çalıştırdıktan sonra konuklarda köprü olarak `vmbr100` seçilir. Tünel 50 bayt yer kaplar:
+konuklarda MTU 1450 kullanın ya da sunucular arası ağda MTU'yu yükseltin. Komutlar yeniden başlatmada kalıcı
+değildir; kalıcı olması için bir systemd birimine ya da ağ yapılandırmanıza ekleyin. Tünel şifrelenmez: güvenilmeyen
+ağ üzerinden geçiyorsa WireGuard gibi şifreli bir bağlantının içinden geçirin.
+
+**Sınandı:** üretilen komutlar gerçek `iproute2` ile iki yalıtılmış ağ alanı arasında çalıştırıldı ve tünelden
+ping geçti. İki ayrı fiziksel sunucuda ve çalışan konuklarla denenmedi. Merkezi yönetilen bir SDN (bölgeler, sanal ağ
+tanımları, otomatik dağıtım) yoktur.
+
 ## Konuk güvenlik duvarı
 
 Hizmeti `--firewall` ile başlatın (nftables). Konuğun *Seçenekler* sekmesinde **Gelen trafiği kısıtla** açıkken yalnızca

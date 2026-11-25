@@ -83,6 +83,7 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
         without tags all guests; without days every day; writing the same name again updates the job
   redox replica list | add <peer> <id> [minutes] | run <peer> <id> | remove <peer> <id>
   redox replica failover <peer> <id> <minutes|off>     # start the standby copy when the source dies, if a witness agrees
+  redox net vxlan <bridge> <vni> <local-address> <peer-address>[,...]   # prints the setup commands for a network shared between servers
         (refreshes a standby copy of a peer server's virtual machine here; every 60 minutes by default)
   redox maintenance status | on [--drain] | off   (maintenance mode: no guest is started, scheduled work is paused;
         --drain stops the running guests in order, off starts them again)
