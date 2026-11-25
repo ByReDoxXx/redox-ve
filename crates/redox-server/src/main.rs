@@ -39,6 +39,7 @@ struct ServeOptions {
     alert_webhook: Option<String>,
     alert_ntfy: Option<String>,
     api_rate: Option<u64>,
+    lang: Option<String>,
     alert_telegram: Option<PathBuf>,
     alert_email: Option<PathBuf>,
     peers: Option<PathBuf>,
@@ -81,6 +82,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         alert_webhook: None,
         alert_ntfy: None,
         api_rate: None,
+        lang: None,
         alert_telegram: None,
         alert_email: None,
         peers: None,
@@ -116,6 +118,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--alert-webhook" => opts.alert_webhook = Some(value()?.clone()),
             "--alert-ntfy" => opts.alert_ntfy = Some(value()?.clone()),
             "--api-rate" => opts.api_rate = Some(number(value()?)?),
+            "--lang" => opts.lang = Some(value()?.clone()),
             "--alert-telegram" => opts.alert_telegram = Some(PathBuf::from(value()?)),
             "--alert-email" => opts.alert_email = Some(PathBuf::from(value()?)),
             "--peers" => opts.peers = Some(PathBuf::from(value()?)),
@@ -303,6 +306,10 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     if let Some(url) = &opts.alert_webhook {
         state.alerts().set_webhook(url)?;
         println!("Uyarılar webhook'a gönderilecek.");
+    }
+    if let Some(code) = &opts.lang {
+        let lang = redox_server::i18n::Lang::parse(code).ok_or_else(|| format!("--lang tr ya da en olmalı: {code}"))?;
+        state.set_default_lang(lang);
     }
     if let Some(rate) = opts.api_rate.filter(|r| *r > 0) {
         state.set_api_rate(rate.min(u32::MAX as u64) as u32);

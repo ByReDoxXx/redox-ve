@@ -50,11 +50,11 @@ pub(super) fn cur(on: bool) -> Option<&'static str> {
 pub(crate) fn guest_state(g: &Guest) -> Markup {
     html! {
         @if g.lock.is_some() {
-            span class="pill warn" { (icon_c("restart", "spin")) "İşlem sürüyor" }
+            span class="pill warn" { (icon_c("restart", "spin")) (tx("İşlem sürüyor")) }
         } @else if g.hw.suspended && g.status == GuestStatus::Stopped {
-            span class="st stop" { "Askıda" }
+            span class="st stop" { (tx("Askıda")) }
         } @else {
-            span class={ "st " (status_class(g.status)) } { (g.status.label()) }
+            span class={ "st " (status_class(g.status)) } { (tx(g.status.label())) }
         }
     }
 }
@@ -69,17 +69,17 @@ pub(super) fn status_class(s: GuestStatus) -> &'static str {
 
 pub(super) fn node_state(n: &Node) -> Markup {
     let class = if n.status == NodeStatus::Online { "st run" } else { "st err" };
-    html! { span class=(class) { (n.status.label()) } }
+    html! { span class=(class) { (tx(n.status.label())) } }
 }
 
 pub(super) fn task_pill(t: &Task) -> Markup {
     html! {
         @match t.status {
-            TaskStatus::Ok => span class="pill ok" { (icon("check")) "Tamam" },
-            TaskStatus::Running => span class="pill warn" { (icon_c("restart", "spin")) "Sürüyor" },
+            TaskStatus::Ok => span class="pill ok" { (icon("check")) (tx("Tamam")) },
+            TaskStatus::Running => span class="pill warn" { (icon_c("restart", "spin")) (tx("Sürüyor")) },
             TaskStatus::Failed => span class="pill err" {
-                (icon("alert")) "Hata"
-                @if let Some(m) = &t.message { ": " (m) }
+                (icon("alert")) (tx("Hata"))
+                @if let Some(m) = &t.message { ": " (crate::i18n::message(m)) }
             },
         }
     }
@@ -154,9 +154,9 @@ pub(super) fn range_links(p: &Page) -> Markup {
     };
     html! {
         @if p.real {
-            nav class="seg" aria-label="Grafik aralığı" {
+            nav class="seg" aria-label=(tx("Grafik aralığı")) {
                 @for range in [Range::Recent, Range::Day, Range::Month] {
-                    a href=(href(range)) aria-current=[cur(range == p.range)] { "Son " (range.label()) }
+                    a href=(href(range)) aria-current=[cur(range == p.range)] { (tx("Son ")) (tx(range.label())) }
                 }
             }
         }
@@ -172,7 +172,7 @@ pub(super) fn usage_card(p: &Page, prefix: &str, seed: u64, cpu_now: u8, mem_now
             metrics::series(seed, base, 48)
         }
     };
-    let (span, (left, mid)) = if p.real { (p.range.label(), p.range.axis()) } else { ("60 dakika", ("-60 dk", "-30 dk")) };
+    let (span, (left, mid)) = if p.real { (tx(p.range.label()), (tx(p.range.axis().0), tx(p.range.axis().1))) } else { ((tx("60 dakika")), ((tx("-60 dk")), (tx("-30 dk")))) };
     let line = |pts: &[f64]| {
         let last = (pts.len().max(2) - 1) as f64;
         pts.iter().enumerate().map(|(i, v)| format!("{:.1},{:.1}", i as f64 / last * 720.0, 165.0 - v * 1.6)).collect::<Vec<_>>().join(" ")
@@ -183,23 +183,24 @@ pub(super) fn usage_card(p: &Page, prefix: &str, seed: u64, cpu_now: u8, mem_now
         .iter()
         .map(|y| format!(r#"<line x1="0" x2="720" y1="{y}" y2="{y}" stroke="var(--line)" vector-effect="non-scaling-stroke"/>"#))
         .collect();
+    let title = tfmt(format!("İşlemci ve bellek kullanımı: son {span}"));
     let svg = format!(
-        r#"<svg viewBox="0 0 720 170" preserveAspectRatio="none" role="img" aria-label="İşlemci ve bellek kullanımı: son {span}">{grid}<polyline points="{mem}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/><polyline points="{cpu}" fill="none" stroke="var(--ember-hi)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>"#
+        r#"<svg viewBox="0 0 720 170" preserveAspectRatio="none" role="img" aria-label="{title}">{grid}<polyline points="{mem}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/><polyline points="{cpu}" fill="none" stroke="var(--ember-hi)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>"#
     );
     html! {
         div class="card chart" {
             header {
-                h2 { "Kullanım" }
-                span class="legend" { span { i {} "işlemci " (cpu_now) "%" } span { i class="mem" {} "bellek " (mem_now) "%" } }
+                h2 { (tx("Kullanım")) }
+                span class="legend" { span { i {} (tx("işlemci ")) (cpu_now) "%" } span { i class="mem" {} "bellek " (mem_now) "%" } }
                 div class="end" { (range_links(p)) }
             }
             div class="body" {
                 (PreEscaped(svg))
-                div class="axis" { span { (left) } span { (mid) } span { "şimdi" } }
+                div class="axis" { span { (left) } span { (mid) } span { (tx("şimdi")) } }
             }
             footer {
-                @if p.real { "Ölçümler 5 saniyede bir okunur. 24 saatlik grafik dakikalık, 30 günlük grafik saatlik ortalamaları gösterir; sunucunun kapalı olduğu süreler yer almaz." }
-                @else { "Grafikler simülasyon sürücüsünden gelir; gerçek ölçüm değildir." }
+                @if p.real { (tx("Ölçümler 5 saniyede bir okunur. 24 saatlik grafik dakikalık, 30 günlük grafik saatlik ortalamaları gösterir; sunucunun kapalı olduğu süreler yer almaz.")) }
+                @else { (tx("Grafikler simülasyon sürücüsünden gelir; gerçek ölçüm değildir.")) }
             }
         }
     }
@@ -209,10 +210,10 @@ pub(super) fn usage_card(p: &Page, prefix: &str, seed: u64, cpu_now: u8, mem_now
 pub(crate) fn guest_name(g: &Guest, tag_base: &str) -> Markup {
     html! {
         a href={ "/guests/" (g.vmid) } { span class="mono dim" { (g.vmid) } " " (g.name) }
-        span class="kind" { (g.kind.label()) }
+        span class="kind" { (tx(g.kind.label())) }
         @for t in &g.tags { a class="tag" href={ (tag_base) "?q=" (t) } { (t) } }
-        @if g.hw.template { span class="tag gold" { "şablon" } }
-        @if g.hw.base.is_some() { span class="tag gold" { "bağlı klon" } }
+        @if g.hw.template { span class=(tx("tag gold")) { (tx("şablon")) } }
+        @if g.hw.base.is_some() { span class=(tx("tag gold")) { (tx("bağlı klon")) } }
     }
 }
 
@@ -227,12 +228,12 @@ pub(super) fn guest_table(p: &Page, guests: &[&Guest], clear: &str, filtered: bo
         let live = g.status != GuestStatus::Stopped;
         html! {
             tr {
-                @if p.admin { td { input type="checkbox" form="bulk" name="id" value=(g.vmid) aria-label={ (g.vmid) " " (g.name) " seç" }; } }
+                @if p.admin { td { input type="checkbox" form="bulk" name="id" value=(g.vmid) aria-label={ (g.vmid) " " (g.name) (tx(" seç")) }; } }
                 td class="name" { (guest_name(g, "/guests")) }
                 td { (guest_state(g)) }
                 td class="mono" { @if live { (bar(g.cpu_pct, "CPU", false)) " " (g.cpu_pct) "%" } @else { span class="dim" { "-" } } }
                 td class="mono" {
-                    @if live { (bar(g.mem_pct(), "Bellek", false)) " " (mb_as_gb(g.mem_used_mb)) " / " (mb_as_gb(g.mem_total_mb)) " GB" }
+                    @if live { (bar(g.mem_pct(), (tx("Bellek")), false)) " " (mb_as_gb(g.mem_used_mb)) " / " (mb_as_gb(g.mem_total_mb)) " GB" }
                     @else { span class="dim" { (mb_as_gb(g.mem_total_mb)) " GB" } }
                 }
                 td class="num mono" { (disk_total(g)) " GB" }
@@ -240,8 +241,8 @@ pub(super) fn guest_table(p: &Page, guests: &[&Guest], clear: &str, filtered: bo
                 td class="act" {
                     @if p.may_operate(g) {
                         form method="post" action={ "/guests/" (g.vmid) "/action" } {
-                            @if live { button class="btn sm" name="action" value="stop" disabled[g.lock.is_some()] { (icon("stop")) "Kapat" } }
-                            @else { button class="btn sm go" name="action" value="start" disabled[g.lock.is_some() || g.hw.template] { (icon("play")) "Başlat" } }
+                            @if live { button class="btn sm" name="action" value="stop" disabled[g.lock.is_some()] { (icon("stop")) (tx("Kapat")) } }
+                            @else { button class="btn sm go" name="action" value="start" disabled[g.lock.is_some() || g.hw.template] { (icon("play")) (tx("Başlat")) } }
                         }
                     }
                 }
@@ -253,17 +254,17 @@ pub(super) fn guest_table(p: &Page, guests: &[&Guest], clear: &str, filtered: bo
             @if guests.is_empty() {
                 p class="empty" {
                     @if !filtered {
-                        "Burada henüz konuk yok." @if p.admin { " " a href="/guests/new?kind=vm" { "İlk sanal makineyi oluşturun" } "." }
+                        (tx("Burada henüz konuk yok.")) @if p.admin { " " a href="/guests/new?kind=vm" { (tx("İlk sanal makineyi oluşturun")) } "." }
                     } @else {
-                        @if p.q.is_empty() { "Bu süzgeçle eşleşen konuk yok. " } @else { "“" (p.q) "” ile eşleşen konuk yok. " }
-                        a href=(clear) { "Filtreyi temizleyin" } "."
+                        @if p.q.is_empty() { (tx("Bu süzgeçle eşleşen konuk yok. ")) } @else { "“" (p.q) (tx("” ile eşleşen konuk yok. ")) }
+                        a href=(clear) { (tx("Filtreyi temizleyin")) } "."
                     }
                 }
             } @else {
                 div class="tw" { table {
                     thead { tr {
-                        @if p.admin { th { span class="sr" { "Seç" } } }
-                        th { "Konuk" } th { "Durum" } th { "CPU" } th { "Bellek" } th class="num" { "Disk" } th { "Adres" } th { span class="sr" { "Eylem" } }
+                        @if p.admin { th { span class="sr" { (tx("Seç")) } } }
+                        th { (tx("Konuk")) } th { (tx("Durum")) } th { "CPU" } th { (tx("Bellek")) } th class="num" { "Disk" } th { (tx("Adres")) } th { span class="sr" { (tx("Eylem")) } }
                     } }
                     tbody {
                         @if grouped {
@@ -279,7 +280,7 @@ pub(super) fn guest_table(p: &Page, guests: &[&Guest], clear: &str, filtered: bo
                         }
                     }
                 } }
-                footer { "Konuğun adına tıklayınca sayfası açılır; satırdaki düğme en olası eylemidir. Komut satırından: " span class="mono" { "redox vm list" } }
+                footer { (tx("Konuğun adına tıklayınca sayfası açılır; satırdaki düğme en olası eylemidir. Komut satırından: ")) span class="mono" { "redox vm list" } }
             }
         }
     }
@@ -291,11 +292,11 @@ pub(super) fn bulk_tools(p: &Page, back: &str) -> Markup {
         @if p.admin {
             form id="bulk" class="end" method="post" action="/guests/bulk" {
                 input type="hidden" name="back" value=(back);
-                span class="muted" { "Seçilenler:" }
+                span class="muted" { (tx("Seçilenler:")) }
                 div class="group" {
-                    button class="btn sm" name="action" value="start" { (icon("play")) "Başlat" }
-                    button class="btn sm" name="action" value="stop" { (icon("stop")) "Kapat" }
-                    button class="btn sm" name="action" value="reboot" { (icon("restart")) "Yeniden Başlat" }
+                    button class="btn sm" name="action" value="start" { (icon("play")) (tx("Başlat")) }
+                    button class="btn sm" name="action" value="stop" { (icon("stop")) (tx("Kapat")) }
+                    button class="btn sm" name="action" value="reboot" { (icon("restart")) (tx("Yeniden Başlat")) }
                 }
             }
         }
@@ -315,8 +316,8 @@ pub(super) fn feed(tasks: &[&Task], empty: &str) -> Markup {
                             div class="what" { "redox " (t.command) }
                             div class="who" {
                                 (t.user)
-                                @match t.status { TaskStatus::Running => " · Sürüyor", TaskStatus::Failed => " · Hata", TaskStatus::Ok => " · Tamam" }
-                                @if let Some(m) = &t.message { ": " (m) }
+                                @match t.status { TaskStatus::Running => (tx(" · Sürüyor")), TaskStatus::Failed => (tx(" · Hata")), TaskStatus::Ok => (tx(" · Tamam")) }
+                                @if let Some(m) = &t.message { ": " (crate::i18n::message(m)) }
                             }
                         }
                         time { (hms(t.started)) }

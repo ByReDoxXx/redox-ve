@@ -9,7 +9,7 @@ pub(super) fn console_allowed(st: &AppState, me: &Identity, raw: &str) -> Result
         Ok(())
     } else {
         // Ekranda parola gibi gizli bilgiler görünebilir; salt okunur hesaplar konsolu göremez.
-        Err(Box::new((StatusCode::FORBIDDEN, "Konsol için yönetici ya da bu konukta operatör yetkisi gerekir.").into_response()))
+        Err(Box::new((StatusCode::FORBIDDEN, (tx("Konsol için yönetici ya da bu konukta operatör yetkisi gerekir."))).into_response()))
     }
 }
 
@@ -24,7 +24,7 @@ pub async fn live_console(State(st): State<AppState>, Extension(me): Extension<I
     }
     let ctx = Ctx::new(&st, &headers, PageQuery::default(), &me);
     let Some(g) = raw.parse::<VmId>().ok().and_then(|id| ctx.cluster.guest(id).ok()) else {
-        return ctx.not_found(&format!("“{raw}” kimlikli bir konuk yok."));
+        return ctx.not_found(&tfmt(format!("“{raw}” kimlikli bir konuk yok.")));
     };
     let available = st.driver().vnc_socket(g).is_some();
     let page = ctx.page(Current::Guest(g.vmid), format!("/guests/{}/console", g.vmid));
@@ -47,7 +47,7 @@ pub async fn vnc(
         return StatusCode::NOT_FOUND.into_response();
     };
     let Some(socket) = st.driver().vnc_socket(&guest) else {
-        return (StatusCode::CONFLICT, "Konuk çalışmıyor ya da canlı konsolu yok (bir kez kapatıp açın).").into_response();
+        return (StatusCode::CONFLICT, (tx("Konuk çalışmıyor ya da canlı konsolu yok (bir kez kapatıp açın)."))).into_response();
     };
     let ws = match ws {
         Ok(ws) => ws,
@@ -163,12 +163,12 @@ pub async fn keys(State(st): State<AppState>, Extension(_me): Extension<Identity
     let chords = if !f.key.is_empty() {
         match console::special_key(&f.key) {
             Some(chord) => vec![chord],
-            None => return flash(&back, "error", &format!("Bilinmeyen tuş: {}", f.key)),
+            None => return flash(&back, "error", &tfmt(format!("Bilinmeyen tuş: {}", f.key))),
         }
     } else {
         let mut chords = match console::text_to_chords(&f.text) {
             Ok(c) => c,
-            Err(c) => return flash(&back, "error", &format!("“{c}” karakteri gönderilemiyor; yalnızca ABD klavyesindeki karakterler desteklenir.")),
+            Err(c) => return flash(&back, "error", &tfmt(format!("“{c}” karakteri gönderilemiyor; yalnızca ABD klavyesindeki karakterler desteklenir."))),
         };
         if f.enter.is_some() {
             chords.push(vec!["ret".to_string()]);
@@ -179,12 +179,12 @@ pub async fn keys(State(st): State<AppState>, Extension(_me): Extension<Identity
         return Redirect::to(&back);
     }
     if chords.len() > console::MAX_CHORDS {
-        return flash(&back, "error", &format!("Tek seferde en fazla {} karakter gönderilebilir.", console::MAX_CHORDS));
+        return flash(&back, "error", &tfmt(format!("Tek seferde en fazla {} karakter gönderilebilir.", console::MAX_CHORDS)));
     }
     match tokio::task::spawn_blocking(move || st.send_keys(vmid, &chords)).await {
         Ok(Ok(())) => Redirect::to(&back),
         Ok(Err(e)) => failed(&back, &e),
-        Err(_) => flash(&back, "error", "Tuşlar gönderilemedi."),
+        Err(_) => flash(&back, "error", (tx("Tuşlar gönderilemedi."))),
     }
 }
 
@@ -208,7 +208,7 @@ pub async fn exec(
     };
     let command = f.command.trim().to_string();
     if command.is_empty() {
-        return flash(&format!("/guests/{vmid}?tab=konsol"), "error", "Bir komut yazın.").into_response();
+        return flash(&format!("/guests/{vmid}?tab=konsol"), "error", (tx("Bir komut yazın."))).into_response();
     }
     let (state, user, cmd) = (st.clone(), me.user.clone(), command.clone());
     // Komut 20 saniyeye kadar sürebilir: bloklayan iş parçacığında çalışır.
@@ -217,11 +217,11 @@ pub async fn exec(
         Ok(Err(Error::GuestNotFound(_))) => return failed("/", &Error::GuestNotFound(vmid)).into_response(),
         Ok(Err(Error::Driver(message))) => Err(message),
         Ok(Err(e)) => return failed(&format!("/guests/{vmid}?tab=konsol"), &e).into_response(),
-        Err(_) => Err("komut çalıştırılamadı".to_string()),
+        Err(_) => Err((tx("komut çalıştırılamadı")).to_string()),
     };
     let ctx = Ctx::new(&st, &headers, PageQuery::default(), &me);
     let Ok(g) = ctx.cluster.guest(vmid) else {
-        return ctx.not_found("Konuk bulunamadı.");
+        return ctx.not_found((tx("Konuk bulunamadı.")));
     };
     let page = ctx.page(Current::Guest(vmid), format!("/guests/{vmid}?tab=konsol"));
     Html(view_ops::exec_page(&page, g, &command, &result)).into_response()

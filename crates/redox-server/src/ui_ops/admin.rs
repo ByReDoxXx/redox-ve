@@ -17,16 +17,16 @@ pub async fn pool_save(State(st): State<AppState>, Form(f): Form<PoolForm>) -> R
     let number = |raw: &str, label: &str| -> Result<u64, String> {
         match raw.trim() {
             "" => Ok(0),
-            text => text.parse().map_err(|_| format!("{label} bir tam sayı olmalı.")),
+            text => text.parse().map_err(|_| tfmt(format!("{label} bir tam sayı olmalı."))),
         }
     };
     let parsed = (|| {
         Ok::<_, String>(redox_core::Pool {
             name: f.name.trim().to_string(),
-            cores: number(&f.cores, "Çekirdek kotası")?.min(u32::MAX as u64) as u32,
-            memory_mb: number(&f.memory_mb, "Bellek kotası")?,
-            disk_gb: number(&f.disk_gb, "Disk kotası")?,
-            guests: number(&f.guests, "Konuk sayısı")?.min(u32::MAX as u64) as u32,
+            cores: number(&f.cores, (tx("Çekirdek kotası")))?.min(u32::MAX as u64) as u32,
+            memory_mb: number(&f.memory_mb, (tx("Bellek kotası")))?,
+            disk_gb: number(&f.disk_gb, (tx("Disk kotası")))?,
+            guests: number(&f.guests, (tx("Konuk sayısı")))?.min(u32::MAX as u64) as u32,
         })
     })();
     let pool = match parsed {
@@ -35,14 +35,14 @@ pub async fn pool_save(State(st): State<AppState>, Form(f): Form<PoolForm>) -> R
     };
     let name = pool.name.clone();
     match st.pool_put(pool) {
-        Ok(()) => flash("/pools", "notice", &format!("{name} havuzu kaydedildi.")),
+        Ok(()) => flash("/pools", "notice", &tfmt(format!("{name} havuzu kaydedildi."))),
         Err(e) => failed("/pools", &e),
     }
 }
 
 pub async fn pool_delete(State(st): State<AppState>, Path(name): Path<String>) -> Redirect {
     match st.pool_remove(&name) {
-        Ok(()) => flash("/pools", "notice", &format!("{name} havuzu silindi.")),
+        Ok(()) => flash("/pools", "notice", &tfmt(format!("{name} havuzu silindi."))),
         Err(e) => failed("/pools", &e),
     }
 }
@@ -52,17 +52,17 @@ pub async fn maintenance_action(State(st): State<AppState>, Extension(me): Exten
     match op.as_str() {
         "on" => {
             st.maintenance_on(false, &me.user);
-            flash("/", "notice", "Bakım kipi açıldı: konuk başlatılmaz, zamanlanmış işler durdu.")
+            flash("/", "notice", (tx("Bakım kipi açıldı: konuk başlatılmaz, zamanlanmış işler durdu.")))
         }
         "drain" => {
             let n = st.maintenance_on(true, &me.user);
-            flash("/", "notice", &format!("Bakım kipi açıldı; {n} konuk sırayla kapatılıyor. Bakım bitince yeniden başlatılırlar."))
+            flash("/", "notice", &tfmt(format!("Bakım kipi açıldı; {n} konuk sırayla kapatılıyor. Bakım bitince yeniden başlatılırlar.")))
         }
         "off" => {
             let n = st.maintenance_off(&me.user);
-            flash("/", "notice", &format!("Bakım bitti; {n} konuk yeniden başlatılıyor."))
+            flash("/", "notice", &tfmt(format!("Bakım bitti; {n} konuk yeniden başlatılıyor.")))
         }
-        _ => flash("/", "error", &format!("Bilinmeyen işlem: {op}")),
+        _ => flash("/", "error", &tfmt(format!("Bilinmeyen işlem: {op}"))),
     }
 }
 
@@ -70,8 +70,8 @@ pub async fn maintenance_action(State(st): State<AppState>, Extension(me): Exten
 pub async fn approval_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((id, op)): Path<(u64, String)>) -> Redirect {
     let result = match op.as_str() {
         "approve" => st.approve(id, &me.user).map(|done| capitalize(&done)),
-        "reject" => st.reject(id, &me.user).map(|()| format!("İstek #{id} reddedildi.")),
-        _ => return flash("/", "error", &format!("Bilinmeyen işlem: {op}")),
+        "reject" => st.reject(id, &me.user).map(|()| tfmt(format!("İstek #{id} reddedildi."))),
+        _ => return flash("/", "error", &tfmt(format!("Bilinmeyen işlem: {op}"))),
     };
     match result {
         Ok(text) => flash("/", "notice", &text),

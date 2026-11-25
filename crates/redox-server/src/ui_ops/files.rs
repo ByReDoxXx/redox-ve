@@ -7,10 +7,10 @@ use super::*;
 pub async fn guest_export(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(raw): Path<String>) -> Response {
     use std::io::Read;
     if !me.can_write() {
-        return (StatusCode::FORBIDDEN, "Dışa aktarmak için yönetici yetkisi gerekir.").into_response();
+        return (StatusCode::FORBIDDEN, (tx("Dışa aktarmak için yönetici yetkisi gerekir."))).into_response();
     }
     let Ok(vmid) = raw.parse::<redox_core::VmId>() else {
-        return (StatusCode::NOT_FOUND, "Konuk bulunamadı.").into_response();
+        return (StatusCode::NOT_FOUND, (tx("Konuk bulunamadı."))).into_response();
     };
     // Disk dönüştürme uzun sürebilir: istek iş parçacığını tutmamalı.
     let exporter = st.clone();
@@ -20,7 +20,7 @@ pub async fn guest_export(State(st): State<AppState>, Extension(me): Extension<I
             let mut sized = Vec::with_capacity(disks.len());
             let mut files = Vec::with_capacity(disks.len());
             for (name, path, capacity) in &disks {
-                let file = std::fs::File::open(path).map_err(|e| format!("dışa aktarılan disk açılamadı: {e}"))?;
+                let file = std::fs::File::open(path).map_err(|e| tfmt(format!("dışa aktarılan disk açılamadı: {e}")))?;
                 let size = file.metadata().map_err(|e| e.to_string())?.len();
                 sized.push((name.clone(), size, *capacity));
                 files.push((name.clone(), size, file));
@@ -52,7 +52,7 @@ pub async fn guest_export(State(st): State<AppState>, Extension(me): Extension<I
             };
             return (status, capitalize(&e.to_string())).into_response();
         }
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Dışa aktarma hazırlanamadı.").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, (tx("Dışa aktarma hazırlanamadı."))).into_response(),
     };
     let stream = futures_util::stream::unfold(reader, |mut reader| async move {
         let read = tokio::task::spawn_blocking(move || {
@@ -88,30 +88,30 @@ pub async fn guest_export(State(st): State<AppState>, Extension(me): Extension<I
 pub async fn media_upload(State(st): State<AppState>, Extension(me): Extension<Identity>, mut form: axum::extract::Multipart) -> Redirect {
     let back = "/storage";
     let stored: Result<String, String> = async {
-        while let Some(mut field) = form.next_field().await.map_err(|e| format!("yükleme okunamadı: {e}"))? {
+        while let Some(mut field) = form.next_field().await.map_err(|e| tfmt(format!("yükleme okunamadı: {e}")))? {
             if field.name() != Some("file") {
                 continue;
             }
             // Tarayıcı tam yol gönderebilir: yalnızca dosya adı alınır, o da ad kuralından geçer.
             let name = field.file_name().unwrap_or_default().rsplit(['/', '\\']).next().unwrap_or_default().to_string();
             if name.is_empty() {
-                return Err("yüklenecek dosyayı seçin".to_string());
+                return Err((tx("yüklenecek dosyayı seçin")).to_string());
             }
             let (dest, _) = crate::media::target(&st, &name).map_err(|e| e.to_string())?;
             let mut upload = crate::media::Upload::begin(dest)?;
-            while let Some(chunk) = field.chunk().await.map_err(|e| format!("yükleme yarıda kesildi: {e}"))? {
+            while let Some(chunk) = field.chunk().await.map_err(|e| tfmt(format!("yükleme yarıda kesildi: {e}")))? {
                 upload.write(chunk).await?;
             }
             upload.finish(None).await?;
             return Ok(name);
         }
-        Err("yüklenecek dosyayı seçin".to_string())
+        Err((tx("yüklenecek dosyayı seçin")).to_string())
     }
     .await;
     match stored {
         Ok(name) => {
             st.media_uploaded(&name, &Ok(()), &me.user);
-            flash(back, "notice", &format!("{name} yüklendi."))
+            flash(back, "notice", &tfmt(format!("{name} yüklendi.")))
         }
         Err(e) => flash(back, "error", &capitalize(&e)),
     }
@@ -127,14 +127,14 @@ pub struct FetchForm {
 
 pub async fn media_fetch(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<FetchForm>) -> Redirect {
     match st.media_fetch(&f.url, &f.name, &f.sha256, &me.user) {
-        Ok(name) => flash("/storage", "notice", &format!("{name} indiriliyor; bitince görev günlüğünde görünür.")),
+        Ok(name) => flash("/storage", "notice", &tfmt(format!("{name} indiriliyor; bitince görev günlüğünde görünür."))),
         Err(e) => failed("/storage", &e),
     }
 }
 
 pub async fn media_catalog(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(key): Path<String>) -> Redirect {
     match st.catalog_fetch(&key, &me.user) {
-        Ok(name) => flash("/storage", "notice", &format!("{name} indiriliyor; bitince görev günlüğünde görünür. Yeni konuk formunda imaj olarak seçilir.")),
+        Ok(name) => flash("/storage", "notice", &tfmt(format!("{name} indiriliyor; bitince görev günlüğünde görünür. Yeni konuk formunda imaj olarak seçilir."))),
         Err(e) => failed("/storage", &e),
     }
 }

@@ -17,10 +17,10 @@ pub async fn storage_move(State(st): State<AppState>, Extension(me): Extension<I
     let back = format!("/guests/{vmid}?tab=cogalt");
     let target = f.storage.trim();
     if target.is_empty() {
-        return flash(&back, "error", "Bir depolama alanı seçin.");
+        return flash(&back, "error", (tx("Bir depolama alanı seçin.")));
     }
     match st.storage_move(vmid, target, &me.user) {
-        Ok(_) => flash(&back, "notice", &format!("Diskler {target} alanına taşınıyor; sonuç görevlerde görünür.")),
+        Ok(_) => flash(&back, "notice", &tfmt(format!("Diskler {target} alanına taşınıyor; sonuç görevlerde görünür."))),
         Err(e) => failed(&back, &e),
     }
 }
@@ -42,20 +42,20 @@ pub async fn balloon_set(State(st): State<AppState>, Extension(me): Extension<Id
     let back = format!("/guests/{vmid}?tab=donanim");
     if let Some(min) = &f.min {
         let Ok(min) = min.trim().parse::<u64>() else {
-            return flash(&back, "error", "En az bellek MB olarak bir tam sayı olmalı.");
+            return flash(&back, "error", (tx("En az bellek MB olarak bir tam sayı olmalı.")));
         };
         return match st.dynamic_memory_set(vmid, min, &me.user) {
-            Ok(()) if min == 0 => flash(&back, "notice", "Dinamik bellek kapatıldı: konuk belleğinin tamamını kullanır."),
-            Ok(()) => flash(&back, "notice", &format!("Dinamik bellek açıldı: hedef {min} MB ile belleğin tamamı arasında ayarlanır.")),
+            Ok(()) if min == 0 => flash(&back, "notice", (tx("Dinamik bellek kapatıldı: konuk belleğinin tamamını kullanır."))),
+            Ok(()) => flash(&back, "notice", &tfmt(format!("Dinamik bellek açıldı: hedef {min} MB ile belleğin tamamı arasında ayarlanır."))),
             Err(e) => failed(&back, &e),
         };
     }
     let Ok(mb) = f.mb.trim().parse::<u64>() else {
-        return flash(&back, "error", "Bellek hedefi MB olarak bir tam sayı olmalı.");
+        return flash(&back, "error", (tx("Bellek hedefi MB olarak bir tam sayı olmalı.")));
     };
     match st.balloon_set(vmid, mb, &me.user) {
-        Ok(()) if mb == 0 => flash(&back, "notice", "Balon boşaltıldı: konuk belleğinin tamamını kullanır."),
-        Ok(()) => flash(&back, "notice", &format!("Bellek hedefi {mb} MB olarak ayarlandı.")),
+        Ok(()) if mb == 0 => flash(&back, "notice", (tx("Balon boşaltıldı: konuk belleğinin tamamını kullanır."))),
+        Ok(()) => flash(&back, "notice", &tfmt(format!("Bellek hedefi {mb} MB olarak ayarlandı."))),
         Err(e) => failed(&back, &e),
     }
 }
@@ -73,10 +73,10 @@ pub async fn disk_add(State(st): State<AppState>, Extension(me): Extension<Ident
     };
     let back = format!("/guests/{vmid}?tab=donanim");
     let Ok(size_gb) = f.disk_gb.trim().parse::<u64>() else {
-        return flash(&back, "error", "Disk boyutu bir tam sayı olmalı.");
+        return flash(&back, "error", (tx("Disk boyutu bir tam sayı olmalı.")));
     };
     match st.disk_add(vmid, size_gb, &me.user) {
-        Ok(id) => flash(&back, "notice", &format!("{size_gb} GB'lık {id} numaralı disk eklendi.")),
+        Ok(id) => flash(&back, "notice", &tfmt(format!("{size_gb} GB'lık {id} numaralı disk eklendi."))),
         Err(e) => failed(&back, &e),
     }
 }
@@ -97,14 +97,14 @@ pub async fn nic_add(State(st): State<AppState>, Extension(me): Extension<Identi
     let back = format!("/guests/{vmid}?tab=donanim");
     let mut network = redox_core::hw::normalize_network(&f.network);
     if network.is_empty() {
-        return flash(&back, "error", "Kartın bağlanacağı ağı yazın: nat ya da bir köprü adı.");
+        return flash(&back, "error", (tx("Kartın bağlanacağı ağı yazın: nat ya da bir köprü adı.")));
     }
     let vlan = f.vlan.trim();
     if !vlan.is_empty() && vlan != "0" {
         network = format!("{network}:{vlan}");
     }
     match st.nic_add(vmid, &network, &me.user) {
-        Ok(index) => flash(&back, "notice", &format!("{index} numaralı ek ağ kartı eklendi ({network}).")),
+        Ok(index) => flash(&back, "notice", &tfmt(format!("{index} numaralı ek ağ kartı eklendi ({network})."))),
         Err(e) => failed(&back, &e),
     }
 }
@@ -116,11 +116,11 @@ pub async fn disk_remove(State(st): State<AppState>, Extension(me): Extension<Id
     };
     let back = format!("/guests/{vmid}?tab=donanim");
     let Ok(id) = id.parse::<u8>() else {
-        return flash(&back, "error", "Geçersiz disk numarası.");
+        return flash(&back, "error", (tx("Geçersiz disk numarası.")));
     };
     match st.request_disk_remove(vmid, id, &me.user) {
-        Ok(Some(n)) => flash(&back, "notice", &format!("Disk silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n}).")),
-        Ok(None) => flash(&back, "notice", &format!("{id} numaralı disk silindi.")),
+        Ok(Some(n)) => flash(&back, "notice", &tfmt(format!("Disk silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n})."))),
+        Ok(None) => flash(&back, "notice", &tfmt(format!("{id} numaralı disk silindi."))),
         Err(e) => failed(&back, &e),
     }
 }
@@ -132,10 +132,10 @@ pub async fn resize(State(st): State<AppState>, Extension(me): Extension<Identit
     };
     let back = format!("/guests/{vmid}?tab=donanim");
     let Ok(new_gb) = f.disk_gb.trim().parse::<u64>() else {
-        return flash(&back, "error", "Disk boyutu bir tam sayı olmalı.");
+        return flash(&back, "error", (tx("Disk boyutu bir tam sayı olmalı.")));
     };
     match st.resize_disk(vmid, new_gb, &me.user) {
-        Ok(_) => flash(&back, "notice", &format!("Disk {new_gb} GB boyutuna büyütülüyor.")),
+        Ok(_) => flash(&back, "notice", &tfmt(format!("Disk {new_gb} GB boyutuna büyütülüyor."))),
         Err(e) => failed(&back, &e),
     }
 }

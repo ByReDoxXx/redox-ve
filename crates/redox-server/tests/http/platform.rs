@@ -164,3 +164,44 @@ async fn maintenance_mode_stops_guests_blocks_starts_and_resumes_them() {
     assert!(before.iter().all(|vmid| after.contains(vmid)) && after.len() as u64 == remembered, "{after:?}");
     assert!(!state.snapshot().maintenance && !page(&app, "/").await.contains("Bakım kipi açık"));
 }
+
+#[tokio::test]
+async fn the_interface_and_messages_follow_the_chosen_language() {
+    let (app, state) = setup();
+    let english = |uri: &str| request(Method::GET, uri).header(COOKIE, "lang=en").body(Body::empty()).unwrap();
+    // Varsayılan Türkçe; çerezle İngilizce. Dil düğmesi öbür dile geçirir.
+    let tr = page(&app, "/").await;
+    assert!(tr.contains(r#"<html lang="tr""#) && tr.contains("Genel Bakış") && tr.contains(r#"href="/lang?to=en&amp;back="#));
+    let (_, _, en) = send(&app, english("/")).await;
+    assert!(en.contains(r#"<html lang="en""#) && en.contains("Overview") && !en.contains("Genel Bakış"), "{}", &en[..en.len().min(300)]);
+    assert!(en.contains(r#"href="/lang?to=tr&amp;back="#) && en.contains("Sign out"));
+    let (_, _, guests) = send(&app, english("/guests")).await;
+    assert!(guests.contains("New Guest") && guests.contains("Running") && !guests.contains("Yeni Konuk"));
+    let (_, _, hardware) = send(&app, english("/guests/103?tab=donanim")).await;
+    assert!(hardware.contains("Save Hardware") && hardware.contains("Nested virtualization"));
+
+    // Dil çerezi /lang ile yazılır ve gelinen sayfaya dönülür.
+    let (status, headers, _) = send(&app, request(Method::GET, "/lang?to=en&back=/guests").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(headers[SET_COOKIE].to_str().unwrap().starts_with("lang=en;") && headers[LOCATION] == "/guests");
+
+    // Bildirimler ve hata iletileri: Türkçe üretilmiş ileti gösterilirken çevrilir (değişkenler korunur).
+    let flash = |text: &str| format!("/guests?error={}", redox_server::view::enc(text));
+    let (_, _, shown) = send(&app, english(&flash("103 silinmeden önce kapatılmalı"))).await;
+    assert!(shown.contains("103 must be stopped before it is deleted"), "değişkenli ileti");
+    let (_, _, nested) = send(&app, english(&flash("Sürücü hatası: 100 çalışırken yapılamaz: donanım ayarlarını değiştirmek için önce konuğu kapatın"))).await;
+    assert!(nested.contains("cannot do this while running") && nested.contains("changing hardware settings"), "iç içe ileti: {}", nested.split("flash bad").nth(1).unwrap_or("").chars().take(300).collect::<String>());
+    assert!(page(&app, &flash("103 silinmeden önce kapatılmalı")).await.contains("103 silinmeden önce kapatılmalı"), "Türkçede dokunulmaz");
+
+    // API: ileti Accept-Language ile seçilir, kod dilden bağımsızdır.
+    let (status, body) = api(&app, request(Method::GET, "/api/v1/guests/999").header("accept-language", "en-US,en;q=0.9").body(Body::empty()).unwrap()).await;
+    assert_eq!((status, body["code"].as_str(), body["error"].as_str()), (StatusCode::NOT_FOUND, Some("guest_not_found"), Some("guest 999 not found")));
+    let (_, body) = api(&app, request(Method::GET, "/api/v1/guests/999").body(Body::empty()).unwrap()).await;
+    assert_eq!(body["error"].as_str(), Some("999 kimlikli konuk bulunamadı"));
+
+    // Sunucunun varsayılan dili: çerezi olmayan ziyaretçi.
+    state.set_default_lang(redox_server::i18n::Lang::En);
+    assert!(page(&app, "/").await.contains("Overview"));
+    let (_, _, back) = send(&app, request(Method::GET, "/").header(COOKIE, "lang=tr").body(Body::empty()).unwrap()).await;
+    assert!(back.contains("Genel Bakış"), "çerez varsayılanı ezer");
+}

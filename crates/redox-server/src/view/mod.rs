@@ -3,6 +3,8 @@
 
 use chrono::{Local, TimeZone};
 use maud::{html, Markup, PreEscaped, DOCTYPE};
+
+pub(crate) use crate::i18n::{tfmt, tx};
 use redox_core::fmt::{gb, mb_as_gb, pct, uptime};
 
 mod account;
@@ -115,11 +117,11 @@ fn matches_filter(g: &Guest, q: &str) -> bool {
 
 fn role_note(p: &Page) -> &'static str {
     if p.admin {
-        "yönetici"
+        (tx("yönetici"))
     } else if p.operator {
-        "operatör"
+        (tx("operatör"))
     } else {
-        "salt okunur"
+        (tx("salt okunur"))
     }
 }
 
@@ -135,47 +137,50 @@ fn rail(p: &Page) -> Markup {
     let none = || html! {};
     html! {
         aside class="rail" {
-            a class="brand" href="/" aria-label="RedoX VE, genel bakış" {
+            a class="brand" href="/" aria-label=(tx("RedoX VE, genel bakış")) {
                 img class="mark" src=(asset("logo.svg")) alt="" width="33" height="34";
                 img class="word" src=(asset("wordmark.svg")) alt="" width="113" height="40";
             }
-            nav class="nav" aria-label="Bölümler" {
-                div class="eyebrow" { "İşletim" }
-                (item("/", "datacenter", "Genel Bakış", matches!(p.current, Current::Datacenter | Current::Node(_)), none()))
-                (item("/guests", "vm", "Konuklar", matches!(p.current, Current::Guests | Current::Guest(_)) || at("/guests"),
+            nav class="nav" aria-label=(tx("Bölümler")) {
+                div class="eyebrow" { (tx("İşletim")) }
+                (item("/", "datacenter", (tx("Genel Bakış")), matches!(p.current, Current::Datacenter | Current::Node(_)), none()))
+                (item("/guests", "vm", (tx("Konuklar")), matches!(p.current, Current::Guests | Current::Guest(_)) || at("/guests"),
                     html! { span class="count" { (p.cluster.guests.len()) } }))
-                (item("/storage", "storage", "Depolama", p.current == Current::Storage, none()))
-                (item("/backups", "backup", "Yedekler", p.current == Current::Backups,
+                (item("/storage", "storage", (tx("Depolama")), p.current == Current::Storage, none()))
+                (item("/backups", "backup", (tx("Yedekler")), p.current == Current::Backups,
                     html! { @if !p.cluster.backups.is_empty() { span class="count" { (p.cluster.backups.len()) } } }))
-                (item("/pools", "cpu", "Havuzlar", at("/pools"),
+                (item("/pools", "cpu", (tx("Havuzlar")), at("/pools"),
                     html! { @if !p.cluster.pools.is_empty() { span class="count" { (p.cluster.pools.len()) } } }))
-                (item("/cluster", "network", "Küme", p.current == Current::Peers, none()))
-                div class="eyebrow" { "Yönetim" }
-                (item("/tasks", "clock", "Görevler", p.current == Current::Tasks,
-                    html! { @if running > 0 { span class="live" aria-label={ (running) " görev sürüyor" } { (running) } } }))
+                (item("/cluster", "network", (tx("Küme")), p.current == Current::Peers, none()))
+                div class="eyebrow" { (tx("Yönetim")) }
+                (item("/tasks", "clock", (tx("Görevler")), p.current == Current::Tasks,
+                    html! { @if running > 0 { span class="live" aria-label={ (running) (tx(" görev sürüyor")) } { (running) } } }))
                 @if p.admin {
-                    (item("/users", "user", "Kullanıcılar", at("/users"), none()))
-                    (item("/audit", "shield", "Denetim Günlüğü", at("/audit"), none()))
+                    (item("/users", "user", (tx("Kullanıcılar")), at("/users"), none()))
+                    (item("/audit", "shield", (tx("Denetim Günlüğü")), at("/audit"), none()))
                 }
-                (item("/account", "settings", "Hesabım", at("/account"), none()))
-                (item("/help", "terminal", "Komut Satırı", at("/help"), none()))
+                (item("/account", "settings", (tx("Hesabım")), at("/account"), none()))
+                (item("/help", "terminal", (tx("Komut Satırı")), at("/help"), none()))
             }
-            div class="host" aria-label="Sunucu durumu" {
+            div class="host" aria-label=(tx("Sunucu durumu")) {
                 div class="name" {
                     span class={ "st " @if s.quorate { "run" } @else { "err" } } style="gap:0" {}
                     (p.cluster.name)
-                    span class="dim" style="font-weight:400" { "· " (s.nodes_online) "/" (s.nodes_total) " düğüm" }
+                    span class="dim" style="font-weight:400" { "· " (s.nodes_online) "/" (s.nodes_total) (tx(" düğüm")) }
                 }
                 div class="row" { span { "CPU" } (bar(s.cpu_pct, "CPU", true)) span class="num" { (s.cpu_pct) "%" } }
-                div class="row" { span { "Bellek" } (bar(s.mem_pct, "Bellek", true)) span class="num" { (s.mem_pct) "%" } }
-                div class="row" { span { "Disk" } (bar(s.storage_pct, "Depolama", true)) span class="num" { (s.storage_pct) "%" } }
+                div class="row" { span { (tx("Bellek")) } (bar(s.mem_pct, (tx("Bellek")), true)) span class="num" { (s.mem_pct) "%" } }
+                div class="row" { span { "Disk" } (bar(s.storage_pct, (tx("Depolama")), true)) span class="num" { (s.storage_pct) "%" } }
             }
             div class="me" {
                 a class="who" href="/account" { (icon("user")) (p.user) " " small { (role_note(p)) } }
+                @let other = crate::i18n::current().other();
+                a class="btn quiet sm" href={ "/lang?to=" (other.code()) "&back=" (enc(&p.back)) } lang=(other.code())
+                    aria-label={ @if other == crate::i18n::Lang::En { "Switch to English" } @else { "Türkçeye geç" } } { (other.code().to_uppercase()) }
                 a class="btn quiet sm sq" href={ "/theme?to=" (next) "&back=" (enc(&p.back)) }
-                    aria-label={ @if next == "light" { "Açık temaya geç" } @else { "Koyu temaya geç" } } { (icon("theme")) }
+                    aria-label={ @if next == "light" { (tx("Açık temaya geç")) } @else { (tx("Koyu temaya geç")) } } { (icon("theme")) }
                 form method="post" action="/logout" {
-                    button class="btn quiet sm sq" type="submit" aria-label="Çıkış" title="Çıkış" { (icon("off")) }
+                    button class="btn quiet sm sq" type="submit" aria-label=(tx("Çıkış")) title=(tx("Çıkış")) { (icon("off")) }
                 }
             }
         }
@@ -186,7 +191,7 @@ fn rail(p: &Page) -> Markup {
 fn top(p: &Page, crumbs: &[(&str, &str)]) -> Markup {
     html! {
         div class="top" {
-            nav class="crumbs" aria-label="Konum" {
+            nav class="crumbs" aria-label=(tx("Konum")) {
                 @for (i, (text, href)) in crumbs.iter().enumerate() {
                     @if i + 1 == crumbs.len() { span aria-current="page" { (text) } }
                     @else { a href=(href) { (text) } b aria-hidden="true" { "/" } }
@@ -195,12 +200,12 @@ fn top(p: &Page, crumbs: &[(&str, &str)]) -> Markup {
             form class="cmd" method="post" action="/cmd" role="search" {
                 (icon("prompt"))
                 input id="cmd" type="text" name="q" autocomplete="off" spellcheck="false" accesskey="k"
-                    placeholder="ara ya da komut yaz: start 103, open db-postgres, help"
-                    aria-label="Komut satırı: ara ya da komut yaz, Enter ile çalıştır";
+                    placeholder=(tx("ara ya da komut yaz: start 103, open db-postgres, help"))
+                    aria-label=(tx("Komut satırı: ara ya da komut yaz, Enter ile çalıştır"));
                 kbd { "Alt K" }
             }
             @if p.admin {
-                a class="btn primary" href="/guests/new?kind=vm" { (icon("plus")) "Yeni Konuk" }
+                a class="btn primary" href="/guests/new?kind=vm" { (icon("plus")) (tx("Yeni Konuk")) }
             }
         }
     }
@@ -212,28 +217,28 @@ fn flash(p: &Page) -> Markup {
         @if p.cluster.maintenance {
             div class="flash bad" role="status" {
                 (icon("alert"))
-                span { "Bakım kipi açık: konuk başlatılmaz, zamanlanmış yedekler ve güç işlemleri durdu." @if !p.cluster.maintenance_resume.is_empty() { " Bakım bitince " (p.cluster.maintenance_resume.len()) " konuk yeniden başlatılacak." } " " }
-                @if p.admin { form class="inline" method="post" action="/maintenance/off" { button class="btn sm" type="submit" { "Bakımı Bitir" } } }
+                span { (tx("Bakım kipi açık: konuk başlatılmaz, zamanlanmış yedekler ve güç işlemleri durdu.")) @if !p.cluster.maintenance_resume.is_empty() { (tx(" Bakım bitince ")) (p.cluster.maintenance_resume.len()) (tx(" konuk yeniden başlatılacak.")) } " " }
+                @if p.admin { form class="inline" method="post" action="/maintenance/off" { button class="btn sm" type="submit" { (tx("Bakımı Bitir")) } } }
             }
         }
         // Dört göz ilkesi: onay bekleyen silme istekleri her sayfada yöneticilere gösterilir.
         @for a in &pending {
             div class="flash" role="status" {
                 (icon("alert"))
-                span { "Onay bekliyor (#" (a.id) "): " strong { (a.by) } ", " (a.describe()) " istiyor. " }
+                span { (tx("Onay bekliyor (#")) (a.id) "): " strong { (a.by) } ", " (a.describe()) " istiyor. " }
                 @if a.by == p.user {
-                    span class="muted" { "Başka bir yönetici onaylamalı. " }
+                    span class="muted" { (tx("Başka bir yönetici onaylamalı. ")) }
                 } @else {
-                    form class="inline" method="post" action={ "/approvals/" (a.id) "/approve" } { button class="btn sm danger" type="submit" { "Onayla" } }
+                    form class="inline" method="post" action={ "/approvals/" (a.id) "/approve" } { button class="btn sm danger" type="submit" { (tx("Onayla")) } }
                 }
-                form class="inline" method="post" action={ "/approvals/" (a.id) "/reject" } { button class="btn sm" type="submit" { @if a.by == p.user { "Geri Çek" } @else { "Reddet" } } }
+                form class="inline" method="post" action={ "/approvals/" (a.id) "/reject" } { button class="btn sm" type="submit" { @if a.by == p.user { (tx("Geri Çek")) } @else { (tx("Reddet")) } } }
             }
         }
         @if let Some(n) = p.notice {
-            div class="flash" role="status" { (icon("check")) span { (n) } }
+            div class="flash" role="status" { (icon("check")) span { (crate::i18n::message(n)) } }
         }
         @if let Some(e) = p.error {
-            div class="flash bad" role="alert" { (icon("alert")) span { (e) } }
+            div class="flash bad" role="alert" { (icon("alert")) span { (crate::i18n::message(e)) } }
         }
     }
 }
@@ -242,7 +247,7 @@ fn flash(p: &Page) -> Markup {
 pub fn layout(p: &Page, title: &str, crumbs: &[(&str, &str)], narrow: bool, body: Markup) -> String {
     html! {
         (DOCTYPE)
-        html lang="tr" data-theme=(p.theme) {
+        html lang=(crate::i18n::current().code()) data-theme=(p.theme) {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
@@ -256,7 +261,7 @@ pub fn layout(p: &Page, title: &str, crumbs: &[(&str, &str)], narrow: bool, body
                 link rel="stylesheet" href=(asset("style.css"));
             }
             body {
-                a class="skip" href="#main" { "İçeriğe geç" }
+                a class="skip" href="#main" { (tx("İçeriğe geç")) }
                 div class="app" {
                     (rail(p))
                     div class="main" {
@@ -287,7 +292,7 @@ pub(crate) fn page_head(title: Markup, subline: Markup, actions: Markup, cli: &s
             div class="acts" { (actions) }
         }
         @if tabs.len() > 1 {
-            nav class="tabs" aria-label="Bölümler" {
+            nav class="tabs" aria-label=(tx("Bölümler")) {
                 @for (label, href, on) in tabs {
                     a href=(href) aria-current=[cur(*on)] { (label) }
                 }

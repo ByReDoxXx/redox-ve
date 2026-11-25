@@ -1,5 +1,7 @@
 //! Yönetim işleyicileri: kullanıcılar, hesabım, denetim günlüğü, ölçümler ve gömülü yazı tipleri.
 
+#[allow(unused_imports)]
+use crate::i18n::{tfmt, tx};
 use axum::extract::{Path, Query, State};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION, SET_COOKIE};
 use axum::http::{HeaderMap, StatusCode};
@@ -27,7 +29,7 @@ pub struct AdminForm {
 }
 
 fn forbidden() -> Response {
-    (StatusCode::FORBIDDEN, "Bu sayfa için yönetici yetkisi gerekir.").into_response()
+    (StatusCode::FORBIDDEN, (tx("Bu sayfa için yönetici yetkisi gerekir."))).into_response()
 }
 
 /// Sonucu ilgili sayfaya bildirim olarak döndürür.
@@ -57,13 +59,13 @@ pub async fn user_add(State(st): State<AppState>, Form(f): Form<AdminForm>) -> R
 
 pub async fn user_role(State(st): State<AppState>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
     let result = f.role.parse::<Role>().and_then(|role| st.auth().edit(|u| u.set_role(&name, role)));
-    done("/users", result.map(|()| format!("{name} için rol değiştirildi.")))
+    done("/users", result.map(|()| tfmt(format!("{name} için rol değiştirildi."))))
 }
 
 pub async fn user_scope(State(st): State<AppState>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
     let tags = redox_core::parse_tags(&f.scope);
-    let summary = if tags.is_empty() { "bütün konuklar".to_string() } else { tags.join(", ") };
-    done("/users", st.auth().edit(|u| u.set_scope(&name, tags)).map(|()| format!("{name} için yetki kapsamı: {summary}.")))
+    let summary = if tags.is_empty() { (tx("bütün konuklar")).to_string() } else { tags.join(", ") };
+    done("/users", st.auth().edit(|u| u.set_scope(&name, tags)).map(|()| tfmt(format!("{name} için yetki kapsamı: {summary}."))))
 }
 
 /// Yol `/users/-/…` ise kullanıcı formdaki `name` alanından alınır (seçim kutulu formlar).
@@ -73,27 +75,27 @@ fn target(path_name: String, f: &AdminForm) -> String {
 
 pub async fn user_password(State(st): State<AppState>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
     let (name, cost) = (target(name, &f), st.auth().cost());
-    done("/users", st.auth().edit(|u| u.set_password(&name, &f.password, cost)).map(|()| format!("{name} için parola sıfırlandı.")))
+    done("/users", st.auth().edit(|u| u.set_password(&name, &f.password, cost)).map(|()| tfmt(format!("{name} için parola sıfırlandı."))))
 }
 
 pub async fn user_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
     if name == me.user {
-        return done("/users", Err("kendi hesabınızı silemezsiniz".to_string()));
+        return done("/users", Err((tx("kendi hesabınızı silemezsiniz")).to_string()));
     }
     if f.confirm.is_none() {
-        return done("/users", Err("silmek için “Eminim” kutusunu işaretleyin".to_string()));
+        return done("/users", Err((tx("silmek için “Eminim” kutusunu işaretleyin")).to_string()));
     }
     done(
         "/users",
         st.request_user_remove(&name, &me.user).map_err(|e| e.to_string()).map(|queued| match queued {
-            Some(n) => format!("{name} silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n})."),
+            Some(n) => tfmt(format!("{name} silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n}).")),
             None => format!("{name} silindi."),
         }),
     )
 }
 
 pub async fn user_totp_reset(State(st): State<AppState>, Path(name): Path<String>) -> Redirect {
-    done("/users", st.auth().edit(|u| u.disable_totp(&name)).map(|()| format!("{name} için iki adımlı doğrulama kapatıldı.")))
+    done("/users", st.auth().edit(|u| u.disable_totp(&name)).map(|()| tfmt(format!("{name} için iki adımlı doğrulama kapatıldı."))))
 }
 
 fn create_token(st: &AppState, me: &Identity, headers: &HeaderMap, user: &str, label: &str, back: &str) -> Response {
@@ -117,7 +119,7 @@ pub async fn user_token_create(
 }
 
 pub async fn user_token_revoke(State(st): State<AppState>, Path((name, label)): Path<(String, String)>) -> Redirect {
-    done("/users", st.auth().edit(|u| u.revoke_token(&name, &label)).map(|()| format!("{label} token'ı iptal edildi.")))
+    done("/users", st.auth().edit(|u| u.revoke_token(&name, &label)).map(|()| tfmt(format!("{label} token'ı iptal edildi."))))
 }
 
 fn qr_svg(data: &str) -> String {
@@ -130,7 +132,7 @@ fn qr_svg(data: &str) -> String {
 pub async fn account(State(st): State<AppState>, Extension(me): Extension<Identity>, headers: HeaderMap, Query(q): Query<PageQuery>) -> Response {
     let ctx = Ctx::new(&st, &headers, q, &me);
     let Some(user) = st.auth().list().into_iter().find(|u| u.name == me.user) else {
-        return ctx.not_found("Hesabınız bulunamadı.");
+        return ctx.not_found((tx("Hesabınız bulunamadı.")));
     };
     let setup = user.totp_pending.as_ref().filter(|_| user.totp_secret.is_none()).map(|secret| TotpSetup {
         secret: secret.clone(),
@@ -141,7 +143,7 @@ pub async fn account(State(st): State<AppState>, Extension(me): Extension<Identi
 
 pub async fn account_password(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Response {
     if !st.auth().check_password(&me.user, &f.current) {
-        return done("/account", Err("şimdiki parola hatalı".to_string())).into_response();
+        return done("/account", Err((tx("şimdiki parola hatalı")).to_string())).into_response();
     }
     let cost = st.auth().cost();
     match st.auth().edit(|u| u.set_password(&me.user, &f.password, cost)) {
@@ -152,18 +154,18 @@ pub async fn account_password(State(st): State<AppState>, Extension(me): Extensi
 }
 
 pub async fn totp_start(State(st): State<AppState>, Extension(me): Extension<Identity>) -> Redirect {
-    done("/account", st.auth().edit(|u| u.begin_totp(&me.user)).map(|_| "Kodu okutup uygulamadaki 6 haneli kodu girin.".to_string()))
+    done("/account", st.auth().edit(|u| u.begin_totp(&me.user)).map(|_| (tx("Kodu okutup uygulamadaki 6 haneli kodu girin.")).to_string()))
 }
 
 pub async fn totp_confirm(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Redirect {
-    done("/account", st.auth().edit(|u| u.confirm_totp(&me.user, &f.code, now())).map(|()| "İki adımlı doğrulama açıldı.".to_string()))
+    done("/account", st.auth().edit(|u| u.confirm_totp(&me.user, &f.code, now())).map(|()| (tx("İki adımlı doğrulama açıldı.")).to_string()))
 }
 
 pub async fn totp_disable(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Redirect {
     if !st.auth().check_password(&me.user, &f.current) {
-        return done("/account", Err("parola hatalı".to_string()));
+        return done("/account", Err((tx("parola hatalı")).to_string()));
     }
-    done("/account", st.auth().edit(|u| u.disable_totp(&me.user)).map(|()| "İki adımlı doğrulama kapatıldı.".to_string()))
+    done("/account", st.auth().edit(|u| u.disable_totp(&me.user)).map(|()| (tx("İki adımlı doğrulama kapatıldı.")).to_string()))
 }
 
 pub async fn account_token_create(State(st): State<AppState>, Extension(me): Extension<Identity>, headers: HeaderMap, Form(f): Form<AdminForm>) -> Response {
@@ -171,7 +173,7 @@ pub async fn account_token_create(State(st): State<AppState>, Extension(me): Ext
 }
 
 pub async fn account_token_revoke(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(label): Path<String>) -> Redirect {
-    done("/account", st.auth().edit(|u| u.revoke_token(&me.user, &label)).map(|()| format!("{label} token'ı iptal edildi.")))
+    done("/account", st.auth().edit(|u| u.revoke_token(&me.user, &label)).map(|()| tfmt(format!("{label} token'ı iptal edildi."))))
 }
 
 pub async fn audit(State(st): State<AppState>, Extension(me): Extension<Identity>, headers: HeaderMap, Query(q): Query<PageQuery>) -> Response {

@@ -80,8 +80,8 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
     let c = p.cluster;
     let kind = f.kind();
     let title = match kind {
-        GuestKind::Vm => "Sanal Makine Oluştur",
-        GuestKind::Ct => "Konteyner Oluştur",
+        GuestKind::Vm => (tx("Sanal Makine Oluştur")),
+        GuestKind::Ct => (tx("Konteyner Oluştur")),
     };
     let cli = format!("{kind} create");
     let err = |name: &str| errors.iter().find(|(n, _)| *n == name).map(|(_, m)| m.as_str());
@@ -102,10 +102,10 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
     storage_ids.dedup();
 
     let body = html! {
-        (page_head(html! { (title) }, html! { span { "Konuk durdurulmuş halde eklenir; sonra sayfasından başlatabilirsiniz." } }, html! {}, &cli, &[]))
+        (page_head(html! { (title) }, html! { span { (tx("Konuk durdurulmuş halde eklenir; sonra sayfasından başlatabilirsiniz.")) } }, html! {}, &cli, &[]))
         @if !errors.is_empty() {
             div class="errsum" role="alert" {
-                h2 { "Konuk oluşturulamadı" }
+                h2 { (tx("Konuk oluşturulamadı")) }
                 ul { @for (name, m) in errors {
                     li { @if name.is_empty() { (m) } @else { a href={ "#" (name) } { (m) } } }
                 } }
@@ -114,31 +114,31 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
         form method="post" action="/guests" novalidate {
             input type="hidden" name="kind" value=(kind.as_str());
             fieldset {
-                legend { "Genel" }
+                legend { (tx("Genel")) }
                 div class="form" {
-                    (field("node", "Düğüm", true, "", html! {
+                    (field("node", (tx("Düğüm")), true, "", html! {
                         select id="node" name="node" aria-describedby=[describe("node")] {
-                            @for n in &c.nodes { option value=(n.id) selected[n.id == f.node] { (n.id) @if n.status == NodeStatus::Offline { " (çevrimdışı)" } } }
+                            @for n in &c.nodes { option value=(n.id) selected[n.id == f.node] { (n.id) @if n.status == NodeStatus::Offline { (tx(" (çevrimdışı)")) } } }
                         }
                     }))
-                    (field("vmid", "Kimlik", false, &format!("Boş bırakırsanız {} atanır.", c.next_vmid()), html! {
+                    (field("vmid", (tx("Kimlik")), false, &tfmt(format!("Boş bırakırsanız {} atanır.", c.next_vmid())), html! {
                         input id="vmid" name="vmid" type="text" inputmode="numeric" value=(f.vmid) placeholder=(c.next_vmid()) aria-describedby=[describe("vmid")];
                     }))
-                    (field("name", "Ad", true, "Küçük harf, rakam ve tire; örn. web-prod-03.", html! {
+                    (field("name", (tx("Ad")), true, (tx("Küçük harf, rakam ve tire; örn. web-prod-03.")), html! {
                         input id="name" name="name" type="text" value=(f.name) required autocomplete="off" aria-describedby=[describe("name")];
                     }))
                     @if kind == GuestKind::Ct && !opts.templates.is_empty() {
-                        (field("os", "Şablon", true, "Kök dosya sistemi bu dağıtımın hazır imajından indirilir.", html! {
+                        (field("os", (tx("Şablon")), true, (tx("Kök dosya sistemi bu dağıtımın hazır imajından indirilir.")), html! {
                             select id="os" name="os" { @for t in &opts.templates { option value=(t) selected[*t == f.os] { (t) } } }
                         }))
                     } @else {
-                        (field("os", "İşletim sistemi", false, "Bilgi amaçlı etiket.", html! {
+                        (field("os", (tx("İşletim sistemi")), false, (tx("Bilgi amaçlı etiket.")), html! {
                             input id="os" name="os" type="text" value=(f.os);
                         }))
                     }
                     @if kind == GuestKind::Vm && p.real {
-                        (field("iso", "Kurulum kalıbı (ISO)", false,
-                            if isos.is_empty() { "Kalıp yok. ISO dosyalarını Depolama sayfasından yükleyin ya da sunucuda veri dizininin iso/ klasörüne koyun." } else { "İlk açılışta bu kalıptan başlar." },
+                        (field("iso", (tx("Kurulum kalıbı (ISO)")), false,
+                            if isos.is_empty() { (tx("Kalıp yok. ISO dosyalarını Depolama sayfasından yükleyin ya da sunucuda veri dizininin iso/ klasörüne koyun.")) } else { (tx("İlk açılışta bu kalıptan başlar.")) },
                             html! {
                                 select id="iso" name="iso" {
                                     option value="" { "(yok)" }
@@ -150,23 +150,23 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
             }
             @if kind == GuestKind::Vm && p.real {
                 fieldset {
-                    legend { "Hazır imaj ve ilk kurulum (cloud-init)" }
+                    legend { (tx("Hazır imaj ve ilk kurulum (cloud-init)")) }
                     div class="form" {
-                        (field("image", "Disk imajı", false,
-                            if opts.images.is_empty() { "İmaj yok. Bulut imajını (qcow2) ya da başka sanallaştırıcıdan aldığınız diski (vmdk, vdi, vhdx) Depolama sayfasından yükleyin ya da sunucuda veri dizininin cloud/ klasörüne koyun." } else { "Disk bu imajdan kopyalanır (vmdk, vdi, vhdx qcow2'ye çevrilir) ve aşağıdaki boyuta büyütülür." },
+                        (field("image", (tx("Disk imajı")), false,
+                            if opts.images.is_empty() { (tx("İmaj yok. Bulut imajını (qcow2) ya da başka sanallaştırıcıdan aldığınız diski (vmdk, vdi, vhdx) Depolama sayfasından yükleyin ya da sunucuda veri dizininin cloud/ klasörüne koyun.")) } else { (tx("Disk bu imajdan kopyalanır (vmdk, vdi, vhdx qcow2'ye çevrilir) ve aşağıdaki boyuta büyütülür.")) },
                             html! {
                                 select id="image" name="image" {
-                                    option value="" { "(boş disk)" }
+                                    option value="" { (tx("(boş disk)")) }
                                     @for i in &opts.images { option value=(i) selected[*i == f.image] { (i) } }
                                 }
                             }))
-                        (field("ci_user", "Kullanıcı", false, "Boş bırakırsanız “redox”. Parolasız sudo yetkisiyle açılır.", html! {
+                        (field("ci_user", (tx("Kullanıcı")), false, (tx("Boş bırakırsanız “redox”. Parolasız sudo yetkisiyle açılır.")), html! {
                             input id="ci_user" name="ci_user" type="text" value=(f.ci_user) autocomplete="off" spellcheck="false";
                         }))
                         div class="field full" {
-                            label for="ci_ssh_key" { "SSH açık anahtarı" }
+                            label for="ci_ssh_key" { (tx("SSH açık anahtarı")) }
                             textarea id="ci_ssh_key" name="ci_ssh_key" rows="3" spellcheck="false" autocomplete="off" { (f.ci_ssh_key) }
-                            span class="hint" { "Tek satır: ssh-ed25519 AAAA… Bulut imajlarında parola ile giriş kapalıdır; anahtar vermezseniz giriş yapamazsınız." }
+                            span class="hint" { (tx("Tek satır: ssh-ed25519 AAAA… Bulut imajlarında parola ile giriş kapalıdır; anahtar vermezseniz giriş yapamazsınız.")) }
                         }
                     }
                 }
@@ -174,67 +174,67 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
             fieldset {
                 legend { "Disk" }
                 div class="form" {
-                    (field("storage", "Depolama", true, "Seçtiğiniz düğümde kullanılabilir olmalı.", html! {
+                    (field("storage", (tx("Depolama")), true, (tx("Seçtiğiniz düğümde kullanılabilir olmalı.")), html! {
                         select id="storage" name="storage" aria-describedby=[describe("storage")] {
                             @for id in &storage_ids { option value=(id) selected[*id == f.storage] { (id) } }
                         }
                     }))
-                    (field("disk_gb", "Boyut (GB)", true, "", html! {
+                    (field("disk_gb", (tx("Boyut (GB)")), true, "", html! {
                         input id="disk_gb" name="disk_gb" type="text" inputmode="numeric" value=(f.disk_gb) required aria-describedby=[describe("disk_gb")];
                     }))
                 }
             }
             fieldset {
-                legend { "CPU ve Bellek" }
+                legend { (tx("CPU ve Bellek")) }
                 div class="form" {
-                    (field("cores", "Çekirdek", true, "", html! {
+                    (field("cores", (tx("Çekirdek")), true, "", html! {
                         input id="cores" name="cores" type="text" inputmode="numeric" value=(f.cores) required aria-describedby=[describe("cores")];
                     }))
-                    (field("memory_mb", "Bellek (MB)", true, &format!("En az {} MB.", kind.min_memory_mb()), html! {
+                    (field("memory_mb", (tx("Bellek (MB)")), true, &tfmt(format!("En az {} MB.", kind.min_memory_mb())), html! {
                         input id="memory_mb" name="memory_mb" type="text" inputmode="numeric" value=(f.memory_mb) required aria-describedby=[describe("memory_mb")];
                     }))
                     @if kind == GuestKind::Vm {
-                        (field("firmware", "Donanım yazılımı", false, "Windows 11 için UEFI + güvenli önyükleme ve TPM gerekir.", html! {
+                        (field("firmware", (tx("Donanım yazılımı")), false, (tx("Windows 11 için UEFI + güvenli önyükleme ve TPM gerekir.")), html! {
                             select id="firmware" name="firmware" {
                                 option value="bios" selected[f.firmware == "bios"] { "BIOS (SeaBIOS)" }
                                 option value="uefi" selected[f.firmware == "uefi"] { "UEFI" }
-                                option value="uefi-secure" selected[f.firmware == "uefi-secure"] { "UEFI + güvenli önyükleme" }
+                                option value="uefi-secure" selected[f.firmware == "uefi-secure"] { (tx("UEFI + güvenli önyükleme")) }
                             }
                         }))
                         div class="field" {
-                            span class="label" { "Güvenlik yongası" }
-                            label class="check" { input type="checkbox" name="tpm" value="1" checked[f.tpm.is_some()]; "Sanal TPM 2.0 ekle" }
+                            span class="label" { (tx("Güvenlik yongası")) }
+                            label class="check" { input type="checkbox" name="tpm" value="1" checked[f.tpm.is_some()]; (tx("Sanal TPM 2.0 ekle")) }
                         }
                     }
                 }
             }
             fieldset {
-                legend { "Ağ ve Başlatma" }
+                legend { (tx("Ağ ve Başlatma")) }
                 div class="form" {
                     @if p.real {
-                        (field("bridge", "Ağ", true, "NAT: konuk internete çıkar, dışarıdan görünmez. Köprü: sunucunun ağına doğrudan bağlanır.", html! {
+                        (field("bridge", (tx("Ağ")), true, (tx("NAT: konuk internete çıkar, dışarıdan görünmez. Köprü: sunucunun ağına doğrudan bağlanır.")), html! {
                             select id="bridge" name="bridge" {
                                 option value="nat" selected[f.bridge == "nat"] { "NAT" }
-                                @for b in &opts.bridges { option value=(b) selected[*b == f.bridge] { "Köprü: " (b) } }
+                                @for b in &opts.bridges { option value=(b) selected[*b == f.bridge] { (tx("Köprü: ")) (b) } }
                             }
                         }))
                     } @else {
-                        (field("bridge", "Köprü", false, "", html! {
+                        (field("bridge", (tx("Köprü")), false, "", html! {
                             input id="bridge" name="bridge" type="text" value=(f.bridge);
                         }))
                     }
                     div class="field" {
-                        span class="label" { "Açılış" }
-                        label class="check" { input type="checkbox" name="onboot" value="1" checked[f.onboot.is_some()]; "Düğüm açıldığında başlat" }
+                        span class="label" { (tx("Açılış")) }
+                        label class="check" { input type="checkbox" name="onboot" value="1" checked[f.onboot.is_some()]; (tx("Düğüm açıldığında başlat")) }
                     }
                 }
             }
             div class="savebar" {
-                span class="note" { "Konuk durdurulmuş halde eklenir." }
-                a class="btn" href="/guests" { "Vazgeç" }
-                button class="btn primary" type="submit" { (icon("plus")) "Oluştur" }
+                span class="note" { (tx("Konuk durdurulmuş halde eklenir.")) }
+                a class="btn" href="/guests" { (tx("Vazgeç")) }
+                button class="btn primary" type="submit" { (icon("plus")) (tx("Oluştur")) }
             }
         }
     };
-    layout(p, title, &[("Konuklar", "/guests"), (title, "")], true, body)
+    layout(p, title, &[((tx("Konuklar")), "/guests"), (title, "")], true, body)
 }

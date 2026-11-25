@@ -191,6 +191,8 @@ struct Inner {
     backup_age_days: Mutex<u32>,
     /// Dört göz ilkesi: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.
     four_eyes: std::sync::atomic::AtomicBool,
+    /// Çerezi olmayan ziyaretçiye gösterilecek dil İngilizce mi? (`--lang en`)
+    english: std::sync::atomic::AtomicBool,
     /// API hız sınırı: (dakikadaki istek sınırı; 0 kapalı, kullanıcı → (dakika, o dakikadaki istek sayısı)).
     api_rate: Mutex<ApiRate>,
     /// Günlük yedek raporunun saati (gece yarısından dakika) ve son gönderildiği gün.
@@ -226,11 +228,21 @@ impl AppState {
             auto_test: Mutex::new((0, 180)),
             backup_age_days: Mutex::new(7),
             four_eyes: std::sync::atomic::AtomicBool::new(false),
+            english: std::sync::atomic::AtomicBool::new(false),
             api_rate: Mutex::new((0, HashMap::new())),
             report: Mutex::new((None, None)),
             history: Mutex::new(HashMap::new()),
             long: Mutex::new(Default::default()),
         }))
+    }
+
+    /// Çerezi olmayan ziyaretçinin göreceği dil.
+    pub fn set_default_lang(&self, lang: crate::i18n::Lang) {
+        self.0.english.store(lang == crate::i18n::Lang::En, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn default_lang(&self) -> crate::i18n::Lang {
+        if self.0.english.load(std::sync::atomic::Ordering::Relaxed) { crate::i18n::Lang::En } else { crate::i18n::Lang::Tr }
     }
 
     pub fn auth(&self) -> &Auth {

@@ -1,4 +1,6 @@
 //! RedoX VE sunucusu: JSON API ve sunucuda üretilen (JavaScript'siz) arayüz.
+// Çeviri işlevi çağrıları hem maud şablonunda hem olağan ifadede geçerli olsun diye parantezlidir.
+#![allow(unused_parens, clippy::double_parens)]
 
 pub mod alerts;
 pub mod api;
@@ -37,6 +39,8 @@ pub mod view_admin;
 pub mod view_ops;
 
 use std::net::SocketAddr;
+
+pub mod i18n;
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::header::{HeaderName, HeaderValue, AUTHORIZATION, CACHE_CONTROL, COOKIE, HOST, ORIGIN, WWW_AUTHENTICATE};
@@ -119,6 +123,7 @@ pub fn app(state: AppState) -> Router {
         .route("/help", get(ui::help))
         .route("/cmd", post(ui::command))
         .route("/theme", get(ui::theme))
+        .route("/lang", get(ui::lang))
         .route("/assets/{file}", get(ui::asset))
         .route("/assets/fonts/{file}", get(ui_admin::font))
         .route("/metrics", get(ui_admin::metrics))
@@ -155,6 +160,22 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .map(|(_, v)| v)
 }
 
+/// İsteğin dili. Sayfalarda: `lang` çerezi, yoksa sunucunun varsayılanı (`--lang`). API'de istemci
+/// `Accept-Language` ile de seçebilir (tarayıcının dil başlığı sayfaları kendiliğinden İngilizceye çevirmesin
+/// diye sayfalarda bakılmaz).
+fn request_lang(st: &AppState, req: &Request) -> i18n::Lang {
+    if let Some(lang) = cookie(req.headers(), "lang").and_then(i18n::Lang::parse) {
+        return lang;
+    }
+    let path = req.uri().path();
+    if path.starts_with("/api/") {
+        if let Some(lang) = req.headers().get(axum::http::header::ACCEPT_LANGUAGE).and_then(|v| v.to_str().ok()).and_then(i18n::Lang::from_accept) {
+            return lang;
+        }
+    }
+    st.default_lang()
+}
+
 /// Her isteğin geçtiği kapı: site dışı istekleri reddeder, kimliği doğrular,
 /// rolü denetler ve yanıtlara güvenlik başlıklarını ekler.
 async fn guard(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
@@ -165,8 +186,10 @@ async fn guard(State(st): State<AppState>, mut req: Request, next: Next) -> Resp
         let ip = req.extensions().get::<ClientIp>().map(|c| c.0.clone()).unwrap_or_default();
         (me.user.clone(), ip, format!("{} {}", req.method(), req.uri().path()))
     });
+    // İsteğin tamamı seçilen dilde işlenir: sayfalar, bildirimler ve hata iletileri.
+    let lang = request_lang(&st, &req);
     let mut res = match outcome {
-        Ok(()) => next.run(req).await,
+        Ok(()) => i18n::scope(lang, next.run(req)).await,
         Err(denied) => *denied,
     };
     if let Some((user, ip, action)) = trail {

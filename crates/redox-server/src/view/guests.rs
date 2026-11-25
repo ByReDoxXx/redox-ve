@@ -25,43 +25,43 @@ pub fn guests(p: &Page, only: &str) -> String {
     };
     let body = html! {
         (page_head(
-            html! { "Konuklar" },
+            html! { (tx("Konuklar")) },
             sub(vec![
                 html! { span { (c.guests.len()) " konuk" } },
-                html! { span class="st run" { (running) " çalışıyor" } },
-                html! { span { "toplam " (cores) " vCPU, " (mb_as_gb(mem)) " GB bellek ayrılmış" } },
+                html! { span class="st run" { (running) (tx(" çalışıyor")) } },
+                html! { span { "toplam " (cores) " vCPU, " (mb_as_gb(mem)) (tx(" GB bellek ayrılmış")) } },
             ]),
             html! {
                 @if p.admin {
-                    @if p.ct { a class="btn" href="/guests/new?kind=ct" { (icon("plus")) "Konteyner" } }
-                    a class="btn primary" href="/guests/new?kind=vm" { (icon("plus")) "Sanal Makine" }
+                    @if p.ct { a class="btn" href="/guests/new?kind=ct" { (icon("plus")) (tx("Konteyner")) } }
+                    a class="btn primary" href="/guests/new?kind=vm" { (icon("plus")) (tx("Sanal Makine")) }
                 }
             },
             "vm list",
             &[],
         ))
         div class="tools" {
-            nav class="seg" aria-label="Duruma göre süz" {
-                @for (key, label) in [("", "Tümü"), ("calisan", "Çalışan"), ("kapali", "Kapalı"), ("sablon", "Şablon")] {
+            nav class="seg" aria-label=(tx("Duruma göre süz")) {
+                @for (key, label) in [("", (tx("Tümü"))), ("calisan", (tx("Çalışan"))), ("kapali", (tx("Kapalı"))), ("sablon", (tx("Şablon")))] {
                     a href=(href(key)) aria-current=[(key == only).then_some("true")] { (label) " " b { (c.guests.iter().filter(|g| is(g, key)).count()) } }
                 }
             }
             form class="find" method="get" action="/guests" role="search" {
                 (icon("prompt"))
                 @if !only.is_empty() { input type="hidden" name="tab" value=(only); }
-                input type="search" name="q" value=(p.q) placeholder="ad, kimlik ya da etiket" aria-label="Konukları filtrele";
+                input type="search" name="q" value=(p.q) placeholder=(tx("ad, kimlik ya da etiket")) aria-label=(tx("Konukları filtrele"));
             }
             (bulk_tools(p, "/guests"))
         }
         (guest_table(p, &shown, "/guests", !only.is_empty() || !p.q.is_empty(), true))
     };
-    layout(p, "Konuklar", &[("Konuklar", "/guests")], false, body)
+    layout(p, (tx("Konuklar")), &[((tx("Konuklar")), "/guests")], false, body)
 }
 
 /// Konuk sayfasının başlığındaki eylemler: sık kullanılanlar düğme, kalanı "Diğer" menüsünde.
 pub(super) fn guest_actions(p: &Page, g: &Guest) -> Markup {
     if !p.may_operate(g) {
-        return html! { span class="pill idle" { @if p.operator { "Bu konuk yetki kapsamınızda değil" } @else { "Salt okunur hesap" } } };
+        return html! { span class="pill idle" { @if p.operator { (tx("Bu konuk yetki kapsamınızda değil")) } @else { (tx("Salt okunur hesap")) } } };
     }
     let base = format!("/guests/{}", g.vmid);
     let free = g.lock.is_none();
@@ -72,36 +72,36 @@ pub(super) fn guest_actions(p: &Page, g: &Guest) -> Markup {
     let can_backup = free && (stopped || live);
     html! {
         form class="acts" method="post" action={ (base) "/action" } {
-            button class="btn go" name="action" value="start" disabled[!can(Action::Start) || g.hw.template] { (icon("play")) "Başlat" }
+            button class="btn go" name="action" value="start" disabled[!can(Action::Start) || g.hw.template] { (icon("play")) (tx("Başlat")) }
             div class="group" {
-                button class="btn" name="action" value="stop" disabled[!can(Action::Stop)] { (icon("stop")) "Kapat" }
-                button class="btn" name="action" value="reboot" disabled[!can(Action::Reboot)] { (icon("restart")) "Yeniden Başlat" }
+                button class="btn" name="action" value="stop" disabled[!can(Action::Stop)] { (icon("stop")) (tx("Kapat")) }
+                button class="btn" name="action" value="reboot" disabled[!can(Action::Reboot)] { (icon("restart")) (tx("Yeniden Başlat")) }
             }
             div class="group" {
                 button class="btn" name="action" value=(toggle.as_str()) disabled[!can(toggle)] {
-                    (icon(if toggle == Action::Resume { "play" } else { "pause" })) (toggle.label())
+                    (icon(if toggle == Action::Resume { "play" } else { "pause" })) (tx(toggle.label()))
                 }
                 @if p.admin && g.kind == GuestKind::Vm {
-                    button class="btn" formaction={ (base) "/suspend" } disabled[stopped || !free] { (icon("half")) "Askıya Al" }
+                    button class="btn" formaction={ (base) "/suspend" } disabled[stopped || !free] { (icon("half")) (tx("Askıya Al")) }
                 }
             }
             details class="menu" {
-                summary class="btn" { "Diğer" (icon("caret")) }
+                summary class="btn" { (tx("Diğer")) (icon("caret")) }
                 div class="menu-list" {
-                    button formaction={ (base) "/backups" } disabled[!can_backup] { (icon("backup")) "Şimdi yedekle" }
-                    a href={ (base) "?tab=goruntuler" } { (icon("snapshot")) "Anlık görüntü al" }
+                    button formaction={ (base) "/backups" } disabled[!can_backup] { (icon("backup")) (tx("Şimdi yedekle")) }
+                    a href={ (base) "?tab=goruntuler" } { (icon("snapshot")) (tx("Anlık görüntü al")) }
                     @if p.admin {
                         hr;
                         @if disk_ops(p, g) {
-                            a href={ (base) "?tab=cogalt" } { (icon("plus")) "Klonla…" small { "kapalıyken" } }
-                            a href={ (base) "?tab=cogalt" } { (icon("vm")) @if g.hw.template { "Şablonluktan çıkar" } @else { "Şablona çevir" } small { "kapalıyken" } }
-                            @if p.real { a href={ (base) "?tab=cogalt" } { (icon("disk")) "OVA olarak indir" small { "kapalıyken" } } }
+                            a href={ (base) "?tab=cogalt" } { (icon("plus")) (tx("Klonla…")) small { (tx("kapalıyken")) } }
+                            a href={ (base) "?tab=cogalt" } { (icon("vm")) @if g.hw.template { (tx("Şablonluktan çıkar")) } @else { (tx("Şablona çevir")) } small { (tx("kapalıyken")) } }
+                            @if p.real { a href={ (base) "?tab=cogalt" } { (icon("disk")) (tx("OVA olarak indir")) small { (tx("kapalıyken")) } } }
                             hr;
                         }
                         @if free && stopped {
-                            a class="danger" href={ (base) "/delete" } { (icon("trash")) "Konuğu sil…" }
+                            a class="danger" href={ (base) "/delete" } { (icon("trash")) (tx("Konuğu sil…")) }
                         } @else {
-                            button type="button" disabled title="Silmek için önce kapatın" { (icon("trash")) "Konuğu sil…" small { "kapalıyken" } }
+                            button type="button" disabled title=(tx("Silmek için önce kapatın")) { (icon("trash")) (tx("Konuğu sil…")) small { (tx("kapalıyken")) } }
                         }
                     }
                 }
@@ -124,14 +124,14 @@ pub(crate) fn guest_label(g: &Guest) -> String {
 pub(super) fn guest_head(p: &Page, g: &Guest, tab: &str) -> Markup {
     let base = format!("/guests/{}", g.vmid);
     let link = |label: &'static str, key: &str| (label, format!("{base}?tab={key}"), tab == key);
-    let mut tabs = vec![("Özet", base.clone(), tab == "ozet")];
+    let mut tabs = vec![((tx("Özet")), base.clone(), tab == "ozet")];
     // Konteynerde konsol, komut çalıştırma olarak yalnızca gerçek sürücüde vardır.
     if p.may_operate(g) && (g.kind == GuestKind::Vm || p.real) {
-        tabs.push(link("Konsol", "konsol"));
+        tabs.push(link((tx("Konsol")), "konsol"));
     }
-    tabs.extend([link("Donanım", "donanim"), link("Seçenekler", "secenekler"), link("Anlık Görüntüler", "goruntuler"), link("Yedekler", "yedekler")]);
+    tabs.extend([link((tx("Donanım")), "donanim"), link((tx("Seçenekler")), "secenekler"), link((tx("Anlık Görüntüler")), "goruntuler"), link((tx("Yedekler")), "yedekler")]);
     if p.admin {
-        tabs.push(link(if disk_ops(p, g) { "Çoğalt ve Taşı" } else { "Çoğalt" }, "cogalt"));
+        tabs.push(link(if disk_ops(p, g) { (tx("Çoğalt ve Taşı")) } else { (tx("Çoğalt")) }, "cogalt"));
     }
     let cli = format!("{} show {}", g.kind, g.vmid);
     let mut facts = vec![guest_state(g), html! { a href={ "/nodes/" (g.node) } { (g.node) } }];
@@ -140,14 +140,14 @@ pub(super) fn guest_head(p: &Page, g: &Guest, tab: &str) -> Markup {
     }
     facts.push(html! { span { (g.agent.as_deref().unwrap_or(&g.os)) } });
     if g.status != GuestStatus::Stopped {
-        facts.push(html! { span { (guest_uptime(g, p.now)) " açık" } });
+        facts.push(html! { span { (guest_uptime(g, p.now)) (tx(" açık")) } });
     }
     html! {
         (page_head(
             html! {
                 span class="id" { (g.vmid) } (g.name)
-                @if g.hw.template { span class="tag gold" { "şablon" } }
-                @if g.hw.base.is_some() { span class="tag gold" { "bağlı klon" } }
+                @if g.hw.template { span class=(tx("tag gold")) { (tx("şablon")) } }
+                @if g.hw.base.is_some() { span class=(tx("tag gold")) { (tx("bağlı klon")) } }
             },
             sub(facts),
             guest_actions(p, g),
@@ -157,10 +157,10 @@ pub(super) fn guest_head(p: &Page, g: &Guest, tab: &str) -> Markup {
         @if g.hw.suspended {
             div class="notice" role="status" {
                 (icon("half"))
-                span { "Bu konuk askıda: başlatırsanız kaldığı yerden devam eder. Askıdayken disk ve donanım değiştirilemez." }
+                span { (tx("Bu konuk askıda: başlatırsanız kaldığı yerden devam eder. Askıdayken disk ve donanım değiştirilemez.")) }
                 @if p.admin {
                     form method="post" action={ (base) "/discard-suspend" } {
-                        button class="btn sm danger" type="submit" disabled[g.lock.is_some()] title="Konuk sıfırdan açılır; kaydedilmemiş bellek içeriği kaybolur" { "Askı Durumunu At" }
+                        button class="btn sm danger" type="submit" disabled[g.lock.is_some()] title=(tx("Konuk sıfırdan açılır; kaydedilmemiş bellek içeriği kaybolur")) { (tx("Askı Durumunu At")) }
                     }
                 }
             }
@@ -170,11 +170,11 @@ pub(super) fn guest_head(p: &Page, g: &Guest, tab: &str) -> Markup {
 
 pub(super) fn firewall_text(g: &Guest) -> String {
     if !g.hw.firewall {
-        "kapalı".to_string()
+        (tx("kapalı")).to_string()
     } else if g.hw.fw_rules.is_empty() {
-        "açık · gelen trafik kapalı".to_string()
+        (tx("açık · gelen trafik kapalı")).to_string()
     } else {
-        format!("açık · {}", g.hw.fw_rules.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
+        tfmt(format!("açık · {}", g.hw.fw_rules.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")))
     }
 }
 
@@ -190,10 +190,10 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
     html! {
         div class="stack" {
             div class="stats" {
-                (stat("İşlemci", &g.cpu_pct.to_string(), "%", &format!("{} vCPU", g.cores), Some(g.cpu_pct)))
-                (stat("Bellek", &mp.to_string(), "%", &format!("{} / {} GB", mb_as_gb(g.mem_used_mb), mb_as_gb(g.mem_total_mb)), Some(mp)))
+                (stat((tx("İşlemci")), &g.cpu_pct.to_string(), "%", &format!("{} vCPU", g.cores), Some(g.cpu_pct)))
+                (stat((tx("Bellek")), &mp.to_string(), "%", &format!("{} / {} GB", mb_as_gb(g.mem_used_mb), mb_as_gb(g.mem_total_mb)), Some(mp)))
                 (stat("Disk", &disk_total(g).to_string(), " GB", &disk_detail, None))
-                (stat("Çalışma Süresi", &guest_uptime(g, p.now), "", &format!("düğüm {}", g.node), None))
+                (stat((tx("Çalışma Süresi")), &guest_uptime(g, p.now), "", &tfmt(format!("düğüm {}", g.node)), None))
             }
             div class="cols" {
                 div class="stack" {
@@ -201,135 +201,135 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
                     @if p.real {
                         @let u = c.usage_of(g.vmid);
                         div class="card" {
-                            header { h2 { "Kaynak ölçümü" } span class="note" { @if u.since > 0 { (datetime(u.since)) " tarihinden beri" } @else { "henüz ölçüm yok" } } }
+                            header { h2 { (tx("Kaynak ölçümü")) } span class="note" { @if u.since > 0 { (datetime(u.since)) (tx(" tarihinden beri")) } @else { (tx("henüz ölçüm yok")) } } }
                             dl class="kv" {
-                                dt { "Açık kaldığı süre" } dd class="mono" { (uptime(u.uptime_secs)) }
-                                dt { "İşlemci" } dd class="mono" { (format!("{:.2}", u.cpu_core_hours())) " çekirdek-saat" }
-                                dt { "Bellek" } dd class="mono" { (format!("{:.2}", u.mem_gb_hours())) " GB-saat" }
-                                dt { "Disk okuma / yazma" } dd class="mono" { (u.disk_read_bytes >> 20) " MB / " (u.disk_write_bytes >> 20) " MB" }
-                                dt { "Ağ alınan / gönderilen" } dd class="mono" { (u.net_rx_bytes >> 20) " MB / " (u.net_tx_bytes >> 20) " MB" @if g.bridge == redox_core::NAT { " " span class="muted" { "(NAT'taki kart sayılmaz)" } } }
+                                dt { (tx("Açık kaldığı süre")) } dd class="mono" { (uptime(u.uptime_secs)) }
+                                dt { (tx("İşlemci")) } dd class="mono" { (format!("{:.2}", u.cpu_core_hours())) (tx(" çekirdek-saat")) }
+                                dt { (tx("Bellek")) } dd class="mono" { (format!("{:.2}", u.mem_gb_hours())) " GB-saat" }
+                                dt { (tx("Disk okuma / yazma")) } dd class="mono" { (u.disk_read_bytes >> 20) " MB / " (u.disk_write_bytes >> 20) " MB" }
+                                dt { (tx("Ağ alınan / gönderilen")) } dd class="mono" { (u.net_rx_bytes >> 20) " MB / " (u.net_tx_bytes >> 20) " MB" @if g.bridge == redox_core::NAT { " " span class="muted" { (tx("(NAT'taki kart sayılmaz)")) } } }
                             }
-                            footer { "Birikimli sayaçlardır: konuk kapanıp açılsa da sürer. Dışa aktarım: " span class="mono" { "redox usage" } " ya da " span class="mono" { "GET /api/v1/usage" } "." }
+                            footer { (tx("Birikimli sayaçlardır: konuk kapanıp açılsa da sürer. Dışa aktarım: ")) span class="mono" { "redox usage" } (tx(" ya da ")) span class="mono" { "GET /api/v1/usage" } "." }
                         }
                     }
                     div class="card" {
-                        header { h2 { "Bu konuğun etkinliği" } div class="end" { a class="btn sm quiet" href={ "/tasks?q=" (g.vmid) } { "Tümü" } } }
-                        (feed(&mine, "Bu konuk için kayıtlı görev yok."))
+                        header { h2 { (tx("Bu konuğun etkinliği")) } div class="end" { a class="btn sm quiet" href={ "/tasks?q=" (g.vmid) } { (tx("Tümü")) } } }
+                        (feed(&mine, (tx("Bu konuk için kayıtlı görev yok."))))
                     }
                 }
                 div class="stack" {
                     div class="card" {
-                        header { h2 { "Konuk" } span class="note mono" { (g.vmid) ".conf" } }
+                        header { h2 { (tx("Konuk")) } span class="note mono" { (g.vmid) ".conf" } }
                         dl class="kv" {
-                            dt { "Tür" } dd { (g.kind.long_label()) " (" (g.kind.backend()) ")" }
-                            dt { "İşletim sistemi" } dd class="mono" { (g.os) }
+                            dt { (tx("Tür")) } dd { (tx(g.kind.long_label())) " (" (g.kind.backend()) ")" }
+                            dt { (tx("İşletim sistemi")) } dd class="mono" { (g.os) }
                             @if g.kind == GuestKind::Vm && p.real {
-                                dt { "Konuk ajanı" } dd {
+                                dt { (tx("Konuk ajanı")) } dd {
                                     @match (&g.agent, g.status) {
-                                        (Some(os), _) => { span class="pill ok" { (icon("check")) "Çalışıyor" } span class="mono" { (os) } },
+                                        (Some(os), _) => { span class="pill ok" { (icon("check")) (tx("Çalışıyor")) } span class="mono" { (os) } },
                                         (None, GuestStatus::Stopped) => { span class="dim" { "-" } },
-                                        (None, _) => { span class="dim" { "Yanıt yok" } span class="muted" { "(konukta qemu-guest-agent kurulursa adres ve tutarlı yedek gelir)" } },
+                                        (None, _) => { span class="dim" { (tx("Yanıt yok")) } span class="muted" { (tx("(konukta qemu-guest-agent kurulursa adres ve tutarlı yedek gelir)")) } },
                                     }
                                 }
                             }
-                            dt { "IP adresi" } dd class="mono" { (g.ip.as_deref().unwrap_or("-")) }
+                            dt { (tx("IP adresi")) } dd class="mono" { (g.ip.as_deref().unwrap_or("-")) }
                             @let fs = c.filesystems_of(g.vmid);
                             @if !fs.is_empty() {
-                                dt { "Konuk içi diskler" } dd class="mono" {
+                                dt { (tx("Konuk içi diskler")) } dd class="mono" {
                                     @for f in fs {
                                         @let tone = if f.pct() >= 90 { "pill err" } else if f.pct() >= 80 { "pill warn" } else { "tag" };
                                         span class=(tone) title={ (f.used_mb) " / " (f.total_mb) " MB" } { (f.mount) " %" (f.pct()) } " "
                                     }
                                 }
                             }
-                            dt { "Ağ" } dd class="mono" {
-                                @if g.bridge == redox_core::NAT { "NAT" } @else { "köprü: " (g.bridge) @if g.hw.vlan > 0 { " · VLAN " (g.hw.vlan) } }
+                            dt { (tx("Ağ")) } dd class="mono" {
+                                @if g.bridge == redox_core::NAT { "NAT" } @else { (tx("köprü: ")) (g.bridge) @if g.hw.vlan > 0 { " · VLAN " (g.hw.vlan) } }
                                 @for (i, n) in g.hw.nics.iter().enumerate() {
                                     @let (network, vlan) = redox_core::hw::parse_nic(n).unwrap_or((n.as_str(), 0));
                                     span class="dim" { "+ " @if network == redox_core::NAT { "NAT" } @else { (network) } @if vlan > 0 { " · VLAN " (vlan) } @if p.real { " (" (redox_core::mac_for_nic(g.vmid, i as u8 + 1)) ")" } }
                                 }
                             }
-                            @if p.real { dt { "MAC adresi" } dd class="mono" { (redox_core::mac_for(g.vmid)) } }
-                            dt { "Donanım" } dd class="mono" {
+                            @if p.real { dt { (tx("MAC adresi")) } dd class="mono" { (redox_core::mac_for(g.vmid)) } }
+                            dt { (tx("Donanım")) } dd class="mono" {
                                 (g.cores) " vCPU · " (g.mem_total_mb) " MB"
                                 @if g.kind == GuestKind::Vm { " · " (g.hw.firmware_label()) @if g.hw.tpm { " · TPM 2.0" } }
                             }
                             dt { "Disk" } dd class="mono" { (g.disk_gb) " GB · " (g.storage) @for d in &g.hw.disks { " + " (d.size_gb) " GB" } }
                             @if g.hw.disk_mbps > 0 || g.hw.disk_iops > 0 || g.hw.net_mbps > 0 {
-                                dt { "Hız sınırı" } dd class="mono" {
+                                dt { (tx("Hız sınırı")) } dd class="mono" {
                                     @if g.hw.disk_mbps > 0 { span { "disk " (g.hw.disk_mbps) " MB/sn" } }
-                                    @if g.hw.disk_iops > 0 { span { "disk " (g.hw.disk_iops) " işlem/sn" } }
-                                    @if g.hw.net_mbps > 0 { span { "ağ " (g.hw.net_mbps) " Mbit/sn" } }
+                                    @if g.hw.disk_iops > 0 { span { "disk " (g.hw.disk_iops) (tx(" işlem/sn")) } }
+                                    @if g.hw.net_mbps > 0 { span { (tx("ağ ")) (g.hw.net_mbps) " Mbit/sn" } }
                                 }
                             }
-                            dt { "Kurulum kalıbı" } dd class="mono" { (g.iso.as_deref().unwrap_or("-")) }
-                            @if let Some(image) = &g.hw.image { dt { "Bulut imajı" } dd class="mono" { (image) } }
+                            dt { (tx("Kurulum kalıbı")) } dd class="mono" { (g.iso.as_deref().unwrap_or("-")) }
+                            @if let Some(image) = &g.hw.image { dt { (tx("Bulut imajı")) } dd class="mono" { (image) } }
                             @if let Some(key) = &g.hw.ci_ssh_key {
                                 dt { "cloud-init" } dd class="mono" {
                                     (g.hw.ci_user.as_deref().unwrap_or(redox_core::hw::DEFAULT_CI_USER)) " · " (key.split(' ').next().unwrap_or("")) " " (key.split(' ').nth(2).unwrap_or(""))
                                 }
                             }
                             @if !g.hw.usb.is_empty() || !g.hw.pci.is_empty() {
-                                dt { "Aktarılan aygıtlar" } dd class="mono" {
+                                dt { (tx("Aktarılan aygıtlar")) } dd class="mono" {
                                     @for (i, d) in g.hw.usb.iter().map(|u| format!("USB {u}")).chain(g.hw.pci.iter().map(|p| format!("PCI {p}"))).enumerate() { @if i > 0 { ", " } (d) }
                                 }
                             }
-                            @if g.hw.template { dt { "Şablon" } dd { span class="tag gold" { "şablon" } "Başlatılamaz; klon kaynağıdır." } }
-                            @if let Some(b) = g.hw.base { dt { "Şablon" } dd { "Bağlı klon: " a class="mono" href={ "/guests/" (b) } { (b) } } }
-                            dt { "Açılışta başlat" } dd {
+                            @if g.hw.template { dt { (tx("Şablon")) } dd { span class=(tx("tag gold")) { (tx("şablon")) } (tx("Başlatılamaz; klon kaynağıdır.")) } }
+                            @if let Some(b) = g.hw.base { dt { (tx("Şablon")) } dd { (tx("Bağlı klon: ")) a class="mono" href={ "/guests/" (b) } { (b) } } }
+                            dt { (tx("Açılışta başlat")) } dd {
                                 @if g.onboot {
-                                    "Evet"
-                                    @if g.hw.boot_order > 0 { span class="muted" { "sıra " (g.hw.boot_order) } }
-                                    @if g.hw.boot_delay > 0 { span class="muted" { "sonra " (g.hw.boot_delay) " sn bekle" } }
-                                } @else { "Hayır" }
+                                    (tx("Evet"))
+                                    @if g.hw.boot_order > 0 { span class="muted" { (tx("sıra ")) (g.hw.boot_order) } }
+                                    @if g.hw.boot_delay > 0 { span class="muted" { "sonra " (g.hw.boot_delay) (tx(" sn bekle")) } }
+                                } @else { (tx("Hayır")) }
                             }
                             @if !g.hw.shares.is_empty() {
-                                dt { "Paylaşımlar" } dd class="mono" { @for s in &g.hw.shares { span class="tag" { (s.name) @if s.readonly { " · salt okunur" } } } }
+                                dt { (tx("Paylaşımlar")) } dd class="mono" { @for s in &g.hw.shares { span class="tag" { (s.name) @if s.readonly { (tx(" · salt okunur")) } } } }
                             }
-                            @if g.hw.restart { dt { "Kapanırsa" } dd { "kendiliğinden yeniden başlatılır" } }
+                            @if g.hw.restart { dt { (tx("Kapanırsa")) } dd { (tx("kendiliğinden yeniden başlatılır")) } }
                             @if !g.hw.schedules.is_empty() {
-                                dt { "Zamanlanmış" } dd {
-                                    @for s in &g.hw.schedules { span class="tag" { (s.action.label()) " " (s.time) " · " (s.days_label()) } }
+                                dt { (tx("Zamanlanmış")) } dd {
+                                    @for s in &g.hw.schedules { span class="tag" { (tx(s.action.label())) " " (s.time) " · " (tfmt(s.days_label())) } }
                                 }
                             }
-                            dt { "Etiketler" } dd { @if g.tags.is_empty() { "-" } @for t in &g.tags { a class="tag" href={ "/guests?q=" (t) } { (t) } } }
-                            dt { "Güvenlik duvarı" } dd class="mono" {
+                            dt { (tx("Etiketler")) } dd { @if g.tags.is_empty() { "-" } @for t in &g.tags { a class="tag" href={ "/guests?q=" (t) } { (t) } } }
+                            dt { (tx("Güvenlik duvarı")) } dd class="mono" {
                                 (firewall_text(g))
-                                @if g.hw.firewall && p.real && !crate::firewall::enforced(g) { span class="pill warn" { (icon("alert")) "NAT'ta etkisiz" } }
+                                @if g.hw.firewall && p.real && !crate::firewall::enforced(g) { span class="pill warn" { (icon("alert")) (tx("NAT'ta etkisiz")) } }
                             }
                             @if g.hw.nic_guard {
-                                dt { "Ağ kartı koruması" } dd { "açık · sahte MAC, DHCP sunucusu ve RA engellenir" }
+                                dt { (tx("Ağ kartı koruması")) } dd { (tx("açık · sahte MAC, DHCP sunucusu ve RA engellenir")) }
                             }
-                            dt { "Port yönlendirme" } dd class="mono" {
+                            dt { (tx("Port yönlendirme")) } dd class="mono" {
                                 @if g.forwards.is_empty() { "-" }
                                 @for f in &g.forwards { (f.host_port) " → " (f.guest_port) " " }
                             }
                         }
                     }
                     div class="card" {
-                        header { h2 { "Koruma" } }
+                        header { h2 { (tx("Koruma")) } }
                         dl class="kv" {
-                            dt { "Son yedek" } dd {
+                            dt { (tx("Son yedek")) } dd {
                                 @match last {
                                     Some(b) => {
                                         a href={ (base) "?tab=yedekler" } { (datetime(b.created)) }
-                                        @if b.cbt { span class="tag" { "hızlı" } }
+                                        @if b.cbt { span class="tag" { (tx("hızlı")) } }
                                         @if b.quiesced == Some(true) { span class="tag" { "donduruldu" } }
                                     },
-                                    None => span class="muted" { "Yedek yok" },
+                                    None => span class="muted" { (tx("Yedek yok")) },
                                 }
                             }
-                            dt { "Zamanlama" } dd {
+                            dt { (tx("Zamanlama")) } dd {
                                 @match &g.backup_time {
-                                    Some(t) => { "her gün " span class="mono" { (t) } ", son " (g.backup_keep) },
-                                    None => span class="muted" { "kapalı" },
+                                    Some(t) => { (tx("her gün ")) span class="mono" { (t) } (tx(", son ")) (g.backup_keep) },
+                                    None => span class="muted" { (tx("kapalı")) },
                                 }
                             }
-                            dt { "Dış kopya" } dd {
+                            dt { (tx("Dış kopya")) } dd {
                                 @if backups.is_empty() { span class="dim" { "-" } }
                                 @else { (backups.iter().filter(|b| b.offsite).count()) " / " (backups.len()) }
                             }
-                            dt { "Görüntüler" } dd { a href={ (base) "?tab=goruntuler" } { (g.snapshots.len()) " anlık görüntü" } }
+                            dt { (tx("Görüntüler")) } dd { a href={ (base) "?tab=goruntuler" } { (g.snapshots.len()) (tx(" anlık görüntü")) } }
                         }
                     }
                 }
@@ -361,7 +361,7 @@ pub fn guest(p: &Page, g: &Guest, tab: &str, opts: &FormOptions) -> String {
         (content)
     };
     let label = guest_label(g);
-    layout(p, &label, &[("Konuklar", "/guests"), (&label, "")], false, body)
+    layout(p, &label, &[((tx("Konuklar")), "/guests"), (&label, "")], false, body)
 }
 
 pub fn delete_confirm(p: &Page, g: &Guest) -> String {
@@ -369,15 +369,15 @@ pub fn delete_confirm(p: &Page, g: &Guest) -> String {
     let label = guest_label(g);
     let href = format!("/guests/{}", g.vmid);
     let body = html! {
-        (page_head(html! { span class="id" { (g.vmid) } (g.name) " silinsin mi?" }, html! {}, html! {}, &cli, &[]))
+        (page_head(html! { span class="id" { (g.vmid) } (g.name) (tx(" silinsin mi?")) }, html! {}, html! {}, &cli, &[]))
         div class="card" { div class="body" {
-            p class="lead" { (g.kind.long_label()) " " b { (g.vmid) " (" (g.name) ")" } " kalıcı olarak silinecek. Bu işlem geri alınamaz." }
-            p class="muted" { (g.disk_gb) " GB disk " span class="mono" { (g.storage) } " deposuna geri verilir." }
+            p class="lead" { (tx(g.kind.long_label())) " " b { (g.vmid) " (" (g.name) ")" } (tx(" kalıcı olarak silinecek. Bu işlem geri alınamaz.")) }
+            p class="muted" { (g.disk_gb) " GB disk " span class="mono" { (g.storage) } (tx(" deposuna geri verilir.")) }
             form class="btns" method="post" action={ "/guests/" (g.vmid) "/delete" } {
-                button class="btn danger solid" type="submit" { (icon("trash")) "Kalıcı Olarak Sil" }
-                a class="btn" href=(href) { "Vazgeç" }
+                button class="btn danger solid" type="submit" { (icon("trash")) (tx("Kalıcı Olarak Sil")) }
+                a class="btn" href=(href) { (tx("Vazgeç")) }
             }
         } }
     };
-    layout(p, &format!("{} sil", g.vmid), &[("Konuklar", "/guests"), (&label, &href), ("Sil", "")], true, body)
+    layout(p, &tfmt(format!("{} sil", g.vmid)), &[((tx("Konuklar")), "/guests"), (&label, &href), ((tx("Sil")), "")], true, body)
 }

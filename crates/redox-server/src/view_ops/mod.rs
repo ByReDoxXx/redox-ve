@@ -1,6 +1,8 @@
 //! Konuk işlemlerinin sayfaları: konsol, anlık görüntüler, yedekler, donanım, seçenekler, çoğaltma ve onay.
 
 use maud::{html, Markup, PreEscaped, DOCTYPE};
+
+use crate::i18n::{tfmt, tx};
 use redox_core::{Guest, GuestKind, GuestStatus};
 
 use crate::console::SPECIAL_KEYS;

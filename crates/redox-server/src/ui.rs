@@ -1,5 +1,7 @@
 //! Arayüz istek işleyicileri: sayfalar GET, işlemler POST + 303 yönlendirme.
 
+#[allow(unused_imports)]
+use crate::i18n::{tfmt, tx};
 use axum::extract::{Path, Query, State};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE};
 use axum::http::{HeaderMap, StatusCode};
@@ -110,7 +112,7 @@ impl Ctx {
 
     pub(crate) fn not_found(&self, message: &str) -> Response {
         let page = self.page(Current::Other, "/");
-        (StatusCode::NOT_FOUND, Html(view::error_page(&page, "Bulunamadı", message))).into_response()
+        (StatusCode::NOT_FOUND, Html(view::error_page(&page, (tx("Bulunamadı")), message))).into_response()
     }
 }
 
@@ -181,7 +183,7 @@ pub async fn node(
 ) -> Response {
     let ctx = Ctx::new(&st, &headers, query, &me);
     let Ok(node) = ctx.cluster.node(&id) else {
-        return ctx.not_found(&format!("“{id}” adında bir düğüm yok."));
+        return ctx.not_found(&tfmt(format!("“{id}” adında bir düğüm yok.")));
     };
     let back = with_q(&format!("/nodes/{id}"), &ctx.query.q);
     Html(view::node(&ctx.page(Current::Node(id.clone()), back), node)).into_response()
@@ -200,7 +202,7 @@ pub async fn guest(
 ) -> Response {
     let ctx = Ctx::new(&st, &headers, query, &me);
     let Some(g) = parse_vmid(&raw).and_then(|id| ctx.cluster.guest(id).ok()) else {
-        return ctx.not_found(&format!("“{raw}” kimlikli bir konuk yok. Silinmiş olabilir."));
+        return ctx.not_found(&tfmt(format!("“{raw}” kimlikli bir konuk yok. Silinmiş olabilir.")));
     };
     let tab = ctx.query.tab.as_str();
     let back = if tab.is_empty() || tab == "ozet" {
@@ -234,10 +236,10 @@ pub struct ImportForm {
 
 pub async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<ImportForm>) -> Redirect {
     let Some(vmid) = parse_vmid(&f.vmid) else {
-        return flash("/cluster", "error", "Geçersiz konuk kimliği.");
+        return flash("/cluster", "error", (tx("Geçersiz konuk kimliği.")));
     };
     match st.import_from_peer(f.peer.trim(), vmid, &me.user) {
-        Ok(()) => flash("/cluster", "notice", &format!("{} sunucusundaki {vmid} buraya kopyalanıyor; sonuç görevlerde görünecek.", f.peer.trim())),
+        Ok(()) => flash("/cluster", "notice", &tfmt(format!("{} sunucusundaki {vmid} buraya kopyalanıyor; sonuç görevlerde görünecek.", f.peer.trim()))),
         Err(e) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
     }
 }
@@ -255,18 +257,18 @@ pub struct ReplicaForm {
 /// Birleşik görünümdeki çoğaltma formları.
 pub async fn replica_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<ReplicaForm>) -> Redirect {
     let Some(vmid) = parse_vmid(&f.vmid) else {
-        return flash("/cluster", "error", "Geçersiz konuk kimliği.");
+        return flash("/cluster", "error", (tx("Geçersiz konuk kimliği.")));
     };
     let peer = f.peer.trim().to_string();
     let result = match f.op.as_str() {
         "run" => {
             let (st, peer) = (st.clone(), peer.clone());
-            tokio::task::spawn_blocking(move || st.replica_run(&peer, vmid)).await.unwrap_or_else(|e| Err(Error::Driver(e.to_string()))).map(|()| "Çoğaltma başladı; sonuç görevlerde görünecek.".to_string())
+            tokio::task::spawn_blocking(move || st.replica_run(&peer, vmid)).await.unwrap_or_else(|e| Err(Error::Driver(e.to_string()))).map(|()| (tx("Çoğaltma başladı; sonuç görevlerde görünecek.")).to_string())
         }
-        "remove" => st.replica_remove(&peer, vmid, &me.user).map(|()| "Çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor.".to_string()),
+        "remove" => st.replica_remove(&peer, vmid, &me.user).map(|()| (tx("Çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor.")).to_string()),
         _ => match f.every_min.trim().parse::<u32>() {
-            Ok(minutes) => st.replica_put(&peer, vmid, minutes, &me.user).map(|()| format!("{peer} sunucusundaki {vmid}, {minutes} dakikada bir buraya çoğaltılacak.")),
-            Err(_) => return flash("/cluster", "error", "Aralık dakika olarak bir tam sayı olmalı."),
+            Ok(minutes) => st.replica_put(&peer, vmid, minutes, &me.user).map(|()| tfmt(format!("{peer} sunucusundaki {vmid}, {minutes} dakikada bir buraya çoğaltılacak."))),
+            Err(_) => return flash("/cluster", "error", (tx("Aralık dakika olarak bir tam sayı olmalı."))),
         },
     };
     match result {
@@ -283,7 +285,7 @@ pub async fn help(State(st): State<AppState>,
 
 pub async fn not_found(State(st): State<AppState>,
     Extension(me): Extension<Identity>, headers: HeaderMap) -> Response {
-    Ctx::new(&st, &headers, PageQuery::default(), &me).not_found("Bu adreste bir sayfa yok.")
+    Ctx::new(&st, &headers, PageQuery::default(), &me).not_found((tx("Bu adreste bir sayfa yok.")))
 }
 
 pub(crate) fn flash(path: &str, key: &str, message: &str) -> Redirect {
@@ -299,7 +301,7 @@ pub struct ActionForm {
 pub async fn action(State(st): State<AppState>,
     Extension(me): Extension<Identity>, Path(raw): Path<String>, Form(form): Form<ActionForm>) -> Redirect {
     let Some(vmid) = parse_vmid(&raw) else {
-        return flash("/", "error", &format!("Geçersiz konuk kimliği: {raw}"));
+        return flash("/", "error", &tfmt(format!("Geçersiz konuk kimliği: {raw}")));
     };
     let path = format!("/guests/{vmid}");
     let Ok(action) = form.action.parse::<Action>() else {
@@ -311,7 +313,7 @@ pub async fn action(State(st): State<AppState>,
 fn act(st: &AppState, vmid: VmId, action: Action, user: &str) -> Redirect {
     let path = format!("/guests/{vmid}");
     match st.run_action(vmid, action, user) {
-        Ok(_) => flash(&path, "notice", &format!("{} isteği alındı: {vmid}", action.label())),
+        Ok(_) => flash(&path, "notice", &tfmt(format!("{} isteği alındı: {vmid}", action.label()))),
         Err(Error::GuestNotFound(_)) => flash("/", "error", &Error::GuestNotFound(vmid).to_string()),
         Err(e) => flash(&path, "error", &capitalize(&e.to_string())),
     }
@@ -350,7 +352,7 @@ fn number<T: std::str::FromStr>(raw: &str, field: &'static str, label: &str, err
     match raw.trim().parse() {
         Ok(v) => Some(v),
         Err(_) => {
-            errors.push((field, format!("{label} bir tam sayı olmalı.")));
+            errors.push((field, tfmt(format!("{label} bir tam sayı olmalı."))));
             None
         }
     }
@@ -377,10 +379,10 @@ pub async fn create(State(st): State<AppState>,
     let mut errors: FieldErrors = Vec::new();
     let vmid = match form.vmid.trim() {
         "" => None,
-        raw => number::<VmId>(raw, "vmid", "Kimlik", &mut errors),
+        raw => number::<VmId>(raw, "vmid", (tx("Kimlik")), &mut errors),
     };
-    let cores = number::<u32>(&form.cores, "cores", "Çekirdek", &mut errors);
-    let memory_mb = number::<u64>(&form.memory_mb, "memory_mb", "Bellek", &mut errors);
+    let cores = number::<u32>(&form.cores, "cores", (tx("Çekirdek")), &mut errors);
+    let memory_mb = number::<u64>(&form.memory_mb, "memory_mb", (tx("Bellek")), &mut errors);
     let disk_gb = number::<u64>(&form.disk_gb, "disk_gb", "Disk boyutu", &mut errors);
 
     // Seçim kutusu gönderilmediyse (konteyner formu) BIOS varsayılır.
@@ -412,7 +414,7 @@ pub async fn create(State(st): State<AppState>,
         };
         match st.create_guest(&spec, &me.user) {
             Ok(id) => {
-                return flash(&format!("/guests/{id}"), "notice", &format!("{} {id} oluşturuldu.", spec.kind.long_label()))
+                return flash(&format!("/guests/{id}"), "notice", &tfmt(format!("{} {id} oluşturuldu.", spec.kind.long_label())))
                     .into_response()
             }
             Err(e) => {
@@ -435,7 +437,7 @@ pub async fn delete_confirm(State(st): State<AppState>,
     Extension(me): Extension<Identity>, headers: HeaderMap, Path(raw): Path<String>) -> Response {
     let ctx = Ctx::new(&st, &headers, PageQuery::default(), &me);
     let Some(g) = parse_vmid(&raw).and_then(|id| ctx.cluster.guest(id).ok()) else {
-        return ctx.not_found(&format!("“{raw}” kimlikli bir konuk yok."));
+        return ctx.not_found(&tfmt(format!("“{raw}” kimlikli bir konuk yok.")));
     };
     let back = format!("/guests/{}/delete", g.vmid);
     Html(view::delete_confirm(&ctx.page(Current::Guest(g.vmid), back), g)).into_response()
@@ -444,10 +446,10 @@ pub async fn delete_confirm(State(st): State<AppState>,
 pub async fn delete(State(st): State<AppState>,
     Extension(me): Extension<Identity>, Path(raw): Path<String>) -> Redirect {
     let Some(vmid) = parse_vmid(&raw) else {
-        return flash("/", "error", &format!("Geçersiz konuk kimliği: {raw}"));
+        return flash("/", "error", &tfmt(format!("Geçersiz konuk kimliği: {raw}")));
     };
     match st.request_guest_delete(vmid, &me.user) {
-        Ok(Some(id)) => flash(&format!("/guests/{vmid}"), "notice", &format!("Silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{id}).")),
+        Ok(Some(id)) => flash(&format!("/guests/{vmid}"), "notice", &tfmt(format!("Silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{id})."))),
         Ok(None) => flash("/", "notice", &format!("{vmid} silindi.")),
         Err(Error::GuestNotFound(_)) => flash("/", "error", &Error::GuestNotFound(vmid).to_string()),
         Err(e) => flash(&format!("/guests/{vmid}"), "error", &capitalize(&e.to_string())),
@@ -538,13 +540,13 @@ pub async fn login(
         Err(LoginError::Invalid) => {
             println!("başarısız giriş denemesi: {name:?} ({ip})");
             audit("giriş (hatalı parola ya da kod)", false);
-            let page = view::login(theme_of(&headers), next, name, Some("Kullanıcı adı ya da parola hatalı."), st.oidc().is_some());
+            let page = view::login(theme_of(&headers), next, name, Some((tx("Kullanıcı adı ya da parola hatalı."))), st.oidc().is_some());
             (StatusCode::UNAUTHORIZED, Html(page)).into_response()
         }
         Err(LoginError::Locked(secs)) => {
             println!("giriş kilitli: {name:?} ({ip}), {secs} sn");
             audit("giriş (kilitli)", false);
-            let message = format!("Çok fazla hatalı deneme. {} dakika sonra yeniden deneyin.", secs.div_ceil(60));
+            let message = tfmt(format!("Çok fazla hatalı deneme. {} dakika sonra yeniden deneyin.", secs.div_ceil(60)));
             (StatusCode::TOO_MANY_REQUESTS, Html(view::login(theme_of(&headers), next, name, Some(&message), st.oidc().is_some()))).into_response()
         }
     }
@@ -581,7 +583,7 @@ pub struct OidcCallback {
 pub async fn oidc_callback(State(st): State<AppState>, headers: HeaderMap, Extension(ClientIp(ip)): Extension<ClientIp>, Query(q): Query<OidcCallback>) -> Response {
     let Some(oidc) = st.oidc() else { return StatusCode::NOT_FOUND.into_response() };
     if !q.error.is_empty() || q.code.is_empty() {
-        return login_error("Kimlik sağlayıcı girişi tamamlamadı.");
+        return login_error((tx("Kimlik sağlayıcı girişi tamamlamadı.")));
     }
     let cookie_state = cookie(&headers, crate::oidc::STATE_COOKIE).map(str::to_string);
     let finished = tokio::task::spawn_blocking(move || oidc.finish(&q.code, &q.state, cookie_state.as_deref(), now())).await;
@@ -592,7 +594,7 @@ pub async fn oidc_callback(State(st): State<AppState>, headers: HeaderMap, Exten
     };
     let Some((token, name)) = st.auth().login_sso(&subject, now()) else {
         st.auth().audit.record(now(), &subject, &ip, "giriş (tek oturum açma, eşleşen kullanıcı yok)", false);
-        return login_error("Bu kimlik hiçbir RedoX VE kullanıcısıyla eşleşmiyor. Yöneticiniz redox user sso ile eşlemelidir.");
+        return login_error((tx("Bu kimlik hiçbir RedoX VE kullanıcısıyla eşleşmiyor. Yöneticiniz redox user sso ile eşlemelidir.")));
     };
     println!("giriş (tek oturum açma): {name} ({ip})");
     st.auth().audit.record(now(), &name, &ip, "giriş (tek oturum açma)", true);
@@ -612,6 +614,19 @@ pub async fn logout(State(st): State<AppState>, headers: HeaderMap) -> Response 
         st.auth().logout(token);
     }
     (StatusCode::SEE_OTHER, [(SET_COOKIE, st.auth().clear_cookie()), (LOCATION, "/login".to_string())]).into_response()
+}
+
+/// Arayüz dilini değiştirir: çerezi yazar ve gelinen sayfaya döner.
+pub async fn lang(Query(query): Query<ThemeQuery>) -> Response {
+    let lang = crate::i18n::Lang::parse(&query.to).unwrap_or_default();
+    (
+        StatusCode::SEE_OTHER,
+        [
+            (SET_COOKIE, format!("lang={}; Path=/; Max-Age=31536000; SameSite=Lax", lang.code())),
+            (LOCATION, safe_back(&query.back).to_string()),
+        ],
+    )
+        .into_response()
 }
 
 pub async fn theme(Query(query): Query<ThemeQuery>) -> Response {
@@ -662,7 +677,7 @@ mod tests {
 
     #[test]
     fn capitalize_handles_turkish_and_empty() {
-        assert_eq!(capitalize("çekirdek"), "Çekirdek");
+        assert_eq!(capitalize((tx("çekirdek"))), (tx("Çekirdek")));
         assert_eq!(capitalize(""), "");
     }
 }

@@ -10,7 +10,7 @@ pub async fn guest_detach(State(st): State<AppState>, Extension(me): Extension<I
     };
     let back = format!("/guests/{vmid}?tab=cogalt");
     match st.guest_detach(vmid, &me.user) {
-        Ok(_) => flash(&back, "notice", "Diskler yedekten ayrılıyor; bitince yedek serbest kalır. Sonuç görevlerde görünür."),
+        Ok(_) => flash(&back, "notice", (tx("Diskler yedekten ayrılıyor; bitince yedek serbest kalır. Sonuç görevlerde görünür."))),
         Err(e) => failed(&back, &e),
     }
 }
@@ -21,22 +21,22 @@ pub async fn job_save(State(st): State<AppState>, RawForm(body): RawForm) -> Red
     let value = |key: &str| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.trim()).unwrap_or("");
     let days: String = pairs.iter().filter(|(k, _)| k == "day").filter_map(|(_, v)| v.parse::<u8>().ok()).filter(|d| (1..=7).contains(d)).map(|d| d.to_string()).collect();
     if days.is_empty() {
-        return flash("/backups", "error", "En az bir gün seçin.");
+        return flash("/backups", "error", (tx("En az bir gün seçin.")));
     }
     let keep = match value("keep") {
         "" => None,
         text => match text.parse::<u32>() {
             Ok(n) => Some(n),
-            Err(_) => return flash("/backups", "error", "Saklanacak yedek sayısı bir sayı olmalı."),
+            Err(_) => return flash("/backups", "error", (tx("Saklanacak yedek sayısı bir sayı olmalı."))),
         },
     };
     let count = |key: &str, label: &str| -> Result<u32, String> {
         match value(key) {
             "" => Ok(0),
-            text => text.parse().map_err(|_| format!("{label} bir sayı olmalı.")),
+            text => text.parse().map_err(|_| tfmt(format!("{label} bir sayı olmalı."))),
         }
     };
-    let extras = (|| Ok::<_, String>((redox_core::Gfs { weekly: count("weekly", "Haftalık yedek sayısı")?, monthly: count("monthly", "Aylık yedek sayısı")?, yearly: count("yearly", "Yıllık yedek sayısı")? }, count("lock", "Kilit süresi")?)))();
+    let extras = (|| Ok::<_, String>((redox_core::Gfs { weekly: count("weekly", (tx("Haftalık yedek sayısı")))?, monthly: count("monthly", (tx("Aylık yedek sayısı")))?, yearly: count("yearly", (tx("Yıllık yedek sayısı")))? }, count("lock", (tx("Kilit süresi")))?)))();
     let (gfs, lock) = match extras {
         Ok(extras) => extras,
         Err(message) => return flash("/backups", "error", &message),
@@ -47,7 +47,7 @@ pub async fn job_save(State(st): State<AppState>, RawForm(body): RawForm) -> Red
     };
     let name = job.name.clone();
     match st.job_put(job) {
-        Ok(()) => flash("/backups", "notice", &format!("{name} işi kaydedildi.")),
+        Ok(()) => flash("/backups", "notice", &tfmt(format!("{name} işi kaydedildi."))),
         Err(e) => failed("/backups", &e),
     }
 }
@@ -56,16 +56,16 @@ pub async fn job_save(State(st): State<AppState>, RawForm(body): RawForm) -> Red
 pub async fn job_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, op)): Path<(String, String)>) -> Redirect {
     match op.as_str() {
         "run" => match st.job_run(&name) {
-            Ok(0) => flash("/backups", "error", &format!("{name} işinin kapsamında konuk yok.")),
-            Ok(n) => flash("/backups", "notice", &format!("{name} işi başlatıldı: {n} konuk sırayla yedeklenecek; sonuç görevlerde görünür.")),
+            Ok(0) => flash("/backups", "error", &tfmt(format!("{name} işinin kapsamında konuk yok."))),
+            Ok(n) => flash("/backups", "notice", &tfmt(format!("{name} işi başlatıldı: {n} konuk sırayla yedeklenecek; sonuç görevlerde görünür."))),
             Err(e) => failed("/backups", &e),
         },
         "delete" => match st.request_job_remove(&name, &me.user) {
-            Ok(Some(n)) => flash("/backups", "notice", &format!("{name} işi silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n}).")),
-            Ok(None) => flash("/backups", "notice", &format!("{name} işi silindi; aldığı yedekler duruyor.")),
+            Ok(Some(n)) => flash("/backups", "notice", &tfmt(format!("{name} işi silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n})."))),
+            Ok(None) => flash("/backups", "notice", &tfmt(format!("{name} işi silindi; aldığı yedekler duruyor."))),
             Err(e) => failed("/backups", &e),
         },
-        _ => flash("/backups", "error", "Bilinmeyen işlem."),
+        _ => flash("/backups", "error", (tx("Bilinmeyen işlem."))),
     }
 }
 
@@ -76,7 +76,7 @@ pub async fn backup_create(State(st): State<AppState>, Extension(me): Extension<
     };
     let back = format!("/guests/{vmid}?tab=yedekler");
     match st.backup_create(vmid, &me.user) {
-        Ok(id) => flash(&back, "notice", &format!("Yedek alınıyor: {id}")),
+        Ok(id) => flash(&back, "notice", &tfmt(format!("Yedek alınıyor: {id}"))),
         Err(e) => failed(&back, &e),
     }
 }
@@ -90,15 +90,15 @@ pub async fn backup_action(State(st): State<AppState>, Extension(me): Extension<
         };
         let made = if op == "instant" { st.backup_instant(&id, &name, &me.user) } else { st.backup_restore_new(&id, &name, &me.user) };
         return match made {
-            Ok(vmid) if op == "instant" => flash(&format!("/guests/{vmid}"), "notice", &format!("{name}, {id} yedeğinin üzerinde açılmaya hazır. Kalıcı olması için Çoğalt ve Taşı sekmesinden yedekten ayırın.")),
-            Ok(vmid) => flash(&format!("/guests/{vmid}"), "notice", &format!("{id} yedeğinden {name} oluşturuluyor; sonuç görevlerde görünür.")),
+            Ok(vmid) if op == "instant" => flash(&format!("/guests/{vmid}"), "notice", &tfmt(format!("{name}, {id} yedeğinin üzerinde açılmaya hazır. Kalıcı olması için Çoğalt ve Taşı sekmesinden yedekten ayırın."))),
+            Ok(vmid) => flash(&format!("/guests/{vmid}"), "notice", &tfmt(format!("{id} yedeğinden {name} oluşturuluyor; sonuç görevlerde görünür."))),
             Err(e) => failed("/backups", &e),
         };
     }
     // Arşivdeki yedek henüz listede değildir: sahibi aranmadan geri getirilir.
     if op == "recover" {
         return match st.backup_recover(&id, &me.user) {
-            Ok(()) => flash("/backups", "notice", &format!("{id} arşivden geri getirildi; geri yüklenirken kopya hedefinden iner.")),
+            Ok(()) => flash("/backups", "notice", &tfmt(format!("{id} arşivden geri getirildi; geri yüklenirken kopya hedefinden iner."))),
             Err(e) => failed("/backups", &e),
         };
     }
@@ -108,17 +108,17 @@ pub async fn backup_action(State(st): State<AppState>, Extension(me): Extension<
         Err(e) => return flash("/", "error", &capitalize(&e.to_string())),
     };
     let result = match op.as_str() {
-        "restore" => st.backup_restore(&id, &me.user).map(|_| format!("{id} geri yükleniyor.")),
+        "restore" => st.backup_restore(&id, &me.user).map(|_| tfmt(format!("{id} geri yükleniyor."))),
         "delete" => st.request_backup_delete(&id, &me.user).map(|queued| match queued {
-            Some(n) => format!("{id} silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n})."),
+            Some(n) => tfmt(format!("{id} silinmedi: ikinci bir yöneticinin onayı bekleniyor (istek #{n}).")),
             None => format!("{id} silindi."),
         }),
-        "push" => st.backup_push(&id, &me.user).map(|()| format!("{id} dış hedefe gönderiliyor.")),
-        "verify" => st.backup_verify(&id, &me.user).map(|()| format!("{id} doğrulanıyor; sonuç görev günlüğüne yazılır.")),
-        "test" => st.backup_test(&id, &me.user).map(|()| format!("{id} geçici bir konuk olarak açılıp sınanıyor; sonuç görev günlüğüne ve yedeğin satırına yazılır.")),
-        "ack" => st.backup_ack(&id, &me.user).map(|()| format!("{id}: olağan dışı değişim uyarısı kapatıldı.")),
-        "lock" => st.backup_lock(&id, redox_core::retention::DEFAULT_LOCK_DAYS, &me.user).map(|until| format!("{id}, {} tarihine kadar silinemez.", redox_core::retention::date_label(until))),
-        _ => return flash(&back, "error", &format!("Bilinmeyen işlem: {op}")),
+        "push" => st.backup_push(&id, &me.user).map(|()| tfmt(format!("{id} dış hedefe gönderiliyor."))),
+        "verify" => st.backup_verify(&id, &me.user).map(|()| tfmt(format!("{id} doğrulanıyor; sonuç görev günlüğüne yazılır."))),
+        "test" => st.backup_test(&id, &me.user).map(|()| tfmt(format!("{id} geçici bir konuk olarak açılıp sınanıyor; sonuç görev günlüğüne ve yedeğin satırına yazılır."))),
+        "ack" => st.backup_ack(&id, &me.user).map(|()| tfmt(format!("{id}: olağan dışı değişim uyarısı kapatıldı."))),
+        "lock" => st.backup_lock(&id, redox_core::retention::DEFAULT_LOCK_DAYS, &me.user).map(|until| tfmt(format!("{id}, {} tarihine kadar silinemez.", redox_core::retention::date_label(until)))),
+        _ => return flash(&back, "error", &tfmt(format!("Bilinmeyen işlem: {op}"))),
     };
     match result {
         Ok(notice) => flash(&back, "notice", &notice),
@@ -147,7 +147,7 @@ impl FilesQuery {
 /// parçacığını tutmaz. Her erişim denetim günlüğüne yazılır: yedeğin içeriği konuğun bütün dosyalarıdır.
 pub async fn list_backup_files(st: &AppState, user: &str, ip: &str, id: &str, disk: u8, path: &str) -> Result<Vec<crate::guestfs::Entry>, Error> {
     if !crate::guestfs::valid_path(path) {
-        return Err(Error::InvalidSpec(format!("geçersiz yol: {path}")));
+        return Err(Error::InvalidSpec(tfmt(format!("geçersiz yol: {path}"))));
     }
     st.auth().audit.record(now(), user, ip, &format!("backup ls {id} {}", crate::guestfs::normalize(path)), true);
     let (state, id, path) = (st.clone(), id.to_string(), path.to_string());
@@ -160,7 +160,7 @@ pub async fn list_backup_files(st: &AppState, user: &str, ip: &str, id: &str, di
         listed
     })
     .await
-    .unwrap_or_else(|_| Err(Error::Driver("dosya listesi okunamadı".to_string())))
+    .unwrap_or_else(|_| Err(Error::Driver((tx("dosya listesi okunamadı")).to_string())))
 }
 
 /// Yedeğin içindeki dosyaları gösteren sayfa (yalnızca yönetici).
@@ -174,10 +174,10 @@ pub async fn backup_files(
 ) -> Response {
     let ctx = Ctx::new(&st, &headers, PageQuery::default(), &me);
     if !me.can_write() {
-        return ctx.not_found("Yedeğin içindeki dosyaları yalnızca yönetici görebilir.");
+        return ctx.not_found((tx("Yedeğin içindeki dosyaları yalnızca yönetici görebilir.")));
     }
     let Ok(backup) = st.snapshot().backup(&id).cloned() else {
-        return ctx.not_found("Yedek bulunamadı.");
+        return ctx.not_found((tx("Yedek bulunamadı.")));
     };
     let path = query.path();
     let listed = list_backup_files(&st, &me.user, &ip, &id, query.disk, &path).await.map_err(|e| capitalize(&e.to_string()));
@@ -194,11 +194,11 @@ pub async fn backup_file(
 ) -> Response {
     use std::io::Read;
     if !me.can_write() {
-        return (StatusCode::FORBIDDEN, "Yedekten dosya indirmek için yönetici yetkisi gerekir.").into_response();
+        return (StatusCode::FORBIDDEN, (tx("Yedekten dosya indirmek için yönetici yetkisi gerekir."))).into_response();
     }
     let (path, tar) = (query.path(), query.tar.is_some());
     if !crate::guestfs::valid_path(&path) || (!tar && crate::guestfs::normalize(&path) == "/") {
-        return (StatusCode::UNPROCESSABLE_ENTITY, "Geçersiz yol.").into_response();
+        return (StatusCode::UNPROCESSABLE_ENTITY, (tx("Geçersiz yol."))).into_response();
     }
     st.auth().audit.record(now(), &me.user, &ip, &format!("backup {} {id} {}", if tar { "tar" } else { "get" }, crate::guestfs::normalize(&path)), true);
     let (state, wanted, disk, guest_path) = (st.clone(), id.clone(), query.disk, path.clone());
@@ -213,16 +213,16 @@ pub async fn backup_file(
         let mut stream = crate::guestfs::open(&bin, &image, &guest_path, tar, cleanup).map_err(Error::Driver)?;
         // İlk parça burada okunur: dosya yoksa ya da okunamıyorsa boş bir indirme yerine açık bir hata döner.
         let mut first = vec![0u8; 64 * 1024];
-        let n = stream.read(&mut first).map_err(|e| Error::Driver(format!("yedekteki dosya okunamadı: {e}")))?;
+        let n = stream.read(&mut first).map_err(|e| Error::Driver(tfmt(format!("yedekteki dosya okunamadı: {e}"))))?;
         first.truncate(n);
         Ok::<_, Error>((first, stream))
     })
     .await;
     let (first, reader) = match opened {
         Ok(Ok(ready)) if !ready.0.is_empty() => ready,
-        Ok(Ok(_)) => return (StatusCode::NOT_FOUND, "Dosya yedekte yok, boş ya da okunamıyor.").into_response(),
+        Ok(Ok(_)) => return (StatusCode::NOT_FOUND, (tx("Dosya yedekte yok, boş ya da okunamıyor."))).into_response(),
         Ok(Err(e)) => return (StatusCode::UNPROCESSABLE_ENTITY, capitalize(&e.to_string())).into_response(),
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Dosya okunamadı.").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, (tx("Dosya okunamadı."))).into_response(),
     };
     let stream = futures_util::stream::unfold((Some(first), reader), |(first, mut reader)| async move {
         if let Some(first) = first {
@@ -276,12 +276,12 @@ pub async fn backup_download(State(st): State<AppState>, Extension(me): Extensio
     use std::io::Read;
     let disk = query.disk;
     if !me.can_write() {
-        return (StatusCode::FORBIDDEN, "Yedek indirmek için yönetici yetkisi gerekir.").into_response();
+        return (StatusCode::FORBIDDEN, (tx("Yedek indirmek için yönetici yetkisi gerekir."))).into_response();
     }
     match st.snapshot().backup(&id) {
-        Err(_) => return (StatusCode::NOT_FOUND, "Yedek bulunamadı.").into_response(),
+        Err(_) => return (StatusCode::NOT_FOUND, (tx("Yedek bulunamadı."))).into_response(),
         Ok(backup) if disk != 0 && !backup.disks.iter().any(|d| d.id == disk) => {
-            return (StatusCode::NOT_FOUND, "Bu yedekte o numarada ek disk yok.").into_response();
+            return (StatusCode::NOT_FOUND, (tx("Bu yedekte o numarada ek disk yok."))).into_response();
         }
         Ok(_) => {}
     }
@@ -304,8 +304,8 @@ pub async fn backup_download(State(st): State<AppState>, Extension(me): Extensio
     .await;
     let (file, len, name) = match opened {
         Ok(Ok(Some(found))) => found,
-        Ok(Err(e)) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Yedek hazırlanamadı: {e}")).into_response(),
-        _ => return (StatusCode::NOT_FOUND, "Yedek dosyası bu sunucuda yok (yalnızca dış kopyası olabilir).").into_response(),
+        Ok(Err(e)) => return (StatusCode::INTERNAL_SERVER_ERROR, tfmt(format!("Yedek hazırlanamadı: {e}"))).into_response(),
+        _ => return (StatusCode::NOT_FOUND, (tx("Yedek dosyası bu sunucuda yok (yalnızca dış kopyası olabilir)."))).into_response(),
     };
     let stream = futures_util::stream::unfold(file, |mut file| async move {
         let read = tokio::task::spawn_blocking(move || {

@@ -113,7 +113,8 @@ impl IntoResponse for ApiError {
                 format!("bilinmeyen eylem \"{a}\"; geçerli eylemler: start, stop, reboot, pause, resume"),
             ),
         };
-        (status, Json(json!({ "error": message, "code": code }))).into_response()
+        // İleti isteğin diline çevrilir (`Accept-Language: en` ya da `lang` çerezi); `code` dilden bağımsızdır.
+        (status, Json(json!({ "error": crate::i18n::tfmt(message), "code": code }))).into_response()
     }
 }
 

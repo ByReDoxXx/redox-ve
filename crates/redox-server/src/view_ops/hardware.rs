@@ -123,228 +123,228 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
             form id="hw" method="post" action={ (base) "/edit" } novalidate { input type="hidden" name="part" value="donanim"; }
         }
         @if !stopped {
-            div class="notice" role="status" { (icon("alert")) span { "Donanım ayarları yalnızca konuk kapalıyken değişir." @if hot { " Disk ve ağ kartı çalışırken de eklenebilir." } } }
+            div class="notice" role="status" { (icon("alert")) span { (tx("Donanım ayarları yalnızca konuk kapalıyken değişir.")) @if hot { (tx(" Disk ve ağ kartı çalışırken de eklenebilir.")) } } }
         }
         div class="stack" {
             div class="card" {
-                header { h2 { @if vm { "İşlemci, bellek ve donanım yazılımı" } @else { "İşlemci ve bellek" } } }
+                header { h2 { @if vm { (tx("İşlemci, bellek ve donanım yazılımı")) } @else { (tx("İşlemci ve bellek")) } } }
                 div class="form" {
-                    div class="field" { label for="cores" { "Çekirdek" } input id="cores" form="hw" name="cores" type="text" inputmode="numeric" value=(f.cores) disabled[off]; }
-                    div class="field" { label for="memory_mb" { "Bellek (MB)" } input id="memory_mb" form="hw" name="memory_mb" type="text" inputmode="numeric" value=(f.memory_mb) disabled[off]; }
+                    div class="field" { label for="cores" { (tx("Çekirdek")) } input id="cores" form="hw" name="cores" type="text" inputmode="numeric" value=(f.cores) disabled[off]; }
+                    div class="field" { label for="memory_mb" { (tx("Bellek (MB)")) } input id="memory_mb" form="hw" name="memory_mb" type="text" inputmode="numeric" value=(f.memory_mb) disabled[off]; }
                     @if vm {
                         div class="field" {
-                            label for="firmware" { "Donanım yazılımı" }
+                            label for="firmware" { (tx("Donanım yazılımı")) }
                             select id="firmware" form="hw" name="firmware" disabled[off] {
                                 option value="bios" selected[f.firmware == "bios"] { "BIOS (SeaBIOS)" }
                                 option value="uefi" selected[f.firmware == "uefi"] { "UEFI" }
-                                option value="uefi-secure" selected[f.firmware == "uefi-secure"] { "UEFI + güvenli önyükleme" }
+                                option value="uefi-secure" selected[f.firmware == "uefi-secure"] { (tx("UEFI + güvenli önyükleme")) }
                             }
-                            span class="hint" { "Kurulu bir işletim sistemi, donanım yazılımı değişince açılmayabilir." }
+                            span class="hint" { (tx("Kurulu bir işletim sistemi, donanım yazılımı değişince açılmayabilir.")) }
                         }
                         div class="field" {
-                            span class="label" { "Güvenlik yongası" }
-                            label class="check" { input type="checkbox" form="hw" name="tpm" value="1" checked[f.tpm.is_some()] disabled[off]; "Sanal TPM 2.0" }
+                            span class="label" { (tx("Güvenlik yongası")) }
+                            label class="check" { input type="checkbox" form="hw" name="tpm" value="1" checked[f.tpm.is_some()] disabled[off]; (tx("Sanal TPM 2.0")) }
                         }
                         div class="field" {
-                            label for="cpu_type" { "İşlemci türü" }
+                            label for="cpu_type" { (tx("İşlemci türü")) }
                             select id="cpu_type" form="hw" name="cpu_type" disabled[off] {
-                                option value="" selected[f.cpu_type.is_empty()] { "Sunucunun işlemcisi (host)" }
+                                option value="" selected[f.cpu_type.is_empty()] { (tx("Sunucunun işlemcisi (host)")) }
                                 @for model in redox_core::hw::CPU_TYPES { option value=(model) selected[f.cpu_type == model] { (model) } }
                             }
-                            span class="hint" { "En hızlısı sunucunun kendi işlemcisidir. Konuğu farklı işlemcili bir sunucuya taşıyacaksanız ikisinin de desteklediği ortak bir model seçin. Başka üreticinin modeli (Intel sunucuda EPYC gibi) kabul edilmez." }
+                            span class="hint" { (tx("En hızlısı sunucunun kendi işlemcisidir. Konuğu farklı işlemcili bir sunucuya taşıyacaksanız ikisinin de desteklediği ortak bir model seçin. Başka üreticinin modeli (Intel sunucuda EPYC gibi) kabul edilmez.")) }
                         }
                         div class="field" {
-                            span class="label" { "İç içe sanallaştırma" }
-                            label class="check" { input type="checkbox" form="hw" name="nested" value="1" checked[f.nested.is_some()] disabled[off]; "Konuğa VT-x / AMD-V göster" }
-                            span class="hint" { "Konuk kendi sanal makinelerini çalıştırabilir (KVM, Hyper-V, WSL2, Docker Desktop). Sunucunun KVM modülünde iç içe sanallaştırma açık olmalıdır; qemu64 ve kvm64 modelleriyle kullanılamaz." }
+                            span class="label" { (tx("İç içe sanallaştırma")) }
+                            label class="check" { input type="checkbox" form="hw" name="nested" value="1" checked[f.nested.is_some()] disabled[off]; (tx("Konuğa VT-x / AMD-V göster")) }
+                            span class="hint" { (tx("Konuk kendi sanal makinelerini çalıştırabilir (KVM, Hyper-V, WSL2, Docker Desktop). Sunucunun KVM modülünde iç içe sanallaştırma açık olmalıdır; qemu64 ve kvm64 modelleriyle kullanılamaz.")) }
                         }
                         div class="field" {
-                            span class="label" { "Bellek balonu" }
-                            label class="check" { input type="checkbox" form="hw" name="balloon" value="1" checked[f.balloon.is_some()] disabled[off]; "Balon aygıtını tak" }
-                            span class="hint" { "Konuğun belleği çalışırken küçültülüp büyütülebilir. Konukta virtio balon sürücüsü gerekir (Linux'ta hazır; Windows'ta virtio-win)." }
+                            span class="label" { (tx("Bellek balonu")) }
+                            label class="check" { input type="checkbox" form="hw" name="balloon" value="1" checked[f.balloon.is_some()] disabled[off]; (tx("Balon aygıtını tak")) }
+                            span class="hint" { (tx("Konuğun belleği çalışırken küçültülüp büyütülebilir. Konukta virtio balon sürücüsü gerekir (Linux'ta hazır; Windows'ta virtio-win).")) }
                         }
                     }
                 }
             }
             @if disk_ops {
                 div class="card" {
-                    header { h2 { "Diskler" } span class="note" { "toplam " (total) " GB · " (g.storage) } }
+                    header { h2 { (tx("Diskler")) } span class="note" { "toplam " (total) " GB · " (g.storage) } }
                     div class="tw" { table {
-                        thead { tr { th { "Disk" } th class="num" { "Boyut" } th { span class="sr" { "İşlem" } } } }
+                        thead { tr { th { "Disk" } th class="num" { (tx("Boyut")) } th { span class="sr" { (tx("İşlem")) } } } }
                         tbody {
-                            tr { td class="mono" { "disk 0 " span class="tag" { "asıl" } } td class="num mono" { (g.disk_gb) " GB" } td class="act" {} }
+                            tr { td class="mono" { "disk 0 " span class="tag" { (tx("asıl")) } } td class="num mono" { (g.disk_gb) " GB" } td class="act" {} }
                             @for d in &g.hw.disks { tr {
                                 td class="mono" { "disk " (d.id) span class="sub" { "vm-" (g.vmid) "-disk-" (d.id) } }
                                 td class="num mono" { (d.size_gb) " GB" }
-                                td class="act" { @if !off { a class="btn sm danger" href={ (base) "/confirm?op=deldisk&name=" (d.id) } { (icon("trash")) "Sil" } } }
+                                td class="act" { @if !off { a class="btn sm danger" href={ (base) "/confirm?op=deldisk&name=" (d.id) } { (icon("trash")) (tx("Sil")) } } }
                             } }
                         }
                     } }
                     @if p.admin {
                         form class="inline" method="post" action={ (base) "/resize" } {
-                            label for="disk_gb" { "Yeni boyut (GB), şimdi " (g.disk_gb) }
+                            label for="disk_gb" { (tx("Yeni boyut (GB), şimdi ")) (g.disk_gb) }
                             input id="disk_gb" name="disk_gb" type="text" inputmode="numeric" size="6" value=(g.disk_gb + 10) disabled[off];
-                            button class="btn sm" type="submit" disabled[off] { (icon("disk")) "Büyüt" }
-                            span class="hint" { "Disk yalnızca büyütülür. Konuğun içindeki dosya sistemini ayrıca genişletmeniz gerekir." }
+                            button class="btn sm" type="submit" disabled[off] { (icon("disk")) (tx("Büyüt")) }
+                            span class="hint" { (tx("Disk yalnızca büyütülür. Konuğun içindeki dosya sistemini ayrıca genişletmeniz gerekir.")) }
                         }
                         @if vm {
                             form class="inline" method="post" action={ (base) "/disks" } {
-                                label for="new_disk_gb" { "Yeni disk (GB)" }
+                                label for="new_disk_gb" { (tx("Yeni disk (GB)")) }
                                 input id="new_disk_gb" name="disk_gb" type="text" inputmode="numeric" size="6" value="10" disabled[add_off];
-                                button class="btn sm" type="submit" disabled[add_off] { (icon("plus")) "Disk Ekle" }
-                                span class="hint" { "Ek diskler konuğa boş takılır. Anlık görüntülere, klonlara ve yedeklere dahildir." }
+                                button class="btn sm" type="submit" disabled[add_off] { (icon("plus")) (tx("Disk Ekle")) }
+                                span class="hint" { (tx("Ek diskler konuğa boş takılır. Anlık görüntülere, klonlara ve yedeklere dahildir.")) }
                             }
                         }
                     }
                 }
             }
             div class="card" {
-                header { h2 { "Ağ" } }
+                header { h2 { (tx("Ağ")) } }
                 div class="form" {
                     div class="field" {
-                        label for="bridge" { "Ağ" }
+                        label for="bridge" { (tx("Ağ")) }
                         @if p.real {
                             select id="bridge" form="hw" name="bridge" disabled[off] {
                                 option value="nat" selected[f.bridge == "nat"] { "NAT" }
-                                @for b in &opts.bridges { option value=(b) selected[*b == f.bridge] { "Köprü: " (b) } }
+                                @for b in &opts.bridges { option value=(b) selected[*b == f.bridge] { (tx("Köprü: ")) (b) } }
                             }
                         } @else {
                             input id="bridge" form="hw" name="bridge" type="text" value=(f.bridge) disabled[off];
                         }
-                        span class="hint" { "Köprüde konuk sunucunun ağından adres alır; port yönlendirme gerekmez." }
+                        span class="hint" { (tx("Köprüde konuk sunucunun ağından adres alır; port yönlendirme gerekmez.")) }
                     }
                     @if vm {
                         div class="field" {
-                            label for="vlan" { "VLAN etiketi" }
+                            label for="vlan" { (tx("VLAN etiketi")) }
                             input id="vlan" form="hw" name="vlan" type="text" inputmode="numeric" value=(f.vlan) disabled[off];
-                            span class="hint" { "Birinci kartın etiketi (1-" (redox_core::hw::MAX_VLAN) "); 0 etiketsiz. Yalnızca köprüde. Köprüde VLAN süzme açık, hizmette CAP_NET_ADMIN yetkisi olmalı; kurulamazsa konuk başlatılmaz." }
+                            span class="hint" { (tx("Birinci kartın etiketi (1-")) (redox_core::hw::MAX_VLAN) (tx("); 0 etiketsiz. Yalnızca köprüde. Köprüde VLAN süzme açık, hizmette CAP_NET_ADMIN yetkisi olmalı; kurulamazsa konuk başlatılmaz.")) }
                         }
                     }
                     div class="field" {
-                        label for="nics" { "Ek ağ kartları" }
+                        label for="nics" { (tx("Ek ağ kartları")) }
                         input id="nics" form="hw" name="nics" type="text" value=(f.nics) placeholder="vmbr1, nat" autocomplete="off" disabled[off];
-                        span class="hint" { "Virgülle ayırın: köprü adı ya da nat. En fazla " (redox_core::hw::MAX_EXTRA_NICS) ". VLAN etiketi için köprü:etiket yazın, örn. vmbr1:20." }
+                        span class="hint" { (tx("Virgülle ayırın: köprü adı ya da nat. En fazla ")) (redox_core::hw::MAX_EXTRA_NICS) (tx(". VLAN etiketi için köprü:etiket yazın, örn. vmbr1:20.")) }
                     }
                     div class="field" {
-                        label for="forwards" { "Port yönlendirme" }
+                        label for="forwards" { (tx("Port yönlendirme")) }
                         input id="forwards" form="hw" name="forwards" type="text" value=(f.forwards) placeholder="8080:80, 2222:22" autocomplete="off" disabled[off];
-                        span class="hint" { "sunucu-portu:konuk-portu (TCP). Sunucu portu 1024 ve üzeri olmalı; güvenlik duvarında ayrıca açın." }
+                        span class="hint" { (tx("sunucu-portu:konuk-portu (TCP). Sunucu portu 1024 ve üzeri olmalı; güvenlik duvarında ayrıca açın.")) }
                     }
                 }
                 @if p.admin && vm {
                     @let full = g.hw.nics.len() >= redox_core::hw::MAX_EXTRA_NICS;
                     form class="inline" method="post" action={ (base) "/nics" } {
-                        label for="new_nic" { "Ağ kartı ekle" }
+                        label for="new_nic" { (tx("Ağ kartı ekle")) }
                         @if p.real {
                             select id="new_nic" name="network" disabled[add_off || full] {
                                 option value="nat" { "NAT" }
-                                @for b in &opts.bridges { option value=(b) { "Köprü: " (b) } }
+                                @for b in &opts.bridges { option value=(b) { (tx("Köprü: ")) (b) } }
                             }
                         } @else {
                             input id="new_nic" name="network" type="text" value="vmbr1" autocomplete="off" disabled[add_off || full];
                         }
-                        input name="vlan" type="text" inputmode="numeric" size="5" placeholder="VLAN" aria-label="VLAN etiketi (isteğe bağlı)" disabled[add_off || full];
-                        button class="btn sm" type="submit" disabled[add_off || full] { (icon("plus")) "Kart Ekle" }
-                        span class="hint" { @if p.hotplug { "Kart, konuk çalışırken de takılır; çıkarmak için konuğu kapatıp üstteki listeden silin." } @else { "Kart, konuk kapalıyken eklenir." } }
+                        input name="vlan" type="text" inputmode="numeric" size="5" placeholder="VLAN" aria-label=(tx("VLAN etiketi (isteğe bağlı)")) disabled[add_off || full];
+                        button class="btn sm" type="submit" disabled[add_off || full] { (icon("plus")) (tx("Kart Ekle")) }
+                        span class="hint" { @if p.hotplug { (tx("Kart, konuk çalışırken de takılır; çıkarmak için konuğu kapatıp üstteki listeden silin.")) } @else { (tx("Kart, konuk kapalıyken eklenir.")) } }
                     }
                 }
             }
             @if vm {
                 div class="card" {
-                    header { h2 { "Hız sınırları" } span class="note" { "0 sınırsız" } }
+                    header { h2 { (tx("Hız sınırları")) } span class="note" { (tx("0 sınırsız")) } }
                     div class="form" {
                         div class="field" {
-                            label for="disk_mbps" { "Disk (MB/sn)" }
+                            label for="disk_mbps" { (tx("Disk (MB/sn)")) }
                             input id="disk_mbps" form="hw" name="disk_mbps" type="text" inputmode="numeric" value=(f.disk_mbps) disabled[off];
-                            span class="hint" { "Okuma ve yazmanın toplamı; her diske ayrı uygulanır. En çok " (redox_core::hw::MAX_DISK_MBPS) "." }
+                            span class="hint" { (tx("Okuma ve yazmanın toplamı; her diske ayrı uygulanır. En çok ")) (redox_core::hw::MAX_DISK_MBPS) "." }
                         }
                         div class="field" {
-                            label for="disk_iops" { "Disk (işlem/sn)" }
+                            label for="disk_iops" { (tx("Disk (işlem/sn)")) }
                             input id="disk_iops" form="hw" name="disk_iops" type="text" inputmode="numeric" value=(f.disk_iops) disabled[off];
-                            span class="hint" { "Saniyedeki okuma ve yazma işlemi; her diske ayrı. En çok " (redox_core::hw::MAX_DISK_IOPS) "." }
+                            span class="hint" { (tx("Saniyedeki okuma ve yazma işlemi; her diske ayrı. En çok ")) (redox_core::hw::MAX_DISK_IOPS) "." }
                         }
                         div class="field" {
-                            label for="net_mbps" { "Ağ (Mbit/sn)" }
+                            label for="net_mbps" { (tx("Ağ (Mbit/sn)")) }
                             input id="net_mbps" form="hw" name="net_mbps" type="text" inputmode="numeric" value=(f.net_mbps) disabled[off];
-                            span class="hint" { "Her yönde, köprüye bağlı her karta ayrı. NAT kartına uygulanamaz. Sunucuda iproute2 ve hizmette CAP_NET_ADMIN yetkisi gerekir; uygulanamazsa konuk başlatılmaz." }
+                            span class="hint" { (tx("Her yönde, köprüye bağlı her karta ayrı. NAT kartına uygulanamaz. Sunucuda iproute2 ve hizmette CAP_NET_ADMIN yetkisi gerekir; uygulanamazsa konuk başlatılmaz.")) }
                         }
                     }
                 }
                 @if g.hw.balloon {
                     div class="card" {
-                        header { h2 { "Bellek hedefi" } span class="note" { @if g.hw.balloon_mb == 0 { "tamamı (" (g.mem_total_mb) " MB)" } @else { (g.hw.balloon_mb) " / " (g.mem_total_mb) " MB" } } }
+                        header { h2 { (tx("Bellek hedefi")) } span class="note" { @if g.hw.balloon_mb == 0 { (tx("tamamı (")) (g.mem_total_mb) " MB)" } @else { (g.hw.balloon_mb) " / " (g.mem_total_mb) " MB" } } }
                         @if p.admin {
                             form class="inline" method="post" action={ (base) "/balloon" } {
-                                label for="balloon_mb" { "Hedef (MB)" }
+                                label for="balloon_mb" { (tx("Hedef (MB)")) }
                                 input id="balloon_mb" name="mb" type="text" inputmode="numeric" value=(g.hw.balloon_mb) required disabled[g.lock.is_some() || g.hw.mem_min_mb > 0];
-                                button class="btn sm" type="submit" disabled[g.lock.is_some() || g.hw.mem_min_mb > 0] { (icon("check")) "Uygula" }
+                                button class="btn sm" type="submit" disabled[g.lock.is_some() || g.hw.mem_min_mb > 0] { (icon("check")) (tx("Uygula")) }
                             }
                             form class="inline" method="post" action={ (base) "/balloon" } {
-                                label for="mem_min" { "Dinamik bellek: en az (MB)" }
+                                label for="mem_min" { (tx("Dinamik bellek: en az (MB)")) }
                                 input id="mem_min" name="min" type="text" inputmode="numeric" value=(g.hw.mem_min_mb) required disabled[g.lock.is_some()];
-                                button class="btn sm" type="submit" disabled[g.lock.is_some()] { (icon("check")) "Uygula" }
+                                button class="btn sm" type="submit" disabled[g.lock.is_some()] { (icon("check")) (tx("Uygula")) }
                             }
                         }
                         footer {
-                            "Konuk çalışırken de değişir. " (redox_core::hw::MIN_BALLOON_MB) " MB ile konuğun belleği arasında bir değer yazın; 0 balonu boşaltır. "
-                            "Konuk belleği hemen bırakmayabilir: balon sürücüsü kullanılmayan belleği verir, gerekirse konuk takas alanına başvurur. "
-                            "Dinamik bellekte hedefi RedoX belirler: konuğun kullandığı bellek + %" (redox_core::hw::DYNAMIC_BUFFER_PCT) " pay, alt sınır ile belleğin tamamı arasında. 0 kapatır."
+                            (tx("Konuk çalışırken de değişir. ")) (redox_core::hw::MIN_BALLOON_MB) (tx(" MB ile konuğun belleği arasında bir değer yazın; 0 balonu boşaltır. "))
+                            (tx("Konuk belleği hemen bırakmayabilir: balon sürücüsü kullanılmayan belleği verir, gerekirse konuk takas alanına başvurur. "))
+                            (tx("Dinamik bellekte hedefi RedoX belirler: konuğun kullandığı bellek + %")) (redox_core::hw::DYNAMIC_BUFFER_PCT) (tx(" pay, alt sınır ile belleğin tamamı arasında. 0 kapatır."))
                         }
                     }
                 }
                 div class="card" {
-                    header { h2 { "cloud-init" } span class="note" { @if g.hw.cloud_init() { "açık · sürüm " (g.hw.ci_gen) } @else { "kapalı" } } }
+                    header { h2 { "cloud-init" } span class="note" { @if g.hw.cloud_init() { (tx("açık · sürüm ")) (g.hw.ci_gen) } @else { (tx("kapalı")) } } }
                     div class="form" {
                         div class="field" {
-                            label for="ci_user" { "Kullanıcı" }
+                            label for="ci_user" { (tx("Kullanıcı")) }
                             input id="ci_user" form="hw" name="ci_user" type="text" value=(f.ci_user) placeholder=(redox_core::hw::DEFAULT_CI_USER) autocomplete="off" spellcheck="false" disabled[off];
-                            span class="hint" { "Parolasız sudo yetkisiyle açılır; parolayla giriş kapalıdır." }
+                            span class="hint" { (tx("Parolasız sudo yetkisiyle açılır; parolayla giriş kapalıdır.")) }
                         }
                         div class="field full" {
-                            label for="ci_ssh_key" { "SSH açık anahtarı" }
-                            input id="ci_ssh_key" form="hw" name="ci_ssh_key" type="text" value=(f.ci_ssh_key) placeholder="ssh-ed25519 AAAA… ad@makine" autocomplete="off" spellcheck="false" disabled[off];
-                            span class="hint" { "Doluysa cloud-init açıktır; boşaltırsanız kapanır ve aşağıdaki ayarlar da silinir." }
+                            label for="ci_ssh_key" { (tx("SSH açık anahtarı")) }
+                            input id="ci_ssh_key" form="hw" name="ci_ssh_key" type="text" value=(f.ci_ssh_key) placeholder=(tx("ssh-ed25519 AAAA… ad@makine")) autocomplete="off" spellcheck="false" disabled[off];
+                            span class="hint" { (tx("Doluysa cloud-init açıktır; boşaltırsanız kapanır ve aşağıdaki ayarlar da silinir.")) }
                         }
                         div class="field" {
-                            label for="ci_ip" { "Sabit adres" }
+                            label for="ci_ip" { (tx("Sabit adres")) }
                             input id="ci_ip" form="hw" name="ci_ip" type="text" value=(f.ci_ip) placeholder="10.0.0.5/24" autocomplete="off" spellcheck="false" disabled[off];
-                            span class="hint" { "Birinci kart için IPv4 adresi ve önek. Boşsa konuk DHCP kullanır." }
+                            span class="hint" { (tx("Birinci kart için IPv4 adresi ve önek. Boşsa konuk DHCP kullanır.")) }
                         }
                         div class="field" {
-                            label for="ci_gw" { "Ağ geçidi" }
+                            label for="ci_gw" { (tx("Ağ geçidi")) }
                             input id="ci_gw" form="hw" name="ci_gw" type="text" value=(f.ci_gw) placeholder="10.0.0.1" autocomplete="off" spellcheck="false" disabled[off];
                         }
                         div class="field" {
-                            label for="ci_dns" { "Ad sunucuları" }
+                            label for="ci_dns" { (tx("Ad sunucuları")) }
                             input id="ci_dns" form="hw" name="ci_dns" type="text" value=(f.ci_dns) placeholder="1.1.1.1, 9.9.9.9" autocomplete="off" spellcheck="false" disabled[off];
-                            span class="hint" { "Virgülle ayırın; en fazla " (redox_core::hw::MAX_CI_DNS) ". Yalnızca sabit adresle." }
+                            span class="hint" { (tx("Virgülle ayırın; en fazla ")) (redox_core::hw::MAX_CI_DNS) (tx(". Yalnızca sabit adresle.")) }
                         }
                     }
                     footer {
-                        "Konuğun işletim sisteminde cloud-init kurulu olmalıdır (bulut imajlarında hazır gelir). Ayarlar değişince konuk bir sonraki açılışta "
-                        "bunları yeniden uygular: yeni kullanıcı ve anahtar eklenir, makinenin SSH sunucu anahtarları yenilenebilir; eski kullanıcı silinmez."
+                        (tx("Konuğun işletim sisteminde cloud-init kurulu olmalıdır (bulut imajlarında hazır gelir). Ayarlar değişince konuk bir sonraki açılışta "))
+                        (tx("bunları yeniden uygular: yeni kullanıcı ve anahtar eklenir, makinenin SSH sunucu anahtarları yenilenebilir; eski kullanıcı silinmez."))
                     }
                 }
                 div class="card" {
-                    header { h2 { "Paylaşılan klasörler" } span class="note" { (g.hw.shares.len()) " / " (redox_core::hw::MAX_SHARES) } }
+                    header { h2 { (tx("Paylaşılan klasörler")) } span class="note" { (g.hw.shares.len()) " / " (redox_core::hw::MAX_SHARES) } }
                     div class="form" {
                         div class="field full" {
-                            label for="shares" { "Paylaşımlar" }
-                            input id="shares" form="hw" name="shares" type="text" value=(f.shares) placeholder="ortak, veri:ro" autocomplete="off" spellcheck="false" disabled[off];
+                            label for="shares" { (tx("Paylaşımlar")) }
+                            input id="shares" form="hw" name="shares" type="text" value=(f.shares) placeholder=(tx("ortak, veri:ro")) autocomplete="off" spellcheck="false" disabled[off];
                             span class="hint" {
-                                "Virgülle ayırın; salt okunur için ad:ro. Her ad, sunucuda veri dizinindeki " span class="mono" { "shares/<ad>" }
-                                " klasörüdür; aynı adı kullanan konuklar aynı klasörü görür. Konukta bağlamak için: "
+                                (tx("Virgülle ayırın; salt okunur için ad:ro. Her ad, sunucuda veri dizinindeki ")) span class="mono" { "shares/<ad>" }
+                                (tx(" klasörüdür; aynı adı kullanan konuklar aynı klasörü görür. Konukta bağlamak için: "))
                                 span class="mono" { "mount -t 9p -o trans=virtio,version=9p2000.L ortak /mnt/ortak" }
-                                ". Paylaşım konukta bağlıyken konuk askıya alınamaz, çalışırken anlık görüntüsü alınamaz ve çalışırken taşınamaz."
+                                (tx(". Paylaşım konukta bağlıyken konuk askıya alınamaz, çalışırken anlık görüntüsü alınamaz ve çalışırken taşınamaz."))
                             }
                         }
                     }
                 }
                 div class="card" {
-                    header { h2 { "Kurulum kalıbı ve aygıt aktarımı" } }
+                    header { h2 { (tx("Kurulum kalıbı ve aygıt aktarımı")) } }
                     div class="form" {
                         div class="field" {
-                            label for="iso" { "Kurulum kalıbı (ISO)" }
+                            label for="iso" { (tx("Kurulum kalıbı (ISO)")) }
                             @if p.real {
                                 select id="iso" form="hw" name="iso" disabled[off] {
                                     option value="" { "(yok)" }
@@ -353,17 +353,17 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                             } @else {
                                 input id="iso" form="hw" name="iso" type="text" value=(f.iso) placeholder="debian-12.iso" disabled[off];
                             }
-                            span class="hint" { "Takılıysa ilk açılış bu kalıptan yapılır. Kalıpları " a class="link" href="/storage" { "Depolama" } " sayfasından yüklersiniz." }
+                            span class="hint" { (tx("Takılıysa ilk açılış bu kalıptan yapılır. Kalıpları ")) a class="link" href="/storage" { (tx("Depolama")) } (tx(" sayfasından yüklersiniz.")) }
                         }
                         div class="field" {
-                            label for="usb" { "USB aygıtları" }
+                            label for="usb" { (tx("USB aygıtları")) }
                             input id="usb" form="hw" name="usb" type="text" value=(f.usb) placeholder="046d:c52b" autocomplete="off" spellcheck="false" disabled[off];
-                            span class="hint" { "Sunucuya takılı aygıtın lsusb çıktısındaki kimliği. Hizmet kullanıcısının aygıta erişim izni olmalıdır." }
+                            span class="hint" { (tx("Sunucuya takılı aygıtın lsusb çıktısındaki kimliği. Hizmet kullanıcısının aygıta erişim izni olmalıdır.")) }
                         }
                         div class="field" {
-                            label for="pci" { "PCI aygıtları" }
+                            label for="pci" { (tx("PCI aygıtları")) }
                             input id="pci" form="hw" name="pci" type="text" value=(f.pci) placeholder="0000:01:00.0" autocomplete="off" spellcheck="false" disabled[off];
-                            span class="hint" { "lspci -D çıktısındaki adres. Sunucuda IOMMU açık ve aygıt vfio-pci sürücüsüne bağlı olmalıdır." }
+                            span class="hint" { (tx("lspci -D çıktısındaki adres. Sunucuda IOMMU açık ve aygıt vfio-pci sürücüsüne bağlı olmalıdır.")) }
                         }
                     }
                 }
@@ -371,9 +371,9 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
         }
         @if p.admin {
             div class="savebar" {
-                span class="note" { @if stopped { "Değişiklikler kaydedince uygulanır; konuk bir sonraki açılışta yeni donanımla başlar." } @else { "Kaydetmek için önce konuğu kapatın." } }
-                a class="btn" href={ (base) "?tab=donanim" } { "Vazgeç" }
-                button class="btn primary" type="submit" form="hw" disabled[off] { (icon("check")) "Donanımı Kaydet" }
+                span class="note" { @if stopped { (tx("Değişiklikler kaydedince uygulanır; konuk bir sonraki açılışta yeni donanımla başlar.")) } @else { (tx("Kaydetmek için önce konuğu kapatın.")) } }
+                a class="btn" href={ (base) "?tab=donanim" } { (tx("Vazgeç")) }
+                button class="btn primary" type="submit" form="hw" disabled[off] { (icon("check")) (tx("Donanımı Kaydet")) }
             }
         }
     }

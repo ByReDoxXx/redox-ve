@@ -7,7 +7,7 @@ pub async fn edit_form(State(st): State<AppState>, Extension(me): Extension<Iden
     let ctx = Ctx::new(&st, &headers, PageQuery::default(), &me);
     match raw.parse::<VmId>().ok().and_then(|id| ctx.cluster.guest(id).ok()) {
         Some(g) => Redirect::to(&format!("/guests/{}?tab=donanim", g.vmid)).into_response(),
-        None => ctx.not_found(&format!("“{raw}” kimlikli bir konuk yok.")),
+        None => ctx.not_found(&tfmt(format!("“{raw}” kimlikli bir konuk yok."))),
     }
 }
 
@@ -36,7 +36,7 @@ pub async fn edit(
     let number = |raw: &str, label: &str| -> Result<Option<u64>, String> {
         match raw.trim() {
             "" => Ok(None),
-            t => t.parse().map(Some).map_err(|_| format!("{label} bir tam sayı olmalı.")),
+            t => t.parse().map(Some).map_err(|_| tfmt(format!("{label} bir tam sayı olmalı."))),
         }
     };
     let list = |raw: &str| -> Vec<String> { raw.split([',', ' ', '\n']).map(str::trim).filter(|n| !n.is_empty()).map(str::to_lowercase).collect() };
@@ -49,22 +49,22 @@ pub async fn edit(
             tags: general.then(|| parse_tags(&f.tags)),
             pool: general.then(|| f.pool.trim().to_string()),
             onboot: general.then(|| f.onboot.is_some()),
-            cores: number(&f.cores, "Çekirdek")?.map(|v| v as u32).filter(|_| hardware),
-            memory_mb: number(&f.memory_mb, "Bellek")?.filter(|_| hardware),
+            cores: number(&f.cores, (tx("Çekirdek")))?.map(|v| v as u32).filter(|_| hardware),
+            memory_mb: number(&f.memory_mb, (tx("Bellek")))?.filter(|_| hardware),
             iso: hardware_sent.then(|| f.iso.trim().to_string()).filter(|_| guest.kind == redox_core::GuestKind::Vm),
             forwards: if hardware_sent { Some(parse_forwards(&f.forwards)?) } else { None },
             bridge: hardware_sent.then(|| f.bridge.trim().to_string()).filter(|b| !b.is_empty()),
             backup_time: general.then(|| f.backup_time.trim().to_string()),
-            backup_keep: number(&f.backup_keep, "Saklanacak yedek sayısı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
-            rpo_hours: number(&f.rpo_hours, "Yedek yaşı hedefi")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
-            backup_weekly: number(&f.backup_weekly, "Haftalık yedek sayısı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
-            backup_monthly: number(&f.backup_monthly, "Aylık yedek sayısı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
-            backup_yearly: number(&f.backup_yearly, "Yıllık yedek sayısı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            backup_keep: number(&f.backup_keep, (tx("Saklanacak yedek sayısı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            rpo_hours: number(&f.rpo_hours, (tx("Yedek yaşı hedefi")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            backup_weekly: number(&f.backup_weekly, (tx("Haftalık yedek sayısı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            backup_monthly: number(&f.backup_monthly, (tx("Aylık yedek sayısı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            backup_yearly: number(&f.backup_yearly, (tx("Yıllık yedek sayısı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
             firewall: general.then(|| f.firewall.is_some()),
             nic_guard: (general && guest.kind == redox_core::GuestKind::Vm).then(|| f.nic_guard.is_some()),
             fw_rules: if general { Some(redox_core::hw::parse_fw_rules(&f.fw_rules)?) } else { None },
             backup_pre: (general && guest.kind == redox_core::GuestKind::Vm).then(|| f.backup_pre.clone()),
-            test_port: number(&f.test_port, "Sınama kapısı")?.map(|v| v.min(u16::MAX as u64) as u16).filter(|_| general && guest.kind == redox_core::GuestKind::Vm),
+            test_port: number(&f.test_port, (tx("Sınama kapısı")))?.map(|v| v.min(u16::MAX as u64) as u16).filter(|_| general && guest.kind == redox_core::GuestKind::Vm),
             test_cmd: (general && guest.kind == redox_core::GuestKind::Vm).then(|| f.test_cmd.clone()),
             backup_post: (general && guest.kind == redox_core::GuestKind::Vm).then(|| f.backup_post.clone()),
             firmware: machine.map(|(firmware, _)| firmware),
@@ -74,15 +74,15 @@ pub async fn edit(
             nics: hardware_sent.then(|| f.nics.split([',', ' ', '\n']).filter(|n| !n.trim().is_empty()).map(redox_core::hw::normalize_network).collect()),
             usb: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| list(&f.usb)),
             pci: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| list(&f.pci)),
-            boot_order: number(&f.boot_order, "Başlatma sırası")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
-            boot_delay: number(&f.boot_delay, "Başlatma gecikmesi")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            boot_order: number(&f.boot_order, (tx("Başlatma sırası")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
+            boot_delay: number(&f.boot_delay, (tx("Başlatma gecikmesi")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
             schedules: None,
             restart: general.then(|| f.restart.is_some()),
-            disk_mbps: number(&f.disk_mbps, "Disk hız sınırı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
-            disk_iops: number(&f.disk_iops, "Disk işlem sınırı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
+            disk_mbps: number(&f.disk_mbps, (tx("Disk hız sınırı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
+            disk_iops: number(&f.disk_iops, (tx("Disk işlem sınırı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
             shares: if hardware_sent && guest.kind == redox_core::GuestKind::Vm { Some(redox_core::hw::parse_shares(&f.shares)?) } else { None },
-            vlan: number(&f.vlan, "VLAN etiketi")?.map(|v| v.min(u16::MAX as u64) as u16).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
-            net_mbps: number(&f.net_mbps, "Ağ hız sınırı")?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
+            vlan: number(&f.vlan, (tx("VLAN etiketi")))?.map(|v| v.min(u16::MAX as u64) as u16).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
+            net_mbps: number(&f.net_mbps, (tx("Ağ hız sınırı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
             cpu_type: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.cpu_type.trim().to_string()),
             balloon: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.balloon.is_some()),
             nested: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.nested.is_some()),
@@ -113,11 +113,11 @@ pub async fn schedule_add(State(st): State<AppState>, Extension(me): Extension<I
     let pairs: Vec<(String, String)> = serde_urlencoded::from_bytes(&body).unwrap_or_default();
     let value = |key: &str| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.trim()).unwrap_or("");
     let Ok(action) = value("action").parse::<Action>() else {
-        return flash(&back, "error", "Bir işlem seçin: başlat, kapat ya da yeniden başlat.");
+        return flash(&back, "error", (tx("Bir işlem seçin: başlat, kapat ya da yeniden başlat.")));
     };
     let days = pairs.iter().filter(|(k, _)| k == "day").filter_map(|(_, v)| v.parse::<u8>().ok()).filter(|d| (1..=7).contains(d)).fold(0u8, |bits, d| bits | 1 << (d - 1));
     if days == 0 {
-        return flash(&back, "error", "En az bir gün seçin.");
+        return flash(&back, "error", (tx("En az bir gün seçin.")));
     }
     let Ok(guest) = st.snapshot().guest(vmid).cloned() else {
         return failed("/guests", &Error::GuestNotFound(vmid));
@@ -125,7 +125,7 @@ pub async fn schedule_add(State(st): State<AppState>, Extension(me): Extension<I
     let mut schedules = guest.hw.schedules.clone();
     schedules.push(redox_core::hw::Schedule { action, time: value("time").to_string(), days, last_run: None });
     match st.update_guest(vmid, &GuestPatch { schedules: Some(schedules), ..Default::default() }, &me.user) {
-        Ok(()) => flash(&back, "notice", "Zamanlanmış işlem eklendi."),
+        Ok(()) => flash(&back, "notice", (tx("Zamanlanmış işlem eklendi."))),
         Err(e) => failed(&back, &e),
     }
 }
@@ -142,10 +142,10 @@ pub async fn schedule_delete(State(st): State<AppState>, Extension(me): Extensio
     let mut schedules = guest.hw.schedules.clone();
     match index.parse::<usize>().ok().filter(|i| *i < schedules.len()) {
         Some(i) => drop(schedules.remove(i)),
-        None => return flash(&back, "error", "Böyle bir zamanlanmış işlem yok."),
+        None => return flash(&back, "error", (tx("Böyle bir zamanlanmış işlem yok."))),
     }
     match st.update_guest(vmid, &GuestPatch { schedules: Some(schedules), ..Default::default() }, &me.user) {
-        Ok(()) => flash(&back, "notice", "Zamanlanmış işlem silindi."),
+        Ok(()) => flash(&back, "notice", (tx("Zamanlanmış işlem silindi."))),
         Err(e) => failed(&back, &e),
     }
 }

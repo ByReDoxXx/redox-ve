@@ -1,5 +1,7 @@
 //! Konuk işlemlerinin istek işleyicileri (düzenleme, anlık görüntü, yedek, klon, konsol, toplu işlem).
 
+#[allow(unused_imports)]
+use crate::i18n::{tfmt, tx};
 use axum::extract::{Path, Query, RawForm, State};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderName, StatusCode};
@@ -33,7 +35,7 @@ pub use hardware::*;
 pub use lifecycle::*;
 
 fn vmid_of(raw: &str) -> Result<VmId, Redirect> {
-    raw.parse().map_err(|_| flash("/", "error", &format!("Geçersiz konuk kimliği: {raw}")))
+    raw.parse().map_err(|_| flash("/", "error", &tfmt(format!("Geçersiz konuk kimliği: {raw}"))))
 }
 
 fn failed(path: &str, e: &Error) -> Redirect {
