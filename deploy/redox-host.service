@@ -3,7 +3,8 @@ Description=RedoX VE yönetim sunucusu (QEMU/KVM + köprü ağı + LXC)
 After=network-online.target lxc-net.service
 Wants=network-online.target
 
-# DİKKAT: Bu birim gerçek bir sunucuda denenmedi. Köprü ağı ve yetkisiz LXC, setuid
+# Bu birim Debian 13 kurulu bir sanal makinede yetkisiz LXC ile denendi (köprüye bağlı konuk ve fiziksel
+# sunucu denenmedi). Köprü ağı ve yetkisiz LXC, setuid
 # yardımcılara (qemu-bridge-helper, newuidmap, lxc-user-nic) ve ad alanlarına ihtiyaç duyar;
 # bu yüzden redox-qemu.service içindeki bazı sandbox kısıtları burada bilerek yoktur.
 # Yalnızca NAT'lı sanal makineler yetiyorsa daha sıkı olan redox-qemu.service'i kullanın.

@@ -53,12 +53,14 @@ yapılacakları yazar.
 **Sınandı (Debian 13.8, KVM'li bir sanal makinede):** ISO'nun üretilmesi, BIOS ile önyüklenip soru sormadan
 kurulması (yaklaşık 7 dakika), paketlerin kurulması, ilk açılışta yönetici hesabının oluşması, konsoldaki açılış
 ekranı, `vmbr0` köprüsünün adres alması, panelin `https://<adres>:8006` üzerinde kendinden imzalı sertifikayla
-yanıt vermesi ve gerçek LXC ile bir Alpine konteynerinin oluşturulup başlatılması, içinde komut çalıştırılması ve
-çalışırken yedeğinin alınması.
+yanıt vermesi. Gerçek LXC ile bir Alpine konteynerinin bütün yaşam döngüsü de aynı kurulumda denendi: oluşturma,
+başlatma, adres alma, içinde komut çalıştırma, bellek sınırı, çalışırken yedek, yeniden başlatma, durdurma, anlık
+görüntü ve geri dönüş, yedekten geri yükleme, klon (kendi adı ve adresiyle) ve silme.
 
 **Henüz sınanmadı:** fiziksel bir makinede kurulum, UEFI ile önyükleme, USB bellekten açılış, kurucunun soru soran
-(etkileşimli) akışı ve Ubuntu üzerinde `install.sh`. Gerçek LXC'de konteynerin yeniden başlatılması, anlık
-görüntüsü ve klonu **hata veriyor** (aşağıda *Bilinen eksikler*).
+(etkileşimli) akışı, Ubuntu üzerinde `install.sh` ve sanal makinelerin bu kurulumda çalıştırılması. Konteynerler
+yalnızca Alpine imajıyla ve NAT ağıyla denendi; köprüye bağlı konteyner ve diğer dağıtımlar denenmedi.
+Konteynerlerin çalışması için systemd 254 ya da sonrası gerekir (Debian 13, Ubuntu 24.04).
 
 ## Güvenlik modeli (özet)
 
@@ -926,7 +928,7 @@ sağlayıcıda zorunlu kılın). Yalnızca sahte bir sağlayıcıyla sınandı; 
   Son turda gerçek KVM'de denenenler: yedek işi (iki konuğun sırayla yedeklenmesi, işin saklama sayısı), seçilen
   işlemci modeliyle başlatma, balon aygıtı ve bellek hedefi komutu, cloud-init ağ dosyasının yazılması ve UEFI + TPM
   durumunun çalışan konukta yedeklenip geri yüklenmesi (gerçek OVMF ve swtpm; depo özetiyle karşılaştırıldı).
-  Konteyner klonu ve çalışırken yedeği yalnızca sahte LXC araçlarıyla sınandı.
+  Konteyner klonu ve çalışırken yedeği gerçek LXC ile (Debian 13, Alpine konteyneri) de denendi.
   Ardından gerçek KVM'de denenenler: depolar arası taşıma (ek disk ve anlık görüntüyle; içerikler özetle karşılaştırıldı,
   taşınan diskte anlık görüntüye dönüldü), havuz kotaları, başka üreticinin işlemci modelinin reddi ve ek diskli,
   UEFI + güvenli önyükleme + TPM'li konuğun iki sunucu arasında taşınması (diskler, değişken deposu ve TPM durumu

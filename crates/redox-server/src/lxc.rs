@@ -39,6 +39,16 @@ pub fn delegated_cgroup(proc_self_cgroup: &str) -> Option<&str> {
     (!parent.is_empty() && !parent.contains("..")).then_some(parent)
 }
 
+/// Boş cgroup ağacını yapraklardan köke doğru siler (cgroup dizini yalnızca `rmdir` ile ve boşken silinir).
+fn remove_empty_cgroups(dir: &std::path::Path) {
+    for child in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if child.file_type().is_ok_and(|kind| kind.is_dir()) {
+            remove_empty_cgroups(&child.path());
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+}
+
 /// `lxc-start` günlüğünden asıl hata: genel kapanış satırları ve zararsız D-Bus uyarısı atlanır, ilk gerçek
 /// hatanın açıklaması (kaynak dosya öneki olmadan) verilir.
 pub fn start_failure(log: &str) -> Option<String> {
@@ -244,11 +254,19 @@ impl LxcDriver {
         &self.cfg
     }
 
+    /// Aracın yolu (testler sahte araç dizini verir).
+    fn tool_path(&self, name: &str) -> PathBuf {
+        match &self.cfg.bin_dir {
+            Some(dir) => dir.join(name),
+            None => PathBuf::from(name),
+        }
+    }
+
+    /// LXC aracını `-P yol` ile hazırlar. Araç 022 dosya maskesiyle çalışır: hizmetin 077 maskesiyle oluşan
+    /// dizinlere (anlık görüntü, klon) konteynerin eşlenmiş kökü giremez ve işlem "Permission denied" ile biter.
     fn tool(&self, name: &str) -> Command {
-        let mut command = match &self.cfg.bin_dir {
-            Some(dir) => Command::new(dir.join(name)),
-            None => Command::new(name),
-        };
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(r#"umask 022 && exec "$0" "$@""#).arg(self.tool_path(name));
         command.arg("-P").arg(&self.cfg.lxc_path);
         command
     }
@@ -281,10 +299,7 @@ impl LxcDriver {
         let mut command = match self.launch_group(vmid) {
             Some(group) => {
                 let mut c = Command::new("sh");
-                c.arg("-c").arg(r#"echo $$ > "$0/cgroup.procs" && exec "$@""#).arg(group).arg(match &self.cfg.bin_dir {
-                    Some(dir) => dir.join("lxc-start"),
-                    None => PathBuf::from("lxc-start"),
-                });
+                c.arg("-c").arg(r#"umask 022 && echo $$ > "$0/cgroup.procs" && exec "$@""#).arg(group).arg(self.tool_path("lxc-start"));
                 c.arg("-P").arg(&self.cfg.lxc_path);
                 c
             }
@@ -314,7 +329,18 @@ impl LxcDriver {
         for controller in ["cpu", "memory", "pids", "io", "cpuset"] {
             let _ = std::fs::write(base.join("cgroup.subtree_control"), format!("+{controller}"));
         }
-        let group = base.join(format!("ct-{vmid}"));
+        // Her başlatma yeni ve boş bir grup ister: LXC, içinden çalıştığı grupta alt gruplara denetleyici açar ve
+        // çekirdek artık o gruba süreç koydurmaz (ikinci başlatma "I/O error" verirdi). Bu konteynerin önceki
+        // başlatmalarından kalan boş gruplar temizlenir; içinde süreç olan grup silinemez ve olduğu gibi kalır.
+        let prefix = format!("ct-{vmid}-");
+        for old in std::fs::read_dir(&base).into_iter().flatten().flatten() {
+            let name = old.file_name().to_string_lossy().into_owned();
+            if name.starts_with(&prefix) || name == format!("ct-{vmid}") {
+                remove_empty_cgroups(&old.path());
+            }
+        }
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let group = base.join(format!("{prefix}{stamp}"));
         std::fs::create_dir_all(&group).ok()?;
         // Hizmetin UMask'ı dizini 0700 oluşturur; konteynerin kökü (eşlenmiş kimlik) kendi cgroup ağacına
         // ulaşmak için buradan geçebilmelidir, yoksa konteynerde cgroup2 bağlanamaz.
@@ -400,7 +426,10 @@ impl Hypervisor for LxcDriver {
         if !self.cfg.lxc_path.join(container_name(g.vmid)).exists() {
             return Ok(());
         }
-        self.run("lxc-destroy", g.vmid, &[]).map(|_| ())
+        // `-s`: anlık görüntüleriyle birlikte. Onsuz, görüntüsü olan konteyner silinmez.
+        self.run("lxc-destroy", g.vmid, &["-s"])?;
+        let _ = std::fs::remove_file(self.snapshot_map_path(g.vmid));
+        Ok(())
     }
 
     fn apply(&self, g: &Guest, action: Action) -> Result<(), String> {
@@ -409,7 +438,8 @@ impl Hypervisor for LxcDriver {
             Action::Start => self.start(g.vmid),
             // Süre dolunca lxc-stop konteyneri zorla durdurur.
             Action::Stop => self.run("lxc-stop", g.vmid, &["-t", &timeout]),
-            Action::Reboot => self.run("lxc-stop", g.vmid, &["-r", "-t", &timeout]),
+            // Yetkisiz konteynerde `lxc-stop -r` konteyneri kapatır ama yeniden açamaz; iki adımda yapılır.
+            Action::Reboot => self.run("lxc-stop", g.vmid, &["-t", &timeout]).and_then(|_| self.start(g.vmid)),
             Action::Pause => self.run("lxc-freeze", g.vmid, &[]),
             Action::Resume => self.run("lxc-unfreeze", g.vmid, &[]),
         };
@@ -522,7 +552,9 @@ impl Hypervisor for LxcDriver {
             SnapshotOp::Rollback(_) | SnapshotOp::Delete(_) => {
                 let theirs = map.iter().find(|(ours, _)| ours == name).map(|(_, t)| t.clone()).ok_or_else(|| format!("anlık görüntü bulunamadı: {name}"))?;
                 if matches!(op, SnapshotOp::Rollback(_)) {
-                    return self.run("lxc-snapshot", g.vmid, &["-r", &theirs]).map(|_| ());
+                    self.run("lxc-snapshot", g.vmid, &["-r", &theirs])?;
+                    // Geri dönüş yapılandırmayı görüntünün alındığı andaki haline getirir; güncel ayarlar yeniden yazılır.
+                    return self.write_managed(g);
                 }
                 self.run("lxc-snapshot", g.vmid, &["-d", &theirs])?;
                 map.retain(|(ours, _)| ours != name);
@@ -645,7 +677,12 @@ impl Hypervisor for LxcDriver {
         if self.cfg.lxc_path.join(&new_name).exists() {
             return Err(format!("{new_name} adlı konteyner dizini zaten var"));
         }
-        self.run("lxc-copy", source.vmid, &["-N", &new_name])?;
+        // Yetkisiz kurulumda `lxc-copy` hedef dizine eşlenmiş kök olarak giremez ve kopyalayamaz (gerçek LXC'de
+        // görüldü); kopya, yedek ve geri yüklemede kullanılan aynı yolla, eşlenmiş kimlikle yapılır.
+        match self.cfg.idmap {
+            Some(_) => self.copy_container(source.vmid, target.vmid)?,
+            None => drop(self.run("lxc-copy", source.vmid, &["-N", &new_name])?),
+        }
         let _ = std::fs::remove_file(self.snapshot_map_path(target.vmid));
         self.write_managed(target).inspect_err(|_| {
             let _ = self.run("lxc-destroy", target.vmid, &[]);
@@ -654,6 +691,42 @@ impl Hypervisor for LxcDriver {
 }
 
 impl LxcDriver {
+    /// Kapalı konteynerin dizinini yeni adla kopyalar: kök dosya sistemi eşlenmiş kimlikle (sahiplikler korunarak),
+    /// yapılandırma adlar değiştirilerek. Yarım kalan kopya bırakılmaz.
+    fn copy_container(&self, source: VmId, target: VmId) -> Result<(), String> {
+        if self.info(source).is_some_and(|i| i.state != "STOPPED") {
+            return Err("konteyner çalışırken kopyalanamaz".to_string());
+        }
+        let (old_name, new_name) = (container_name(source), container_name(target));
+        let (from, to) = (self.cfg.lxc_path.join(&old_name), self.cfg.lxc_path.join(&new_name));
+        let mode = |dir: &std::path::Path, bits: u32| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(bits));
+            }
+            #[cfg(not(unix))]
+            let _ = (dir, bits);
+        };
+        std::fs::create_dir(&to).map_err(|e| format!("{} oluşturulamadı: {e}", to.display()))?;
+        // Eşlenmiş kök, kök dosya sistemini bu dizinin içine oluşturabilsin diye dizin kopya süresince yazılabilir.
+        mode(&to, 0o777);
+        let copied = (|| {
+            let out = self.userns().args(["cp", "-a", "--"]).arg(from.join("rootfs")).arg(to.join("rootfs")).output().map_err(|e| format!("cp çalıştırılamadı: {e}"))?;
+            if !out.status.success() {
+                return Err(format!("kök dosya sistemi kopyalanamadı: {}", last_line(&out.stderr)));
+            }
+            let config = std::fs::read_to_string(from.join("config")).map_err(|e| format!("kaynak yapılandırma okunamadı: {e}"))?;
+            std::fs::write(to.join("config"), config.replace(&old_name, &new_name)).map_err(|e| format!("yapılandırma yazılamadı: {e}"))
+        })();
+        // Başkaları dizine yazamaz; eşlenmiş kök yalnızca içinden geçebilir.
+        mode(&to, 0o755);
+        copied.inspect_err(|_| {
+            let _ = self.userns().arg("rm").arg("-rf").arg("--").arg(to.join("rootfs")).output();
+            let _ = std::fs::remove_dir_all(&to);
+        })
+    }
+
     /// Arşiv dosyası şifreli mi (başında şifreleme imi var mı)?
     fn sealed(&self, path: &std::path::Path) -> bool {
         use std::io::Read;
@@ -751,12 +824,20 @@ impl LxcDriver {
             .collect()
     }
 
+    /// Anlık görüntü adlarının eşlemesi konteyner dizininin **dışında** durur: LXC, görüntüye geri dönerken
+    /// konteyner dizinini baştan kurar ve içindeki yabancı dosyaları siler (gerçek LXC'de görüldü).
     fn snapshot_map_path(&self, vmid: VmId) -> PathBuf {
+        self.cfg.lxc_path.join(format!(".{}.snapshots", container_name(vmid)))
+    }
+
+    /// Eski sürümlerin eşlemeyi tuttuğu yer (konteyner dizininin içi); varsa hâlâ okunur.
+    fn old_snapshot_map_path(&self, vmid: VmId) -> PathBuf {
         self.cfg.lxc_path.join(container_name(vmid)).join("redox-snapshots")
     }
 
     fn read_snapshot_map(&self, vmid: VmId) -> Vec<(String, String)> {
         std::fs::read_to_string(self.snapshot_map_path(vmid))
+            .or_else(|_| std::fs::read_to_string(self.old_snapshot_map_path(vmid)))
             .unwrap_or_default()
             .lines()
             .filter_map(|l| l.split_once(' ').map(|(a, b)| (a.to_string(), b.to_string())))

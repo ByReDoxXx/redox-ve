@@ -48,7 +48,7 @@ for unit in redox-host.service; do
 done
 
 # ---------------------------------------------------------------- paketler
-PACKAGES="qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools lxc lxc-templates uidmap acl nftables iproute2 bridge-utils ca-certificates"
+PACKAGES="qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools lxc lxc-templates uidmap acl rsync nftables iproute2 bridge-utils ca-certificates"
 [ "$TLS" = 1 ] && PACKAGES="$PACKAGES caddy"
 say "Paketler kuruluyor" "Installing packages"
 if [ -z "$ROOT" ]; then

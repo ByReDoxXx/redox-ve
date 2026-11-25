@@ -80,6 +80,7 @@ MAPS=
 while [ "$1" != "--" ]; do [ "$1" = "-m" ] || MAPS="$MAPS $1"; shift; done
 shift
 echo "$MAPS" > "$(dirname "$0")/last-userns"
+[ -e "$(dirname "$0")/userns-fail" ] && { echo "cp: diskte yer kalmadı" >&2; exit 1; }
 exec "$@"
 "#;
 
@@ -214,7 +215,7 @@ fn container_lifecycle_against_fake_tools() {
     d.apply(&g, Action::Resume).unwrap();
     d.apply(&g, Action::Reboot).unwrap();
     assert_eq!(status(&d, &g), GuestStatus::Running);
-    assert_eq!(std::fs::read_to_string(cfg.lxc_path.join("redox-100/last-stop")).unwrap().trim(), "t=7 r=1", "yeniden başlatma -r ve süre sınırıyla");
+    assert_eq!(std::fs::read_to_string(cfg.lxc_path.join("redox-100/last-stop")).unwrap().trim(), "t=7 r=", "yeniden başlatma: süre sınırıyla durdur, sonra başlat (-r yetkisiz konteynerde çalışmaz)");
 
     // Ayar değişince yalnızca yönetilen blok yenilenir.
     let mut bigger = g.clone();
@@ -381,7 +382,7 @@ fn container_snapshots_map_our_names_to_lxc_names() {
     d.snapshot(&g, SnapshotOp::Create("ilk-hali")).unwrap();
     std::fs::write(&file, "ikinci").unwrap();
     d.snapshot(&g, SnapshotOp::Create("ikinci-hali")).unwrap();
-    assert_eq!(std::fs::read_to_string(cfg.lxc_path.join("redox-100/redox-snapshots")).unwrap(), "ilk-hali snap0\nikinci-hali snap1\n");
+    assert_eq!(std::fs::read_to_string(cfg.lxc_path.join(".redox-100.snapshots")).unwrap(), "ilk-hali snap0\nikinci-hali snap1\n");
     assert!(d.snapshot(&g, SnapshotOp::Create("ilk-hali")).unwrap_err().contains("zaten var"));
 
     std::fs::write(&file, "bozuldu").unwrap();
@@ -397,12 +398,12 @@ fn container_snapshots_map_our_names_to_lxc_names() {
     assert!(d.snapshot(&g, SnapshotOp::Create("../x")).unwrap_err().contains("geçersiz"));
     // Silinen adın LXC numarası yeniden kullanılsa da eşleme doğru kalır.
     d.snapshot(&g, SnapshotOp::Create("ucuncu")).unwrap();
-    assert_eq!(std::fs::read_to_string(cfg.lxc_path.join("redox-100/redox-snapshots")).unwrap(), "ikinci-hali snap1\nucuncu snap0\n");
+    assert_eq!(std::fs::read_to_string(cfg.lxc_path.join(".redox-100.snapshots")).unwrap(), "ikinci-hali snap1\nucuncu snap0\n");
 
     // Çalışırken araç reddeder; ileti aktarılır ve eşleme değişmez.
     d.apply(&g, Action::Start).unwrap();
     assert_eq!(d.snapshot(&g, SnapshotOp::Create("canli")).unwrap_err(), "lxc-snapshot: konteyner çalışırken görüntü alınamaz");
-    assert!(!std::fs::read_to_string(cfg.lxc_path.join("redox-100/redox-snapshots")).unwrap().contains("canli"));
+    assert!(!std::fs::read_to_string(cfg.lxc_path.join(".redox-100.snapshots")).unwrap().contains("canli"));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -576,7 +577,7 @@ fn containers_are_cloned_with_their_own_identity() {
     assert!(config.contains("lxc.uts.name = kutu-kopya") && !config.contains("lxc.uts.name = kutu\n"), "kopya kendi adını alır: {config}");
     assert!(config.contains(&format!("lxc.net.0.hwaddr = {}", redox_core::mac_for(101))) && !config.contains(&redox_core::mac_for(100)), "kopya kendi ağ adresini alır");
     assert!(config.contains("lxc.cgroup2.cpu.max = 100000 100000"), "sınırlar hedef konuğun kaydına göre yazılır");
-    assert!(!copy.join("redox-snapshots").exists(), "anlık görüntü eşlemesi kopyalanmaz");
+    assert!(!cfg.lxc_path.join(".redox-101.snapshots").exists() && !copy.join("redox-snapshots").exists(), "anlık görüntü eşlemesi kopyalanmaz");
     // Kaynak değişmez; kopya bağımsızdır.
     std::fs::write(copy.join("rootfs/etc/veri"), "kopya").unwrap();
     assert_eq!(std::fs::read_to_string(rootfs.join("etc/veri")).unwrap(), "kaynak");
@@ -588,12 +589,20 @@ fn containers_are_cloned_with_their_own_identity() {
     assert!(d.clone_disk(&source, &target).unwrap_err().contains("zaten var"));
     let mut third = source.clone();
     (third.vmid, third.name) = (102, "ucuncu".into());
-    std::fs::write(cfg.lxc_path.join("copy-fail"), "").unwrap();
-    assert_eq!(d.clone_disk(&source, &third).unwrap_err(), "lxc-copy: diskte yer kalmadı");
-    assert!(!cfg.lxc_path.join("redox-102").exists());
-    std::fs::remove_file(cfg.lxc_path.join("copy-fail")).unwrap();
+    let fail = cfg.bin_dir.as_ref().unwrap().join("userns-fail");
+    std::fs::write(&fail, "").unwrap();
+    assert_eq!(d.clone_disk(&source, &third).unwrap_err(), "kök dosya sistemi kopyalanamadı: cp: diskte yer kalmadı");
+    assert!(!cfg.lxc_path.join("redox-102").exists(), "yarım kopya bırakılmaz");
+    std::fs::remove_file(&fail).unwrap();
     d.apply(&source, Action::Start).unwrap();
-    assert_eq!(d.clone_disk(&source, &third).unwrap_err(), "lxc-copy: konteyner çalışırken kopyalanamaz");
+    assert_eq!(d.clone_disk(&source, &third).unwrap_err(), "konteyner çalışırken kopyalanamaz");
+    assert!(!cfg.lxc_path.join("redox-102").exists());
+    // Yetkili (kimlik eşlemesiz) kurulumda LXC'nin kendi aracı kullanılır.
+    d.apply(&source, Action::Stop).unwrap();
+    let mut privileged = cfg.clone();
+    privileged.idmap = None;
+    LxcDriver::new(privileged).unwrap().clone_disk(&source, &third).unwrap();
+    assert!(cfg.lxc_path.join("redox-102/rootfs/etc/veri").is_file());
     std::fs::remove_dir_all(dir).unwrap();
 }
 

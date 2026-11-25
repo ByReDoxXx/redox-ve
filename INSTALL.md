@@ -57,12 +57,14 @@ use NAT); the bridge is only set up on systems that use `/etc/network/interfaces
 **Tested (Debian 13.8, in a virtual machine with KVM):** building the ISO, booting it with BIOS and installing
 without questions (about 7 minutes), package installation, creation of the administrator on first boot, the console
 banner, the `vmbr0` bridge getting an address, the panel answering on `https://<address>:8006` with a self-signed
-certificate, and with real LXC: creating and starting an Alpine container, running a command in it and backing it
-up while running.
+certificate. The whole life cycle of an Alpine container was also tried with real LXC on the same installation:
+create, start, getting an address, running a command, the memory limit, backup while running, restart, stop,
+snapshot and rollback, restore from backup, clone (with its own name and address) and delete.
 
 **Not tested yet:** installation on a physical machine, UEFI boot, booting from a USB stick, the installer's
-interactive flow, and `install.sh` on Ubuntu. On real LXC, restarting a container, taking its snapshot and cloning it
-**currently fail** (see *Known gaps* below).
+interactive flow, `install.sh` on Ubuntu, and running virtual machines on this installation. Containers were only
+tried with the Alpine image and NAT networking; a bridged container and other distributions were not. Containers
+need systemd 254 or later (Debian 13, Ubuntu 24.04).
 
 ## Security model (summary)
 
