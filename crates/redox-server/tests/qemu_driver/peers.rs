@@ -128,3 +128,75 @@ pub(super) async fn a_stopped_vm_is_copied_from_a_peer_server() {
     std::fs::remove_dir_all(dir).unwrap();
     std::fs::remove_dir_all(peer_dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+pub(super) async fn a_running_vm_is_replicated_from_a_peer_without_touching_it() {
+    if !python_available() {
+        return;
+    }
+    let (peer_cfg, peer_dir) = config();
+    let peer_cluster = local_cluster(&peer_cfg);
+    let node = peer_cluster.nodes[0].id.clone();
+    let mut users = UserFile::default();
+    users.add_user("admin", "dogru-at-pil-zimba-1", redox_server::auth::Role::Admin, Cost::Test).unwrap();
+    users.add_token("admin", "t", "es-sunucu-yonetici-tokeni").unwrap();
+    let peer = AppState::new(peer_cluster, Box::new(QemuDriver::new(peer_cfg.clone()).unwrap()), Duration::ZERO, None, Auth::new(users, None, false, Cost::Test));
+    let source = peer.create_guest(&spec("uretim", &node), "admin").unwrap();
+    std::fs::write(peer_cfg.disk_path(source), "birinci-surum").unwrap();
+    peer.run_action(source, Action::Start, "admin").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer_app = redox_server::app(peer.clone());
+    tokio::spawn(async move { axum::serve(listener, peer_app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap() });
+
+    let (cfg, dir) = config();
+    let hub = AppState::new(local_cluster(&cfg), Box::new(QemuDriver::new(cfg.clone()).unwrap()), Duration::ZERO, None, Auth::new(UserFile::default(), None, false, Cost::Test));
+    hub.peers().configure(redox_server::peers::parse_file(&format!("ankara http://127.0.0.1:{port} es-sunucu-yonetici-tokeni\n")).unwrap());
+    let blocking = |hub: &AppState, f: fn(&AppState) -> usize| {
+        let hub = hub.clone();
+        async move { tokio::task::spawn_blocking(move || f(&hub)).await.unwrap() }
+    };
+    assert!(matches!(hub.replica_put("yok", source, 60, "admin"), Err(Error::InvalidSpec(m)) if m.contains("tanımlı değil")));
+    hub.replica_put("ankara", source, 60, "admin").unwrap();
+
+    // İlk tur: kapalı bir yedek kopya oluşur; kaynak çalışmaya devam eder (askıya alınmaz).
+    assert_eq!(blocking(&hub, |h| h.replica_tick()).await, 1);
+    let c = hub.snapshot();
+    let first = c.replicas[0].standby.expect("yedek kopya");
+    let copy = c.guest(first).unwrap().clone();
+    assert_eq!((copy.name.as_str(), copy.status, copy.tags.clone()), ("uretim-kopya", GuestStatus::Stopped, vec!["kopya-ankara".to_string()]));
+    assert_eq!(std::fs::read_to_string(cfg.disk_path(first)).unwrap(), "birinci-surum");
+    assert!(c.tasks.iter().any(|t| t.command == format!("vm replicate ankara/{source}") && t.status == TaskStatus::Ok), "{:?}", c.tasks.first());
+    let left = peer.snapshot().guest(source).unwrap().clone();
+    assert_eq!((left.status, left.hw.suspended), (GuestStatus::Running, false), "kaynağa dokunulmaz");
+    assert!(peer.snapshot().backups.is_empty(), "eşte geçici yedek kalmaz");
+    assert_eq!(blocking(&hub, |h| h.replica_tick()).await, 0, "aralık dolmadan yeni tur başlamaz");
+
+    // Kaynak değişir; elle başlatılan tur kopyayı tazeler ve eski kopyayı siler.
+    std::fs::write(peer_cfg.disk_path(source), "ikinci-surum").unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    let run = {
+        let hub = hub.clone();
+        tokio::task::spawn_blocking(move || hub.replica_run("ankara", source)).await.unwrap()
+    };
+    run.unwrap();
+    let c = hub.snapshot();
+    let second = c.replicas[0].standby.unwrap();
+    assert_eq!(c.guests.len(), 1, "eski kopya silinir: {:?}", c.guests.iter().map(|g| g.vmid).collect::<Vec<_>>());
+    assert_eq!(std::fs::read_to_string(cfg.disk_path(second)).unwrap(), "ikinci-surum");
+
+    // Devralma: kopya başlatılır; çalışan kopyanın üzerine yazılmaz.
+    hub.run_action(second, Action::Start, "admin").unwrap();
+    let refused = {
+        let hub = hub.clone();
+        tokio::task::spawn_blocking(move || hub.replica_run("ankara", source)).await.unwrap()
+    };
+    assert!(refused.is_err());
+    assert!(hub.snapshot().replicas[0].error.as_deref().is_some_and(|e| e.contains("devralınmış")));
+    hub.run_action(second, Action::Stop, "admin").unwrap();
+    peer.run_action(source, Action::Stop, "admin").unwrap();
+    hub.replica_remove("ankara", source, "admin").unwrap();
+    assert!(hub.snapshot().replicas.is_empty() && hub.snapshot().guest(second).is_ok(), "kaldırınca kopya olağan konuk olarak kalır");
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(peer_dir);
+}

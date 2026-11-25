@@ -94,7 +94,7 @@ impl AppState {
         };
         let (me, user, peer_name) = (self.clone(), user.to_string(), peer_name.to_string());
         self.dispatch(move || {
-            let outcome = me.import_now(&peer, &peer_name, vmid, &image, &image_path, &user);
+            let outcome = me.import_now(&peer, &peer_name, vmid, &image, &image_path, &user, false);
             let _ = std::fs::remove_file(&image_path);
             me.mutate(|c| {
                 let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
@@ -108,15 +108,17 @@ impl AppState {
         Ok(())
     }
 
-    pub(super) fn import_now(&self, peer: &crate::peers::Peer, peer_name: &str, vmid: VmId, image: &str, image_path: &Path, user: &str) -> Result<VmId, String> {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn import_now(&self, peer: &crate::peers::Peer, peer_name: &str, vmid: VmId, image: &str, image_path: &Path, user: &str, replica: bool) -> Result<VmId, String> {
         let remote = peer.guest(vmid)?;
         if remote.kind != redox_core::GuestKind::Vm {
             return Err("yalnızca sanal makineler taşınabilir (konteyner taşıma yok)".to_string());
         }
         // Çalışan (ya da zaten askıda olan) konuk bellek durumuyla birlikte taşınır: kaynakta askıya alınır,
         // diski ve belleği kopyalanır, burada kaldığı yerden devam eder. Kesinti kopyalama süresi kadardır.
-        let live = remote.status != redox_core::GuestStatus::Stopped;
-        let carry_state = live || remote.hw.suspended;
+        // Çoğaltmada kaynağa dokunulmaz: askıya alınmaz, bellek durumu taşınmaz; kopya kapalı bir konuktur.
+        let live = !replica && remote.status != redox_core::GuestStatus::Stopped;
+        let carry_state = !replica && (live || remote.hw.suspended);
         if carry_state {
             let (node_cores, node_mem) = self.snapshot().nodes.first().map(|n| (n.cores, n.mem_total_mb)).unwrap_or((0, 0));
             if remote.cores > node_cores || remote.mem_total_mb > node_mem {
@@ -190,7 +192,7 @@ impl AppState {
         let spec = GuestSpec {
             // Bellek durumuyla gelen konuk, kimliği boşsa aynı kimliği alır: ağ kartının adresi kimlikten türetilir.
             vmid: Some(remote.vmid).filter(|id| carry_state && local.guest(*id).is_err()),
-            name: remote.name.clone(),
+            name: if replica { redox_core::replica_name(&remote.name) } else { remote.name.clone() },
             kind: remote.kind,
             node: node.id.clone(),
             cores: remote.cores.min(node.cores),
@@ -230,7 +232,13 @@ impl AppState {
             if let Ok(g) = c.guest_mut_for_import(id) {
                 g.hw.image = None;
                 g.tags = remote.tags.clone();
-                g.tags.push(format!("tasindi-{peer_name}"));
+                g.tags.push(format!("{}-{peer_name}", if replica { "kopya" } else { "tasindi" }));
+                if replica {
+                    // Yedek kopya kendiliğinden açılmaz ve zamanlanmış işleri devralmaz.
+                    g.hw.restart = false;
+                    g.hw.schedules.clear();
+                    g.backup_time = None;
+                }
                 g.tags.retain(|t| redox_core::valid_tag(t));
                 g.tags.truncate(redox_core::MAX_TAGS);
             }

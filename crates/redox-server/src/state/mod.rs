@@ -17,6 +17,7 @@ mod hardware;
 mod netguard;
 mod observe;
 mod remote;
+mod replica;
 mod schedule;
 mod snapshots;
 mod transfer;
@@ -159,6 +160,9 @@ pub fn now() -> u64 {
 }
 
 /// Sunucunun paylaşılan durumu: küme, sürücü, kimlik doğrulama ve kalıcılık ayarı.
+/// API hız sınırı durumu: (dakikadaki sınır, kullanıcı → (dakika, o dakikadaki istek sayısı)).
+type ApiRate = (u32, HashMap<String, (u64, u32)>);
+
 #[derive(Clone)]
 pub struct AppState(Arc<Inner>);
 
@@ -188,7 +192,7 @@ struct Inner {
     /// Dört göz ilkesi: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.
     four_eyes: std::sync::atomic::AtomicBool,
     /// API hız sınırı: (dakikadaki istek sınırı; 0 kapalı, kullanıcı → (dakika, o dakikadaki istek sayısı)).
-    api_rate: Mutex<(u32, HashMap<String, (u64, u32)>)>,
+    api_rate: Mutex<ApiRate>,
     /// Günlük yedek raporunun saati (gece yarısından dakika) ve son gönderildiği gün.
     report: Mutex<(Option<u16>, Option<String>)>,
     /// Gerçek sürücüden toplanan ölçüm geçmişi (anahtar: `node:cpu`, `guest:100:mem` …).

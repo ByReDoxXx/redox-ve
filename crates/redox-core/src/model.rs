@@ -490,6 +490,13 @@ pub fn valid_bridge(name: &str) -> bool {
 
 /// Konuğun sanal ağ kartı adresi: kimlikten türetilir, yeniden başlatmalarda değişmez.
 /// `52:54:00` QEMU/KVM'in yerel yönetimli önekidir.
+/// Çoğaltılan konuğun buradaki yedek kopyasının adı (ad sınırını aşmayacak biçimde).
+pub fn replica_name(name: &str) -> String {
+    const SUFFIX: &str = "-kopya";
+    let keep: String = name.chars().take(63usize.saturating_sub(SUFFIX.len())).collect();
+    format!("{}{SUFFIX}", keep.trim_end_matches('-'))
+}
+
 pub fn mac_for(vmid: VmId) -> String {
     let b = vmid.to_be_bytes();
     format!("52:54:00:{:02x}:{:02x}:{:02x}", b[1], b[2], b[3])

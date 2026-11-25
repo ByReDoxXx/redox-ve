@@ -54,6 +54,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox vm resize <kimlik> <GB>
   redox vm move <kimlik> <depolama>      (kapalı sanal makinenin disklerini başka depolama alanına taşır)
   redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
+  redox replica list | add <eş> <kimlik> [dakika] | run <eş> <kimlik> | remove <eş> <kimlik>
+        (eş sunucudaki sanal makinenin buradaki yedek kopyasını düzenli tazeler; varsayılan 60 dakikada bir)
   redox maintenance status | on [--drain] | off   (bakım kipi: konuk başlatılmaz, zamanlanmış işler durur;
         --drain çalışan konukları sırayla kapatır, off onları yeniden başlatır)
   redox approval list | approve <no> | reject <no>   (dört göz ilkesi: bekleyen silme istekleri; kendi isteğinizi onaylayamazsınız)
@@ -128,6 +130,8 @@ pub enum View {
     Approvals,
     /// `{ "done": ... }` döndüren onay.
     Approved,
+    /// Çoğaltmalar.
+    Replicas,
     /// Bakım kipi durumu ya da değişikliği.
     Maintenance,
     /// Hazır imaj kataloğu.
@@ -332,6 +336,16 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["backup", "restore", id] => req("POST", format!("/backups/{id}/restore"), None, View::Task),
         ["backup", "instant", id, name] => req("POST", format!("/backups/{id}/instant"), Some(json!({ "name": name })), View::Cloned),
         ["vm", "detach", id] => req("POST", format!("/guests/{}/detach", vmid(id)?), None, View::Task),
+        ["replica", "list"] => get("/replicas", View::Replicas),
+        ["replica", "add", peer, id] => req("POST", "/replicas".to_string(), Some(json!({ "peer": peer, "vmid": vmid(id)? })), View::Done("çoğaltma eklendi; ilk tur bir dakika içinde başlar")),
+        ["replica", "add", peer, id, minutes] => req(
+            "POST",
+            "/replicas".to_string(),
+            Some(json!({ "peer": peer, "vmid": vmid(id)?, "every_min": minutes.parse::<u32>().map_err(|_| format!("aralık dakika olarak bir sayı olmalı: {minutes}"))? })),
+            View::Done("çoğaltma eklendi; ilk tur bir dakika içinde başlar"),
+        ),
+        ["replica", "run", peer, id] => req("POST", format!("/replicas/{peer}/{}/run", vmid(id)?), None, View::Done("çoğaltma başladı; sonuç: redox task list")),
+        ["replica", "remove", peer, id] => req("DELETE", format!("/replicas/{peer}/{}", vmid(id)?), None, View::Done("çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor")),
         ["maintenance", "status"] => get("/maintenance", View::Maintenance),
         ["maintenance", "on"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": true })), View::Maintenance),
         ["maintenance", "on", "--drain"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": true, "drain": true })), View::Maintenance),
@@ -522,6 +536,17 @@ pub fn render(view: View, v: &Value) -> String {
                 None => line(v),
             }
         }
+        View::Replicas => or_none(
+            rows(&|r| {
+                let state = match (r["error"].as_str(), r["last_ok"].as_u64()) {
+                    (Some(e), _) => format!("HATA: {e}"),
+                    (None, Some(_)) => format!("yedek kopya: {}", n(r, "standby")),
+                    (None, None) => "henüz çoğaltılmadı".to_string(),
+                };
+                format!("{:<14} {:<6} her {:>5} dk   {state}", s(r, "peer"), n(r, "source"), n(r, "every_min"))
+            }),
+            "çoğaltma yok",
+        ),
         View::Maintenance => match (v["on"].as_bool() == Some(true), v["guests"].as_u64(), v["resume"].as_array().map(Vec::len)) {
             (true, Some(stopped), _) => format!("bakım kipi açık; {stopped} konuk kapatılıyor"),
             (false, Some(started), _) => format!("bakım kipi kapalı; {started} konuk yeniden başlatılıyor"),
@@ -759,6 +784,10 @@ mod tests {
         assert_eq!(parsed("backup archive"), ("GET", "/backups/archive".into(), None, View::Backups));
         assert_eq!(parsed("backup ack vm-103-1").1, "/backups/vm-103-1/ack");
         assert_eq!(parsed("approval list"), ("GET", "/approvals".into(), None, View::Approvals));
+        assert_eq!(parsed("replica add ankara 500 30").2, Some(json!({"peer": "ankara", "vmid": 500, "every_min": 30})));
+        assert_eq!(parsed("replica run ankara 500").1, "/replicas/ankara/500/run");
+        assert_eq!(parsed("replica remove ankara 500"), ("DELETE", "/replicas/ankara/500".into(), None, View::Done("çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor")));
+        assert_eq!(render(View::Replicas, &json!([{"peer": "ankara", "source": 500, "every_min": 60, "standby": 103, "last_ok": 5, "error": null}])), "ankara         500    her    60 dk   yedek kopya: 103");
         assert_eq!(parsed("maintenance on --drain"), ("POST", "/maintenance".into(), Some(json!({"on": true, "drain": true})), View::Maintenance));
         assert_eq!(parsed("maintenance off").2, Some(json!({"on": false})));
         assert_eq!(render(View::Maintenance, &json!({"on": true, "guests": 3})), "bakım kipi açık; 3 konuk kapatılıyor");

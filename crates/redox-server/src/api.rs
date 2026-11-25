@@ -52,6 +52,9 @@ pub fn routes() -> Router<AppState> {
         .route("/backups/archive", get(backup_archive))
         .route("/approvals", get(approvals))
         .route("/maintenance", get(maintenance).post(maintenance_set))
+        .route("/replicas", get(replicas).post(replica_put))
+        .route("/replicas/{peer}/{vmid}", delete_route(replica_delete))
+        .route("/replicas/{peer}/{vmid}/run", post(replica_run))
         .route("/approvals/{id}/approve", post(approval_approve))
         .route("/approvals/{id}", delete_route(approval_reject))
         .route("/backups/{id}/recover", post(backup_recover))
@@ -553,6 +556,34 @@ fn usage_json(c: &redox_core::Cluster, g: &redox_core::Guest) -> serde_json::Val
         "disk_read_mb": u.disk_read_bytes >> 20, "disk_write_mb": u.disk_write_bytes >> 20,
         "net_rx_mb": u.net_rx_bytes >> 20, "net_tx_mb": u.net_tx_bytes >> 20,
     })
+}
+
+async fn replicas(State(st): State<AppState>) -> Json<Vec<redox_core::Replica>> {
+    Json(st.snapshot().replicas)
+}
+
+#[derive(serde::Deserialize)]
+struct ReplicaBody {
+    peer: String,
+    vmid: VmId,
+    /// Çoğaltma aralığı (dakika); verilmezse 60.
+    #[serde(default)]
+    every_min: Option<u32>,
+}
+
+async fn replica_put(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<ReplicaBody>) -> Result<StatusCode, ApiError> {
+    st.replica_put(body.peer.trim(), body.vmid, body.every_min.unwrap_or(60), &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn replica_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((peer, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
+    st.replica_remove(&peer, vmid, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn replica_run(State(st): State<AppState>, Path((peer, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
+    tokio::task::spawn_blocking(move || st.replica_run(&peer, vmid)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn maintenance(State(st): State<AppState>) -> Json<serde_json::Value> {

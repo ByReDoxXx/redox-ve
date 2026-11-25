@@ -243,6 +243,57 @@ pub fn storage(p: &Page, media: &[crate::media::Media]) -> String {
     layout(p, "Depolama", &[("Depolama", "/storage")], false, body)
 }
 
+/// Çoğaltmalar: eş sunuculardaki konukların buradaki yedek kopyaları. Eş sunucu tanımlı değilse çizilmez.
+fn replicas_card(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
+    let list = &p.cluster.replicas;
+    html! {
+        @if !peers.is_empty() || !list.is_empty() {
+            div class="card" {
+                header { h2 { "Çoğaltma" } span class="note" { (list.len()) " / " (redox_core::replicas::MAX_REPLICAS) } }
+                @if list.is_empty() {
+                    p class="empty" { "Çoğaltma yok. Eş sunucudaki bir sanal makinenin kopyası burada düzenli tazelenir; o sunucu ölürse kopyayı buradan başlatırsınız." }
+                } @else {
+                    div class="tw" { table {
+                        thead { tr { th { "Kaynak" } th { "Aralık" } th { "Yedek kopya" } th { "Son başarılı tur" } th { span class="sr" { "İşlem" } } } }
+                        tbody { @for r in list { tr {
+                            td class="mono" { (r.peer) " / " (r.source) }
+                            td class="mono" { (r.every_min) " dk" }
+                            td {
+                                @match r.standby {
+                                    Some(id) => a class="mono" href={ "/guests/" (id) } { (id) },
+                                    None => span class="dim" { "-" },
+                                }
+                                @if r.running { " " span class="pill idle" { "sürüyor" } }
+                                @if let Some(e) = &r.error { " " span class="pill err" title=(e) { (icon("alert")) "hata" } }
+                            }
+                            td class="mono muted" { @match r.last_ok { Some(ts) => (datetime(ts)), None => "-" } }
+                            td class="act" { @if p.admin {
+                                form class="inline" method="post" action="/cluster/replica" {
+                                    input type="hidden" name="peer" value=(r.peer); input type="hidden" name="vmid" value=(r.source);
+                                    button class="btn sm" type="submit" name="op" value="run" disabled[r.running] { "Şimdi" }
+                                    button class="btn sm danger" type="submit" name="op" value="remove" { "Kaldır" }
+                                }
+                            } }
+                        } } }
+                    } }
+                }
+                @if p.admin && !peers.is_empty() {
+                    form class="inline" method="post" action="/cluster/replica" {
+                        label for="rep-peer" { "Eş sunucu" }
+                        select id="rep-peer" name="peer" { @for v in peers { option value=(v.name) { (v.name) } } }
+                        label for="rep-vmid" { "Konuk kimliği" }
+                        input id="rep-vmid" name="vmid" type="text" inputmode="numeric" required;
+                        label for="rep-every" { "Aralık (dk)" }
+                        input id="rep-every" name="every_min" type="text" inputmode="numeric" value="60" required;
+                        button class="btn sm" type="submit" name="op" value="add" { (icon("plus")) "Çoğalt" }
+                    }
+                }
+                footer { "Her tur konuğun diskinin tamamını kopyalar (kaynak çalışmaya devam eder); kayıp, son turdan beri yazılanlarla sınırlıdır. Yedek kopya kapalı durur; kaynak sunucu ölürse onu buradan başlatın. Çalışan bir kopyanın üzerine yazılmaz." }
+            }
+        }
+    }
+}
+
 /// Birleşik görünüm: bu sunucu ve eş sunucuların konukları tek sayfada, salt okunur.
 pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
     let c = p.cluster;
@@ -260,6 +311,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
     let body = html! {
         (page_head(html! { "Küme" }, sub(facts), html! {}, "peer list", &[]))
         div class="stack" {
+            (replicas_card(p, peers))
             div class="card" {
                 header { h2 { "Sunucular" } }
                 div class="tw" { table {

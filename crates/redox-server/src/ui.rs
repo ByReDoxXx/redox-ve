@@ -242,6 +242,39 @@ pub async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Id
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ReplicaForm {
+    peer: String,
+    vmid: String,
+    every_min: String,
+    /// `add`, `run` ya da `remove`.
+    op: String,
+}
+
+/// Birleşik görünümdeki çoğaltma formları.
+pub async fn replica_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<ReplicaForm>) -> Redirect {
+    let Some(vmid) = parse_vmid(&f.vmid) else {
+        return flash("/cluster", "error", "Geçersiz konuk kimliği.");
+    };
+    let peer = f.peer.trim().to_string();
+    let result = match f.op.as_str() {
+        "run" => {
+            let (st, peer) = (st.clone(), peer.clone());
+            tokio::task::spawn_blocking(move || st.replica_run(&peer, vmid)).await.unwrap_or_else(|e| Err(Error::Driver(e.to_string()))).map(|()| "Çoğaltma başladı; sonuç görevlerde görünecek.".to_string())
+        }
+        "remove" => st.replica_remove(&peer, vmid, &me.user).map(|()| "Çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor.".to_string()),
+        _ => match f.every_min.trim().parse::<u32>() {
+            Ok(minutes) => st.replica_put(&peer, vmid, minutes, &me.user).map(|()| format!("{peer} sunucusundaki {vmid}, {minutes} dakikada bir buraya çoğaltılacak.")),
+            Err(_) => return flash("/cluster", "error", "Aralık dakika olarak bir tam sayı olmalı."),
+        },
+    };
+    match result {
+        Ok(text) => flash("/cluster", "notice", &text),
+        Err(e) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
+    }
+}
+
 pub async fn help(State(st): State<AppState>,
     Extension(me): Extension<Identity>, headers: HeaderMap, Query(query): Query<PageQuery>) -> Html<String> {
     let ctx = Ctx::new(&st, &headers, query, &me);

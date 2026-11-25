@@ -41,6 +41,9 @@ pub struct Cluster {
     /// Konukların içinden okunan dosya sistemi dolulukları (yalnızca çalışan ve ajanı yanıt veren konuklar).
     #[serde(default)]
     pub guest_fs: Vec<(VmId, Vec<crate::driver::FsUsage>)>,
+    /// Çoğaltmalar: eş sunuculardaki konukların buradaki yedek kopyaları.
+    #[serde(default)]
+    pub replicas: Vec<crate::replicas::Replica>,
     /// Bakım kipi: açıkken hiçbir konuk başlatılmaz ve zamanlanmış işler (yedek, güç, gözcü) durur.
     #[serde(default)]
     pub maintenance: bool,
@@ -84,6 +87,7 @@ impl Cluster {
             pools: Vec::new(),
             usage: Vec::new(),
             archive: Vec::new(),
+            replicas: Vec::new(),
             maintenance: false,
             maintenance_resume: Vec::new(),
             guest_fs: Vec::new(),
