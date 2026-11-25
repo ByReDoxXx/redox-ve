@@ -26,6 +26,11 @@ pub struct Usage {
     pub mem_mb_secs: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    /// Köprüdeki kartlardan konuğun aldığı ve gönderdiği bayt (NAT'taki kartlar sayılmaz).
+    pub net_rx_bytes: u64,
+    pub net_tx_bytes: u64,
+    /// Sürücünün son bildirdiği ağ sayaçları (arayüz her açılışta sıfırdan başlar).
+    pub net_seen: (u64, u64),
     /// Son ölçüm anı; konuk kapalıyken 0.
     pub last_seen: u64,
     /// Sürücünün son bildirdiği disk sayaçları (QEMU her açılışta sıfırdan başlatır).
@@ -46,6 +51,7 @@ impl Usage {
         if status == GuestStatus::Stopped {
             self.last_seen = 0;
             self.io_seen = (0, 0);
+            self.net_seen = (0, 0);
             return;
         }
         let dt = match now.checked_sub(self.last_seen) {
@@ -81,6 +87,17 @@ impl Cluster {
             }
         };
         entry.add(status, cores, cpu, mem, io, now);
+    }
+
+    /// Sürücünün birikimli ağ sayaçlarını (konuğun aldığı, gönderdiği bayt) işler. `record_usage`'dan sonra
+    /// çağrılır; konuk için kayıt yoksa (hiç ölçülmediyse) bir şey yapmaz.
+    pub fn record_net_usage(&mut self, vmid: VmId, rx: u64, tx: u64) {
+        if let Some(u) = self.usage.iter_mut().find(|u| u.vmid == vmid) {
+            let delta = |new: u64, old: u64| if new >= old { new - old } else { new };
+            u.net_rx_bytes += delta(rx, u.net_seen.0);
+            u.net_tx_bytes += delta(tx, u.net_seen.1);
+            u.net_seen = (rx, tx);
+        }
     }
 
     /// Konuğun sayaçları; hiç ölçülmediyse sıfırlar.
@@ -133,6 +150,13 @@ mod tests {
         let u = c.usage_of(100);
         assert_eq!((u.uptime_secs, u.cpu_core_ms, u.disk_read_bytes, u.disk_write_bytes), (15, 40_000, 1560, 710));
         assert!((u.cpu_core_hours() - 40.0 / 3600.0).abs() < 1e-9 && u.mem_gb_hours() > 0.0);
+
+        // Ağ sayaçları da birikir; arayüz yeniden kurulunca (sayaç geriye gidince) baştan eklenir.
+        c.record_net_usage(100, 1000, 400);
+        c.record_net_usage(100, 1500, 900);
+        c.record_net_usage(100, 200, 50);
+        assert_eq!((c.usage_of(100).net_rx_bytes, c.usage_of(100).net_tx_bytes), (1700, 950));
+        c.record_net_usage(999, 5, 5);
 
         // Sıfırlama ve silme.
         c.reset_usage(100, NOW + 500).unwrap();

@@ -424,3 +424,21 @@ fn driver_setup_lists_isos_and_rejects_long_paths() {
     assert!(err.contains("çok uzun"), "{err}");
     let _ = std::fs::remove_dir_all(&long);
 }
+
+#[test]
+fn guest_traffic_is_read_from_the_tap_counters_with_directions_swapped() {
+    let sys = std::env::temp_dir().join(format!("redox-tapstat-{}", std::process::id()));
+    for (tap, rx, tx) in [("tap0", "100\n", "7000\n"), ("rx5n1", "20\n", "300\n")] {
+        let dir = sys.join(tap).join("statistics");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("rx_bytes"), rx).unwrap();
+        std::fs::write(dir.join("tx_bytes"), tx).unwrap();
+    }
+    let taps = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    // Konuğun aldığı = arayüzlerin gönderdiği (7000 + 300); gönderdiği = arayüzlerin aldığı (100 + 20).
+    assert_eq!(tap_counters(&sys, &taps(&["tap0", "rx5n1"])), Some((7300, 120)));
+    assert_eq!(tap_counters(&sys, &taps(&["tap0", "yok"])), Some((7000, 100)), "kaybolan arayüz atlanır");
+    assert_eq!(tap_counters(&sys, &taps(&["yok"])), None);
+    assert_eq!(tap_counters(&sys, &[]), None, "NAT'taki konukta arayüz yoktur");
+    std::fs::remove_dir_all(sys).unwrap();
+}

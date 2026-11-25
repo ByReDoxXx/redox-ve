@@ -207,6 +207,7 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
                                 dt { "İşlemci" } dd class="mono" { (format!("{:.2}", u.cpu_core_hours())) " çekirdek-saat" }
                                 dt { "Bellek" } dd class="mono" { (format!("{:.2}", u.mem_gb_hours())) " GB-saat" }
                                 dt { "Disk okuma / yazma" } dd class="mono" { (u.disk_read_bytes >> 20) " MB / " (u.disk_write_bytes >> 20) " MB" }
+                                dt { "Ağ alınan / gönderilen" } dd class="mono" { (u.net_rx_bytes >> 20) " MB / " (u.net_tx_bytes >> 20) " MB" @if g.bridge == redox_core::NAT { " " span class="muted" { "(NAT'taki kart sayılmaz)" } } }
                             }
                             footer { "Birikimli sayaçlardır: konuk kapanıp açılsa da sürer. Dışa aktarım: " span class="mono" { "redox usage" } " ya da " span class="mono" { "GET /api/v1/usage" } "." }
                         }

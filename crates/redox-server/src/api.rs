@@ -548,6 +548,7 @@ fn usage_json(c: &redox_core::Cluster, g: &redox_core::Guest) -> serde_json::Val
         "vmid": g.vmid, "name": g.name, "pool": g.pool, "since": u.since, "uptime_secs": u.uptime_secs,
         "cpu_core_hours": (u.cpu_core_hours() * 1000.0).round() / 1000.0, "mem_gb_hours": (u.mem_gb_hours() * 1000.0).round() / 1000.0,
         "disk_read_mb": u.disk_read_bytes >> 20, "disk_write_mb": u.disk_write_bytes >> 20,
+        "net_rx_mb": u.net_rx_bytes >> 20, "net_tx_mb": u.net_tx_bytes >> 20,
     })
 }
 

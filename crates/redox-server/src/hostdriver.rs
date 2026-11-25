@@ -164,6 +164,10 @@ impl Hypervisor for HostDriver {
         self.of(guest).ok()?.io_counters(guest)
     }
 
+    fn net_counters(&self, guest: &Guest) -> Option<(u64, u64)> {
+        self.of(guest).ok()?.net_counters(guest)
+    }
+
     fn balloon_stats(&self, guest: &Guest) -> Option<redox_core::BalloonStats> {
         self.of(guest).ok()?.balloon_stats(guest)
     }

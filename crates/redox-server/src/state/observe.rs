@@ -86,11 +86,16 @@ impl AppState {
         let node = snapshot.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
         let ios: Vec<_> = probes.iter().zip(&snapshot.guests).map(|((_, p), g)| if p.status == redox_core::GuestStatus::Stopped { None } else { driver.io_counters(g) }).collect();
 
+        let nets: Vec<_> = probes.iter().zip(&snapshot.guests).map(|((_, p), g)| if p.status == redox_core::GuestStatus::Stopped { None } else { driver.net_counters(g) }).collect();
+
         let mut cluster = self.lock();
         let mut changed = false;
-        for ((vmid, probe), io) in probes.iter().zip(ios) {
+        for (((vmid, probe), io), net) in probes.iter().zip(ios).zip(nets) {
             changed |= cluster.observe_guest(*vmid, probe, now());
             cluster.record_usage(*vmid, io, now());
+            if let Some((rx, tx)) = net {
+                cluster.record_net_usage(*vmid, rx, tx);
+            }
         }
         // Ölçüm sayaçları her turda değişir; dosyayı yıpratmamak için beş dakikada bir yazılır.
         static USAGE_SAVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

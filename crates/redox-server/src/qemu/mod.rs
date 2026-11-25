@@ -67,6 +67,14 @@ struct CbtState {
     streak: u32,
 }
 
+/// TAP arayüzlerinin çekirdek sayaçlarından konuğun (aldığı, gönderdiği) bayt toplamı; arayüz yoksa `None`.
+/// Sunucu tarafında yön terstir: arayüzün "aldığı" konuğun gönderdiğidir.
+pub fn tap_counters(sys_net: &Path, taps: &[String]) -> Option<(u64, u64)> {
+    let read = |tap: &str, file: &str| std::fs::read_to_string(sys_net.join(tap).join("statistics").join(file)).ok()?.trim().parse::<u64>().ok();
+    let seen: Vec<(u64, u64)> = taps.iter().filter_map(|tap| Some((read(tap, "tx_bytes")?, read(tap, "rx_bytes")?))).collect();
+    (!seen.is_empty()).then(|| seen.iter().fold((0, 0), |sum, c| (sum.0 + c.0, sum.1 + c.1)))
+}
+
 impl QemuDriver {
     /// Çalışan konuğun QEMU sürecinin açık tuttuğu TAP arayüzleri (köprüdeki kartları); kapalıysa boş.
     pub fn guest_taps(&self, vmid: VmId) -> Vec<String> {
@@ -906,6 +914,10 @@ impl Hypervisor for QemuDriver {
             let _ = guest;
             None
         }
+    }
+
+    fn net_counters(&self, guest: &Guest) -> Option<(u64, u64)> {
+        tap_counters(&self.cfg.sys_net, &self.guest_taps(guest.vmid))
     }
 
     fn balloon_stats(&self, guest: &Guest) -> Option<redox_core::BalloonStats> {

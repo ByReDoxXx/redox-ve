@@ -487,14 +487,16 @@ pub fn render(view: View, v: &Value) -> String {
         View::Usage => {
             let line = |u: &Value| {
                 format!(
-                    "{:<6} {:<20} açık {:>7} sa   işlemci {:>9} çekirdek-sa   bellek {:>9} GB-sa   disk okuma {:>7} MB   yazma {:>7} MB",
+                    "{:<6} {:<20} açık {:>7} sa   işlemci {:>9} çekirdek-sa   bellek {:>9} GB-sa   disk okuma {:>7} MB   yazma {:>7} MB   ağ alınan {:>7} MB   gönderilen {:>7} MB",
                     n(u, "vmid"),
                     s(u, "name"),
                     n(u, "uptime_secs") / 3600,
                     u["cpu_core_hours"].as_f64().unwrap_or(0.0),
                     u["mem_gb_hours"].as_f64().unwrap_or(0.0),
                     n(u, "disk_read_mb"),
-                    n(u, "disk_write_mb")
+                    n(u, "disk_write_mb"),
+                    n(u, "net_rx_mb"),
+                    n(u, "net_tx_mb")
                 )
             };
             match v.as_array() {

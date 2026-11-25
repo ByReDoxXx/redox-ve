@@ -162,6 +162,11 @@ pub trait Hypervisor: Send + Sync {
         None
     }
 
+    /// Çalışan konuğun köprüdeki kartlarından açılıştan beri (aldığı, gönderdiği) bayt; ölçülemiyorsa `None`.
+    fn net_counters(&self, _guest: &Guest) -> Option<(u64, u64)> {
+        None
+    }
+
     /// Çalışan konuğun balon sürücüsünden bellek ölçümü; sürücü yoksa ya da henüz bildirmediyse `None`.
     fn balloon_stats(&self, _guest: &Guest) -> Option<BalloonStats> {
         None
