@@ -48,7 +48,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # hepsi geçmeli (Linux'ta 490 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
+cargo test --workspace          # hepsi geçmeli (Linux'ta 495 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -626,6 +626,13 @@ Yalnızca sahte bir SMTP sunucusuyla sınandı; gerçek bir sağlayıcıyla (TLS
 **Grafikler:** düğüm ve konuk sayfalarında son 10 dakika, 24 saat (dakikalık ortalama) ve 30 gün (saatlik ortalama)
 seçilebilir. Geçmiş `metrics.json` dosyasında tutulur ve yeniden başlatmada korunur; sunucunun kapalı olduğu süreler
 grafikte yer almaz.
+
+### Arayüz dili
+
+Arayüz Türkçe ve İngilizcedir. Her kullanıcı üst çubuktaki **EN / TR** düğmesiyle kendi dilini seçer (tarayıcıda bir
+çerezde saklanır). Hizmet satırına `--lang en` yazarsanız çerezi olmayan ziyaretçi İngilizce görür. API hata iletileri
+`Accept-Language: en` başlığıyla İngilizce döner; `code` alanı dilden bağımsızdır. Komut satırının çıktıları ve
+sürücülerin içinden gelen hata ayrıntıları şimdilik Türkçedir. Ayrıntı: [docs/wiki/tr/Dil.md](docs/wiki/tr/Dil.md).
 
 ### Ek bildirim kanalları ve API sınırları
 

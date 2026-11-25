@@ -20,7 +20,8 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 
 > **Language:** the web panel and the CLI help text are currently in Turkish. The documentation is in both
 > languages: this README and [INSTALL.md](INSTALL.md) in English, [README.tr.md](README.tr.md) and
-> [KURULUM.md](KURULUM.md) in Turkish.
+> [KURULUM.md](KURULUM.md) in Turkish. A topic-by-topic wiki is in [docs/wiki/en](docs/wiki/en/Home.md)
+> ([Türkçe](docs/wiki/tr/Ana-Sayfa.md)).
 
 ![Overview page](docs/img/overview.jpg)
 
@@ -59,6 +60,8 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Maintenance mode: drain the guests before a host update and start them again afterwards.
 - Disk usage inside guests (through the agent) with alerts; alerts by webhook, e-mail, ntfy and Telegram.
 - Read-only API tokens and an optional API rate limit.
+- The interface in Turkish and English: a switch in the top bar, `--lang en` as the server default, and API error
+  messages by `Accept-Language`.
 
 **Storage and backup**
 
@@ -415,7 +418,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-490 tests pass on Linux and 422 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+495 tests pass on Linux and 427 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 

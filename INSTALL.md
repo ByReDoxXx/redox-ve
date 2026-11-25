@@ -54,7 +54,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # all must pass (490 tests on Linux; with Node installed the live console client's 7 tests run too)
+cargo test --workspace          # all must pass (495 tests on Linux; with Node installed the live console client's 7 tests run too)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -509,6 +509,13 @@ Tested against a fake SMTP server only, not with a real provider.
 
 **Graphs:** node and guest pages offer the last 10 minutes, 24 hours and 30 days; history is kept in
 `metrics.json`.
+
+### Interface language
+
+The interface is available in Turkish and English. Each user chooses with the **EN / TR** button in the top bar (stored
+in a browser cookie). With `--lang en` on the service line, visitors without the cookie see English. API error messages
+are English with `Accept-Language: en`; the `code` field does not depend on the language. The command line's output and
+error details from inside the drivers are still Turkish. See [docs/wiki/en/Language.md](docs/wiki/en/Language.md).
 
 ### More notification channels and API limits
 
