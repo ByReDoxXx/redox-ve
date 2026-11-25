@@ -426,7 +426,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 509, Windows'ta 438 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 510, Windows'ta 439 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 

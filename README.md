@@ -424,7 +424,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-509 tests pass on Linux and 438 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+510 tests pass on Linux and 439 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 

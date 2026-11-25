@@ -795,3 +795,37 @@ pub(super) async fn media_needs_a_real_driver() {
 }
 
 // ---------- Arayüz v3: konuk listesi, görevler, yedekler, sekmeli ayarlar ----------
+
+#[tokio::test]
+pub(super) async fn replication_card_shows_and_sets_witnessed_failover() {
+    let (app, st) = setup();
+    st.peers().configure(redox_server::peers::parse_file(&format!("ankara http://127.0.0.1:9 {VIEWER_TOKEN}\nizmir http://127.0.0.1:9 {VIEWER_TOKEN}\n")).unwrap());
+    st.mutate(|c| {
+        c.put_replica("ankara", 500, 60).unwrap();
+        c.set_replica_failover("ankara", 500, Some(10)).unwrap();
+        c.replicas[0].failover_note = Some("hiçbir hakem sunucuya ulaşılamıyor: bu sunucunun ağı kopmuş olabilir, devralınmadı".into());
+        c.replicas[0].delta = Some((1, 3));
+    });
+    let html = page(&app, "/cluster").await;
+    for needle in ["Devralma", r#"name="failover_min""#, r#"value="10""#, "engellendi", "hiçbir hakem sunucuya", "1 / 3", "Önce hakeme"] {
+        assert!(html.contains(needle), "{needle}");
+    }
+    // Devralınmış çoğaltma öyle görünür.
+    st.mutate(|c| c.replicas[0].failed_over = Some(1_700_000_000));
+    assert!(page(&app, "/cluster").await.contains("devralındı"));
+    // Form: 0 kapatır, geçersiz süre reddedilir.
+    let (status, headers, _) = send(&app, post_form("/cluster/replica", "peer=ankara&vmid=500&op=failover&failover_min=0&every_min=")).await;
+    assert!(status.is_redirection() && location(&headers).contains("notice"), "{}", location(&headers));
+    assert_eq!(st.snapshot().replicas[0].failover_min, None);
+    let (_, headers, _) = send(&app, post_form("/cluster/replica", "peer=ankara&vmid=500&op=failover&failover_min=2&every_min=")).await;
+    assert!(location(&headers).contains("error"));
+    // API.
+    let (status, _) = api(&app, post_json("/api/v1/replicas/ankara/500/failover", &json!({"minutes": 15}))).await;
+    assert_eq!((status, st.snapshot().replicas[0].failover_min), (StatusCode::NO_CONTENT, Some(15)));
+    let viewer = as_viewer(Method::POST, "/api/v1/replicas/ankara/500/failover").header(CONTENT_TYPE, "application/json").body(Body::from(r#"{"minutes":15}"#)).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN);
+    // Hakem olacak ikinci eş yoksa açılmaz.
+    st.peers().configure(redox_server::peers::parse_file(&format!("ankara http://127.0.0.1:9 {VIEWER_TOKEN}\n")).unwrap());
+    let (status, body) = api(&app, post_json("/api/v1/replicas/ankara/500/failover", &json!({"minutes": 15}))).await;
+    assert!(status.is_client_error() && body.to_string().contains("hakem"), "{status} {body}");
+}
