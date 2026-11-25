@@ -370,17 +370,19 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
                                 td class="mono" { (mb_as_gb(g.mem_used_mb)) " / " (mb_as_gb(g.mem_total_mb)) " GB" }
                                 @if p.admin && p.real {
                                     td class="act" {
-                                        @if g.kind == GuestKind::Vm && g.lock.is_none() {
+                                        @if g.lock.is_none() && (g.kind == GuestKind::Vm || p.ct) {
                                             form method="post" action="/cluster/import" {
                                                 input type="hidden" name="peer" value=(v.name);
                                                 input type="hidden" name="vmid" value=(g.vmid);
-                                                @if g.status == GuestStatus::Stopped && !g.hw.suspended {
+                                                @if g.kind == GuestKind::Ct {
+                                                    button class="btn sm" type="submit" title=(tx("Konteyner yedeği üzerinden kopyalanır; kaynak çalışmaya devam eder, kopya kapalı gelir")) { (icon("migrate")) (tx("Buraya Al")) }
+                                                } @else if g.status == GuestStatus::Stopped && !g.hw.suspended {
                                                     button class="btn sm" type="submit" { (icon("migrate")) (tx("Buraya Al")) }
                                                 } @else {
                                                     button class="btn sm" type="submit" title=(tx("Konuk orada askıya alınır, diski ve belleği kopyalanır, burada kaldığı yerden devam eder")) { (icon("migrate")) (tx("Çalışırken Al")) }
                                                 }
                                             }
-                                        } @else { span class="dim" title=(tx("Yalnızca sanal makineler taşınır; üzerinde işlem süren konuk bekler")) { "-" } }
+                                        } @else { span class="dim" title=(tx("Üzerinde işlem süren konuk bekler; konteyner için bu sunucuda LXC gerekir")) { "-" } }
                                     }
                                 }
                             } } }

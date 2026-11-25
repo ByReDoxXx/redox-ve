@@ -643,3 +643,68 @@ fn running_containers_are_frozen_for_the_backup_and_thawed_after() {
     assert!(!cfg.backups_dir.join("ct-100-5.tar.gz").exists());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn containers_are_copied_and_replicated_between_servers() {
+    // Eş sunucu: sahte LXC araçları, gerçek TCP kapısı.
+    let (peer_cfg, peer_dir) = setup();
+    let peer_cluster = local_cluster(&peer_dir);
+    let node = peer_cluster.nodes[0].id.clone();
+    let mut users = UserFile::default();
+    users.add_user("admin", "dogru-at-pil-zimba-1", redox_server::auth::Role::Admin, Cost::Test).unwrap();
+    users.add_token("admin", "t", "es-sunucu-yonetici-tokeni").unwrap();
+    let peer_driver = HostDriver::new(QemuDriver::new(QemuConfig::new(peer_dir.join("data"))).unwrap(), Some(LxcDriver::new(peer_cfg.clone()).unwrap()));
+    let peer = AppState::new(peer_cluster, Box::new(peer_driver), Duration::ZERO, None, Auth::new(users, None, false, Cost::Test));
+    let source = peer.create_guest(&spec("web", &node, "alpine-3.20"), "admin").unwrap();
+    let peer_rootfs = peer_cfg.lxc_path.join(format!("redox-{source}/rootfs"));
+    std::fs::create_dir_all(peer_rootfs.join("etc")).unwrap();
+    std::fs::write(peer_rootfs.join("etc/hostname"), "birinci\n").unwrap();
+    peer.update_guest(source, &GuestPatch { tags: Some(vec!["web".into()]), ..Default::default() }, "admin").unwrap();
+    peer.run_action(source, Action::Start, "admin").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer_app = redox_server::app(peer.clone());
+    tokio::spawn(async move { axum::serve(listener, peer_app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap() });
+
+    // Bu sunucu.
+    let (cfg, dir) = setup();
+    let driver = HostDriver::new(QemuDriver::new(QemuConfig::new(dir.join("data"))).unwrap(), Some(LxcDriver::new(cfg.clone()).unwrap()));
+    let hub = AppState::new(local_cluster(&dir), Box::new(driver), Duration::ZERO, None, Auth::new(UserFile::default(), None, false, Cost::Test));
+    hub.peers().configure(redox_server::peers::parse_file(&format!("ankara http://127.0.0.1:{port} es-sunucu-yonetici-tokeni\n")).unwrap());
+    let hostname = |cfg: &LxcConfig, id: u32| std::fs::read_to_string(cfg.lxc_path.join(format!("redox-{id}/rootfs/etc/hostname"))).unwrap_or_default();
+
+    // Kopyalama: kaynak çalışmaya devam eder, kopya kapalı gelir ve içeriği aynıdır.
+    {
+        let hub = hub.clone();
+        tokio::task::spawn_blocking(move || hub.import_from_peer("ankara", source, "admin")).await.unwrap().unwrap();
+    }
+    let c = hub.snapshot();
+    let task = c.tasks[0].clone();
+    assert_eq!((task.command.as_str(), task.status), (format!("vm import ankara/{source}").as_str(), TaskStatus::Ok), "{:?}", task.message);
+    let copy = c.guests[0].clone();
+    assert_eq!((copy.kind, copy.name.as_str(), copy.status, copy.tags.clone()), (GuestKind::Ct, "web", GuestStatus::Stopped, vec!["web".to_string(), "tasindi-ankara".to_string()]));
+    assert_eq!(hostname(&cfg, copy.vmid), "birinci\n");
+    assert_eq!(peer.snapshot().guest(source).unwrap().status, GuestStatus::Running, "kaynak çalışmaya devam eder");
+    assert!(peer.snapshot().backups.is_empty() && std::fs::read_dir(&cfg.backups_dir).map(|d| d.count()).unwrap_or(0) == 0, "geçici yedek iki tarafta da kalmaz");
+
+    // Çoğaltma: yedek kopya oluşur; kaynak değişince tazelenir ve eski kopya silinir.
+    hub.replica_put("ankara", source, 60, "admin").unwrap();
+    {
+        let hub = hub.clone();
+        assert_eq!(tokio::task::spawn_blocking(move || hub.replica_tick()).await.unwrap(), 1);
+    }
+    let first = hub.snapshot().replicas[0].standby.expect("yedek kopya");
+    assert_eq!(hub.snapshot().guest(first).unwrap().name, "web-kopya");
+    std::fs::write(peer_rootfs.join("etc/hostname"), "ikinci\n").unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    {
+        let hub = hub.clone();
+        tokio::task::spawn_blocking(move || hub.replica_run("ankara", source)).await.unwrap().unwrap();
+    }
+    let c = hub.snapshot();
+    let second = c.replicas[0].standby.unwrap();
+    assert!(c.guest(first).is_err() && second != first, "eski kopya silinir");
+    assert_eq!(hostname(&cfg, second), "ikinci\n");
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(peer_dir);
+}

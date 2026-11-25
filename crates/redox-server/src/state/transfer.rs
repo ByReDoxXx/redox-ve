@@ -112,7 +112,7 @@ impl AppState {
     pub(super) fn import_now(&self, peer: &crate::peers::Peer, peer_name: &str, vmid: VmId, image: &str, image_path: &Path, user: &str, replica: bool) -> Result<VmId, String> {
         let remote = peer.guest(vmid)?;
         if remote.kind != redox_core::GuestKind::Vm {
-            return Err("yalnızca sanal makineler taşınabilir (konteyner taşıma yok)".to_string());
+            return self.import_container(peer, peer_name, &remote, user, replica);
         }
         // Çalışan (ya da zaten askıda olan) konuk bellek durumuyla birlikte taşınır: kaynakta askıya alınır,
         // diski ve belleği kopyalanır, burada kaldığı yerden devam eder. Kesinti kopyalama süresi kadardır.
@@ -250,6 +250,79 @@ impl AppState {
                 return Err(format!("{e}. Konuk eş sunucuda askıda duruyor: orada başlatırsanız kaldığı yerden devam eder"));
             }
         }
+        Ok(id)
+    }
+
+    /// Eş sunucudaki konteyneri yedeği üzerinden buraya kopyalar: aynı dağıtımın şablonundan boş bir konteyner
+    /// oluşturulur, sonra kök dosya sistemi yedekle değiştirilir. Kaynak çalışıyorsa yedek sırasında kısa süre
+    /// dondurulur ve çalışmaya devam eder; bellek durumu taşınmaz (kopya kapalı gelir).
+    fn import_container(&self, peer: &crate::peers::Peer, peer_name: &str, remote: &Guest, user: &str, replica: bool) -> Result<VmId, String> {
+        if remote.lock.is_some() {
+            return Err(format!("{} üzerinde eş sunucuda bir işlem sürüyor; bitince yeniden deneyin", remote.vmid));
+        }
+        if !self.driver().supports(redox_core::GuestKind::Ct) {
+            return Err("bu sunucuda konteyner desteği yok (LXC kurulu değil)".to_string());
+        }
+        let local = self.snapshot();
+        let node = local.nodes.first().ok_or("bu sunucuda düğüm yok")?;
+        let storage = local.storages.iter().find(|s| s.available_on(&node.id)).ok_or("bu sunucuda depolama yok")?;
+        let known = self.driver().bridges();
+        let mut hw = redox_core::Hardware { nics: remote.hw.nics.clone(), firewall: remote.hw.firewall && self.driver().firewall(), fw_rules: remote.hw.fw_rules.clone(), ..Default::default() };
+        hw.nics = hw.nics.iter().map(|spec| match redox_core::hw::parse_nic(spec) {
+            Some((bridge, _)) if known.iter().any(|k| k == bridge) => spec.clone(),
+            _ => redox_core::NAT.to_string(),
+        }).collect();
+        let spec = GuestSpec {
+            vmid: None,
+            name: if replica { redox_core::replica_name(&remote.name) } else { remote.name.clone() },
+            kind: remote.kind,
+            node: node.id.clone(),
+            cores: remote.cores.min(node.cores),
+            memory_mb: remote.mem_total_mb.min(node.mem_total_mb),
+            disk_gb: remote.disk_gb,
+            storage: storage.id.clone(),
+            os: remote.os.clone(),
+            bridge: if known.contains(&remote.bridge) { remote.bridge.clone() } else { redox_core::NAT.to_string() },
+            onboot: false,
+            iso: None,
+            hw,
+        };
+        let backup = peer.backup_and_wait(remote.vmid, Duration::from_secs(6 * 3600))?;
+        // Eşte bıraktığımız geçici yedek her durumda silinir.
+        let made = (|| {
+            let id = self.create_guest(&spec, user).map_err(|e| e.to_string())?;
+            let filled = (|| {
+                let temp = format!("ct-{id}-{}", now());
+                let path = self.driver().backup_file(&temp).ok_or("bu sürücü yedek dosyası tutmuyor")?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("{} oluşturulamadı: {e}", parent.display()))?;
+                }
+                let restored = peer.download_backup(&backup, &path).and_then(|_| {
+                    let guest = self.snapshot().guest(id).cloned().map_err(|e| e.to_string())?;
+                    self.driver().restore(&guest, &temp, &[])
+                });
+                let _ = std::fs::remove_file(&path);
+                restored
+            })();
+            match filled {
+                Ok(()) => Ok(id),
+                Err(e) => {
+                    // Yarım kopya bırakılmaz.
+                    let _ = self.delete_guest(id, user);
+                    Err(e)
+                }
+            }
+        })();
+        let _ = peer.delete_backup(&backup);
+        let id = made?;
+        self.mutate(|c| {
+            if let Ok(g) = c.guest_mut_for_import(id) {
+                g.tags = remote.tags.clone();
+                g.tags.push(format!("{}-{peer_name}", if replica { "kopya" } else { "tasindi" }));
+                g.tags.retain(|t| redox_core::valid_tag(t));
+                g.tags.truncate(redox_core::MAX_TAGS);
+            }
+        });
         Ok(id)
     }
 
