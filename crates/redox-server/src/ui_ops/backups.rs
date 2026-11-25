@@ -115,6 +115,7 @@ pub async fn backup_action(State(st): State<AppState>, Extension(me): Extension<
         "push" => st.backup_push(&id, &me.user).map(|()| format!("{id} dış hedefe gönderiliyor.")),
         "verify" => st.backup_verify(&id, &me.user).map(|()| format!("{id} doğrulanıyor; sonuç görev günlüğüne yazılır.")),
         "test" => st.backup_test(&id, &me.user).map(|()| format!("{id} geçici bir konuk olarak açılıp sınanıyor; sonuç görev günlüğüne ve yedeğin satırına yazılır.")),
+        "ack" => st.backup_ack(&id, &me.user).map(|()| format!("{id}: olağan dışı değişim uyarısı kapatıldı.")),
         "lock" => st.backup_lock(&id, redox_core::retention::DEFAULT_LOCK_DAYS, &me.user).map(|until| format!("{id}, {} tarihine kadar silinemez.", redox_core::retention::date_label(until))),
         _ => return flash(&back, "error", &format!("Bilinmeyen işlem: {op}")),
     };

@@ -108,6 +108,9 @@ pub fn backups_tab(p: &Page, g: &Guest) -> Markup {
                                 details class="menu" {
                                     summary class="btn sm" { "Diğer" (icon("caret")) }
                                     div class="menu-list" {
+                                        @if b.suspicious.is_some() {
+                                            form method="post" action={ "/backups/" (b.id) "/ack" } { button type="submit" { (icon("check")) "Uyarıyı kapat" small { "baktım, sorun yok" } } }
+                                        }
                                         @if p.real {
                                             form method="post" action={ "/backups/" (b.id) "/verify" } { button type="submit" { (icon("check")) "Doğrula" small { "bozulma denetimi" } } }
                                             a href={ "/backups/" (b.id) "/download" } download { (icon("disk")) "İndir: asıl disk" }

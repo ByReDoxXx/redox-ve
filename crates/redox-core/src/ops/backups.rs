@@ -98,6 +98,12 @@ impl Cluster {
         }
     }
 
+    /// Olağan dışı değişim uyarısını kapatır (yönetici baktı, sorun yok). Uyarı notunu döndürür.
+    pub fn clear_backup_suspicion(&mut self, id: &str) -> Result<String, Error> {
+        let b = self.backups.iter_mut().find(|b| b.id == id).ok_or_else(|| Error::BackupNotFound(id.to_string()))?;
+        b.suspicious.take().ok_or_else(|| Error::InvalidSpec(format!("{id} yedeğinde kapatılacak bir uyarı yok")))
+    }
+
     /// Sınama sonucunu yedeğe yazar; yedek o arada silinmişse sessizce geçer.
     pub fn set_backup_test(&mut self, id: &str, test: BackupTest) {
         if let Some(b) = self.backups.iter_mut().find(|b| b.id == id) {

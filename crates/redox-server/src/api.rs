@@ -53,6 +53,7 @@ pub fn routes() -> Router<AppState> {
         .route("/approvals/{id}/approve", post(approval_approve))
         .route("/approvals/{id}", delete_route(approval_reject))
         .route("/backups/{id}/recover", post(backup_recover))
+        .route("/backups/{id}/ack", post(backup_ack))
         .route("/backups/{id}/push", post(backup_push))
         .route("/backups/{id}/verify", post(backup_verify))
         .route("/backups/{id}/download", get(crate::ui_ops::backup_download))
@@ -457,6 +458,12 @@ async fn backup_archive(State(st): State<AppState>) -> Json<Vec<Backup>> {
 
 async fn backup_recover(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     st.backup_recover(&id, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Olağan dışı değişim uyarısını kapatır.
+async fn backup_ack(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    st.backup_ack(&id, &me.user)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

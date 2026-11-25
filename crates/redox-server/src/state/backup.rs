@@ -387,6 +387,16 @@ impl AppState {
         })
     }
 
+    /// Yedekteki olağan dışı değişim uyarısını kapatır; kimin kapattığı görev günlüğüne yazılır.
+    pub fn backup_ack(&self, id: &str, user: &str) -> Result<(), Error> {
+        self.mutate(|c| {
+            c.clear_backup_suspicion(id)?;
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, format!("backup ack {id}"), &Ok(()), now(), None);
+            Ok(())
+        })
+    }
+
     pub fn backup_delete(&self, id: &str, user: &str) -> Result<(), Error> {
         // Kilitli yedek, süresi dolana kadar kimse tarafından silinemez (zamanlayıcının budaması dahil).
         self.lock().backup_deletable(id, now())?;

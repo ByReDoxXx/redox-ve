@@ -305,3 +305,18 @@ async fn archived_backups_are_recovered_from_the_backups_page() {
     assert!(c.archive.is_empty() && c.backup("vm-103-arsivde").is_ok());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[tokio::test]
+async fn unusual_change_warnings_can_be_acknowledged() {
+    let (app, state) = setup();
+    assert!(post_ok(&app, "/guests/103/backups", "").await.contains("notice="));
+    let id = state.snapshot().backups[0].id.clone();
+    assert!(post_ok(&app, &format!("/backups/{id}/ack"), "").await.contains("error="), "uyarı yokken kapatılacak bir şey yoktur");
+    state.mutate(|c| c.backups[0].suspicious = Some("değişen veri 9000 MB".into()));
+    let tab = page(&app, "/guests/103?tab=yedekler").await;
+    assert!(tab.contains("olağan dışı değişim") && tab.contains(&format!(r#"action="/backups/{id}/ack""#)));
+    assert!(post_ok(&app, &format!("/backups/{id}/ack"), "").await.contains("notice="));
+    let c = state.snapshot();
+    assert!(c.backups[0].suspicious.is_none() && c.tasks.iter().any(|t| t.command == format!("backup ack {id}")));
+    assert!(!page(&app, "/guests/103?tab=yedekler").await.contains("Uyarıyı kapat"));
+}

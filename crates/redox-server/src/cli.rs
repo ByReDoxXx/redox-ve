@@ -55,6 +55,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox vm move <kimlik> <depolama>      (kapalı sanal makinenin disklerini başka depolama alanına taşır)
   redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
   redox approval list | approve <no> | reject <no>   (dört göz ilkesi: bekleyen silme istekleri; kendi isteğinizi onaylayamazsınız)
+  redox backup ack <yedek>               (olağan dışı değişim uyarısını kapatır: baktınız, sorun yok)
   redox backup archive | recover <yedek>   (yerelde silinmiş ama kopya hedefinde saklanan yedekler; recover listeye geri getirir)
   redox usage | vm usage <kimlik> [reset]   (birikimli kaynak tüketimi: çekirdek-saat, GB-saat, disk G/Ç; reset sayaçları sıfırlar)
   redox vm balloon <kimlik> auto <MB>    (dinamik bellek: hedef kullanıma göre <MB> ile belleğin tamamı arasında; 0 kapatır)
@@ -322,6 +323,7 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["approval", "list"] => get("/approvals", View::Approvals),
         ["approval", "approve", id] => req("POST", format!("/approvals/{}/approve", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Approved),
         ["approval", "reject", id] => req("DELETE", format!("/approvals/{}", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Done("istek reddedildi")),
+        ["backup", "ack", id] => req("POST", format!("/backups/{id}/ack"), None, View::Done("uyarı kapatıldı")),
         ["backup", "archive"] => get("/backups/archive", View::Backups),
         ["backup", "recover", id] => req("POST", format!("/backups/{id}/recover"), None, View::Done("yedek arşivden geri getirildi; geri yüklenirken kopya hedefinden iner")),
         ["backup", "test", id] => req("POST", format!("/backups/{id}/test"), None, View::Done("sınama başladı; sonuç: redox task list")),
@@ -717,6 +719,7 @@ mod tests {
         assert!(parse(&args("vm balloon 103 cok")).unwrap_err().contains("bir sayı olmalı"));
         assert_eq!(parsed("usage"), ("GET", "/usage".into(), None, View::Usage));
         assert_eq!(parsed("backup archive"), ("GET", "/backups/archive".into(), None, View::Backups));
+        assert_eq!(parsed("backup ack vm-103-1").1, "/backups/vm-103-1/ack");
         assert_eq!(parsed("approval list"), ("GET", "/approvals".into(), None, View::Approvals));
         assert_eq!(parsed("approval approve 7"), ("POST", "/approvals/7/approve".into(), None, View::Approved));
         assert_eq!(parsed("approval reject 7").1, "/approvals/7");
