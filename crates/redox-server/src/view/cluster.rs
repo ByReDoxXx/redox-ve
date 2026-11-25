@@ -211,11 +211,11 @@ pub fn storage(p: &Page, media: &[crate::media::Media]) -> String {
                                 h3 { (tx("Hazır bulut imajları")) }
                                 @for (key, label, _, _) in crate::media::CATALOG {
                                     form class="line" method="post" action={ "/media/catalog/" (key) } {
-                                        span { (label) }
+                                        span { (tx(label)) }
                                         button class="btn sm" type="submit" { (icon("migrate")) (tx("İndir")) }
                                     }
                                 }
-                                p { (tx("Dağıtımın kendi sunucusundan en güncel imaj iner. İmajlar cloud-init ile açılır: yeni konuk formunda imajı seçip kullanıcı adı ve SSH anahtarı verin.")) }
+                                p { (tx("Dağıtımın kendi sunucusundan en güncel imaj iner. İmajlar cloud-init ile açılır: yeni konuk formunda imajı seçip kullanıcı adı ve SSH anahtarı verin.")) " " (tx("Windows sürücüleri bir kurulum kalıbıdır: Windows kurulurken diski ve ağ kartını tanıtmak, sonra balon sürücüsünü ve konuk ajanını kurmak için kullanılır.")) }
                             }
                             form method="post" action="/media/upload" enctype="multipart/form-data" {
                                 h3 { label for="media-file" { (tx("Bilgisayardan yükle")) } }

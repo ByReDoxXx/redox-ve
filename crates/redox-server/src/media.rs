@@ -38,13 +38,15 @@ pub struct Media {
 /// sunucularındaki "en güncel" adresleridir; imajlar cloud-init ile açılır (kullanıcı ve SSH anahtarı
 /// konuk oluşturulurken verilir). İçerik sürekli güncellendiği için sabit bir özetle doğrulanamaz;
 /// bütünlük yalnızca https bağlantısına dayanır.
-pub const CATALOG: [(&str, &str, &str, &str); 6] = [
+pub const CATALOG: [(&str, &str, &str, &str); 7] = [
     ("debian-12", "Debian 12 (bookworm)", "debian-12-genericcloud-amd64.qcow2", "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"),
     ("debian-13", "Debian 13 (trixie)", "debian-13-genericcloud-amd64.qcow2", "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"),
     ("ubuntu-24.04", "Ubuntu 24.04 LTS (noble)", "ubuntu-24.04-server-cloudimg-amd64.qcow2", "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"),
     ("ubuntu-22.04", "Ubuntu 22.04 LTS (jammy)", "ubuntu-22.04-server-cloudimg-amd64.qcow2", "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"),
     ("almalinux-9", "AlmaLinux 9", "almalinux-9-genericcloud-x86_64.qcow2", "https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"),
     ("rocky-9", "Rocky Linux 9", "rocky-9-genericcloud-x86_64.qcow2", "https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"),
+    // Windows konukları için virtio sürücüleri (disk, ağ, balon) ve konuk ajanı: kurulum kalıbı olarak iner.
+    ("virtio-win", "Windows sürücüleri (virtio-win)", "virtio-win.iso", "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"),
 ];
 
 pub fn target(st: &AppState, name: &str) -> Result<(PathBuf, bool), Error> {
@@ -282,7 +284,7 @@ mod tests {
         assert_eq!(keys.len(), CATALOG.len(), "anahtarlar benzersiz");
         for (key, label, file, url) in CATALOG {
             assert!(!label.is_empty() && key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'), "{key}");
-            assert!(redox_core::hw::valid_image_name(file), "{file}");
+            assert!(redox_core::hw::valid_image_name(file) || redox_core::valid_iso_name(file), "{file}");
             assert!(url.starts_with("https://"), "{url}");
         }
     }
