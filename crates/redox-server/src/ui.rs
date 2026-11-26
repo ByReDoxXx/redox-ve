@@ -247,6 +247,17 @@ pub async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Id
     }
 }
 
+/// Küme sayfasındaki "Canlı Taşı" düğmesi: eşteki çalışan konuk kapatılmadan buraya geçer.
+pub async fn peer_migrate(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<ImportForm>) -> Redirect {
+    let Some(vmid) = parse_vmid(&f.vmid) else {
+        return flash("/cluster", "error", (tx("Geçersiz konuk kimliği.")));
+    };
+    match st.migrate_from_peer(f.peer.trim(), vmid, &me.user) {
+        Ok(()) => flash("/cluster", "notice", &tfmt(format!("{} sunucusundaki {vmid} kapatılmadan buraya taşınıyor; sonuç görevlerde görünecek.", f.peer.trim()))),
+        Err(e) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ReplicaForm {

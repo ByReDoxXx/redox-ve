@@ -128,7 +128,7 @@ yedek biçimlerini okumaz ve onun yerine doğrudan konabilecek bir ürün değil
 |---|---|---|
 | Biçim | Makineye kurduğunuz, Debian tabanlı bir dağıtım | Var olan Debian ya da Ubuntu sunucuya eklediğiniz tek bir program |
 | Konuklar | KVM sanal makineleri, LXC konteynerleri | KVM sanal makineleri, LXC konteynerleri |
-| Küme | Ortak durumlu çok düğümlü küme, canlı taşıma ve yüksek erişilebilirlik | Birleşik görünümlü bağımsız sunucular; çalışan sanal makine kısa bir duraklamayla taşınır |
+| Küme | Ortak durumlu çok düğümlü küme, canlı taşıma ve yüksek erişilebilirlik | Birleşik görünümlü bağımsız sunucular; çalışan sanal makine aralarında canlı taşınır, ama ortak durum yoktur |
 | Depolama | LVM, ZFS, Ceph, NFS ve fazlası | Dizinler (yerel disk ya da bağlı bir paylaşım), qcow2 |
 | Yedek | vzdump ve Proxmox Backup Server | Gömülü tam ve artımlı yedek, dizine ya da S3'e dış kopya |
 | Web paneli | JavaScript uygulaması | Sunucuda üretilen HTML; canlı konsol dışında JavaScript yok |
@@ -305,7 +305,7 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 | `GET /jobs`, `POST /jobs`, `DELETE /jobs/{name}`, `POST /jobs/{name}/run` | Yedek işleri |
 | `GET /pools`, `POST /pools`, `DELETE /pools/{name}` | Kaynak havuzları ve kotalar |
 | `GET /storage`, `GET /media`, `PUT /media/{name}`, `POST /media/fetch` | Depolama, kalıp ve imaj yükleme |
-| `GET /peers`, `POST /peers/{name}/import/{vmid}` | Öbür sunucular, sanal makine alma |
+| `GET /peers`, `POST /peers/{name}/import/{vmid}`, `POST /peers/{name}/migrate/{vmid}` | Öbür sunucular, sanal makine alma, canlı taşıma |
 | `GET /tasks`, `GET /tasks/{id}` | Görev günlüğü |
 
 `GET /metrics` (`/api/v1` dışında) aynı token ile Prometheus ölçümlerini verir.
@@ -429,11 +429,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 533, Windows'ta 456 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 541, Windows'ta 461 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
-Sürücü testlerinden ikisi **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
+Sürücü testlerinden üçü **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
 içinden doğrular. İkililer gösterilmedikçe atlanırlar:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (başlangıç dosya sisteminde
 `/bin/sh` kabuğu bulunan herhangi bir çekirdek; örneğin bir Debian kurucusunun `vmlinuz` ve `initrd.gz` dosyaları).
@@ -457,8 +457,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 ## Sınırlar
 
 - Ortak küme durumu yoktur. Birkaç sunucu birlikte görüntülenebilir, ama her biri kendi konuklarını yönetir.
-- Çalışan sanal makineyi taşımak belleğini korur, ancak disk ve bellek kopyalanırken konuk duraklar.
-  Kesintisiz bir canlı taşıma değildir.
+- Canlı taşıma, çalışan sanal makineyi onlarca milisaniyelik bir duraklamayla taşır, ama yalnızca sade konukları: UEFI ya da sanal TPM, takılı kurulum kalıbı, cloud-init sürücüsü, paylaşılan klasör, aktarılmış aygıt ya da bir şablona/yedeğe bağlı disk varsa taşımaz. İki QEMU birbirine doğrudan bağlanır (tek kullanımlık ön paylaşımlı anahtarlı TLS); hedefin taşıma kapıları kaynaktan erişilebilir olmalıdır. Gerçek QEMU'da bir Linux konukla, tek makinedeki iki sunucu arasında sınandı; iki fiziksel makine arasında, Windows konukla ya da ağır yük altında denenmedi. Eski "çalışırken al" yolu (askıya al, kopyala, sürdür) konuğu kopyalama süresince duraklatır ve canlı taşınamayan konuklar için durmaktadır.
 - Kendiliğinden devralma yalnızca çoğaltılan konuklar içindir ve bir hakem sunucu ister; kaynağı zorla kapatma (fencing) ve ortak durumlu küme yoktur. Gerçek bir kesintide denenmedi.
 - Depolama her zaman imaj dosyalarının durduğu bir dizindir. Dizin ZFS, LVM ya da NFS üzerinde olabilir (tanınır ve gösterilir), ama yerleşik zvol ya da mantıksal birim havuzu yönetimi yoktur.
 - Çalışan konuğa dosya geri yükleme konuk ajanı üzerinden yapılır: konukta `qemu-guest-agent` çalışmalı ve ajan dosya komutlarına izin vermelidir (RHEL gibi bazı dağıtımlar bunları varsayılan olarak engeller). Tek dosya ajanın kullanıcısıyla yazılır, sahibi ve izinleri korunmaz; klasör konuğun kendi `tar` programıyla açılır ve hedef dizin konukta var olmalıdır. Konteynerler kapsam dışıdır. Bu yol yalnızca sahte QEMU ajanına ve sahte `guestfish` aracına karşı sınandı; gerçek bir konuk ajanıyla henüz çalıştırılmadı.

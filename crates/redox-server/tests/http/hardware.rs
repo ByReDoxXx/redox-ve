@@ -211,3 +211,37 @@ pub(super) async fn memory_is_added_to_a_running_vm_from_the_hardware_tab() {
     assert!(post_ok(&sim, "/guests/103/memory", "memory_mb=17408").await.contains("error="));
     assert_eq!(sim_state.snapshot().guest(103).unwrap().mem_total_mb, 16384);
 }
+
+// ---------- Canlı taşıma uçları ----------
+
+#[tokio::test]
+pub(super) async fn live_migration_endpoints_are_admin_only_and_validate_their_input() {
+    let (app, state) = setup_real();
+    let key = "0a".repeat(32);
+    let body = |host: &str, nbd: u16, ram: u16, key: &str| json!({ "host": host, "nbd_port": nbd, "ram_port": ram, "key": key });
+    // Kapalı konuk ve taşınamayan donanım, sürücüye sorulmadan reddedilir.
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/migrate/prepare", &json!({}))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("çalışmıyor"), "{status} {v}");
+    state.mutate(|c| c.guest_mut_for_import(103).unwrap().status = GuestStatus::Running);
+    // Bu test sürücüsü canlı taşımayı bilmez: istek açık bir hatayla döner, konuk yerinde kalır.
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/migrate/prepare", &json!({}))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("desteklemiyor"), "{status} {v}");
+    for bad in [body("10.0.0.7", 49152, 49153, "kisa"), body("10.0.0.7;rm", 49152, 49153, &key), body("10.0.0.7", 80, 49153, &key), body("10.0.0.7", 49152, 49152, &key)] {
+        let (status, v) = api(&app, post_json("/api/v1/guests/103/migrate", &bad)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad} {v}");
+    }
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/migrate", &body("10.0.0.7", 49152, 49153, &key))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("desteklemiyor"), "{status} {v}");
+    assert_eq!(state.snapshot().guest(103).unwrap().status, GuestStatus::Running);
+
+    // Hedef tarafı: tanımsız eş ve yetkisiz kullanıcı.
+    let (status, v) = api(&app, post_json("/api/v1/peers/yok/migrate/103", &json!({}))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(post_ok(&app, "/cluster/migrate", "peer=yok&vmid=103").await.contains("error="));
+    assert!(post_ok(&app, "/cluster/migrate", "peer=yok&vmid=yuz").await.contains("error="));
+    for path in ["/api/v1/guests/103/migrate/prepare", "/api/v1/guests/103/migrate", "/api/v1/peers/yok/migrate/103"] {
+        let request = as_viewer(Method::POST, path).header("content-type", "application/json").body(Body::from(body("10.0.0.7", 49152, 49153, &key).to_string())).unwrap();
+        assert_eq!(send(&app, request).await.0, StatusCode::FORBIDDEN, "{path}");
+        assert_eq!(redox_server::operator_target(path.trim_start_matches("/api/v1")), None, "{path}");
+    }
+}

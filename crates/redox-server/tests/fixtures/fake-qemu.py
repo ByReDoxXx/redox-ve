@@ -51,7 +51,9 @@ waiting = set()
 
 # Askıdan dönüş: bellek durumu dosyası yoksa ya da bozuksa gerçek QEMU gibi başlamadan çıkar.
 incoming = None
-if "-incoming" in args:
+# Canlı taşıma: "-incoming defer" ile açılan QEMU belleği sonradan (migrate-incoming) bekler.
+deferred = "-incoming" in args and value("-incoming") == "defer"
+if "-incoming" in args and not deferred:
     incoming = value("-incoming").split("exec:cat ", 1)[1].strip("'")
     if not os.path.exists(incoming) or open(incoming).read() != "bellek-durumu":
         sys.stderr.write("qemu-system-x86_64: load of migration failed: Invalid argument\n")
@@ -92,7 +94,99 @@ devnull = os.open(os.devnull, os.O_RDWR)
 for fd in (0, 1, 2):
     os.dup2(devnull, fd)
 
-paused = False
+paused = "-S" in args
+# Canlı taşıma durumu. Gerçek QEMU'nun NBD ve taşıma akışı yerine satır tabanlı küçük bir protokol konuşulur:
+#   KEY <anahtar>            iki uç aynı anahtarı bilmeli (gerçekte TLS el sıkışması)
+#   EXPORT <ad> / DATA <n>   disk bağlantısı: diskin içeriği hedefin dosyasına yazılır
+#   RAM <metin>              bellek bağlantısı: hedef "belleği" bir dosyaya yazar
+mig = {"tls": {}, "exports": set(), "nodes": {}, "jobs": {}, "status": None, "error": None, "arrived": False, "listeners": []}
+
+
+def mig_key(name):
+    try:
+        return open(os.path.join(mig["tls"][name], "keys.psk")).read().strip().split(":", 1)[1]
+    except (KeyError, OSError, IndexError):
+        return None
+
+
+def mig_line(conn):
+    data = b""
+    while not data.endswith(b"\n"):
+        chunk = conn.recv(1)
+        if not chunk:
+            break
+        data += chunk
+    return data.decode().strip()
+
+
+def mig_listen(host, port, key, serve):
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((host, port))
+    listener.listen(8)
+    mig["listeners"].append(listener)
+
+    def loop():
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            try:
+                # Anahtarı tutmayan bağlantı el sıkışmada düşer.
+                if mig_line(conn) == "KEY %s" % key:
+                    conn.sendall(b"OK\n")
+                    serve(conn)
+                else:
+                    conn.close()
+            except OSError:
+                pass
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def mig_serve_disk(conn):
+    def run():
+        try:
+            name = mig_line(conn).split(" ", 1)[1]
+            if name not in mig["exports"]:
+                conn.sendall(b"ERR\n")
+                return
+            conn.sendall(b"OK\n")
+            while True:
+                head = mig_line(conn)
+                if not head.startswith("DATA "):
+                    return
+                size, data = int(head.split(" ")[1]), b""
+                while len(data) < size:
+                    data += conn.recv(size - len(data))
+                with open(devices[name], "wb") as out:
+                    out.write(data)
+                conn.sendall(b"DONE\n")
+        except (OSError, IndexError, ValueError):
+            pass
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def mig_serve_ram(conn):
+    text = mig_line(conn)
+    if text.startswith("RAM "):
+        with open(sock_path + ".ram", "w") as out:
+            out.write(text[4:])
+        mig["arrived"] = True
+        conn.sendall(b"OK\n")
+    conn.close()
+
+
+def mig_connect(uri_host, port, key):
+    conn = socket.create_connection((uri_host, int(port)), timeout=5)
+    conn.sendall(("KEY %s\n" % key).encode())
+    if mig_line(conn) != "OK":
+        conn.close()
+        raise OSError("TLS handshake failed: The TLS connection was non-properly terminated")
+    return conn
+
 
 # Konuk ajanı kanalı: adı "ajanli" ile başlayan konukta ajan yanıt verir; diğerlerinde kanal sessizdir.
 qga_path = next((a.split("path=", 1)[1].split(",")[0] for a in args if a.startswith("socket,id=qga0,")), None)
@@ -313,6 +407,10 @@ while True:
                             dst.write(src.read())
                         send({"timestamp": {"seconds": 2, "microseconds": 0}, "event": "BLOCK_JOB_COMPLETED",
                               "data": {"device": j["job-id"], "len": 4, "offset": 4, "speed": 0, "type": "backup"}})
+            elif command == "block-job-cancel" and arguments["device"] in mig["jobs"]:
+                mig["jobs"].pop(arguments["device"])
+                hot("block-job-cancel %s" % arguments["device"])
+                send({"return": {}})
             elif command == "block-job-cancel":
                 if arguments["device"] in waiting:
                     waiting.discard(arguments["device"])
@@ -335,6 +433,101 @@ while True:
                         dst.write(src.read())
                     send({"timestamp": {"seconds": 2, "microseconds": 0}, "event": "BLOCK_JOB_COMPLETED",
                           "data": {"device": arguments["job-id"], "len": 4, "offset": 4, "speed": 0, "type": "backup"}})
+            elif command == "migrate-set-parameters":
+                mig["params"] = arguments
+                send({"return": {}})
+            elif command == "nbd-server-start":
+                key = mig_key(arguments.get("tls-creds"))
+                if key is None:
+                    send({"error": {"class": "GenericError", "desc": "No TLS credentials with id '%s'" % arguments.get("tls-creds")}})
+                else:
+                    try:
+                        mig_listen(arguments["addr"]["data"]["host"], int(arguments["addr"]["data"]["port"]), key, mig_serve_disk)
+                        hot("nbd-server-start %s" % arguments["addr"]["data"]["port"])
+                        send({"return": {}})
+                    except OSError as e:
+                        send({"error": {"class": "GenericError", "desc": "Failed to bind socket: %s" % e}})
+            elif command == "nbd-server-add":
+                if arguments["device"] in devices and arguments.get("writable"):
+                    mig["exports"].add(arguments["device"])
+                    hot("nbd-server-add %s" % arguments["device"])
+                    send({"return": {}})
+                else:
+                    send({"error": {"class": "GenericError", "desc": "Cannot find device=%s nor node-name=%s" % (arguments["device"], arguments["device"])}})
+            elif command == "nbd-server-stop":
+                for listener in mig["listeners"][:1]:
+                    listener.close()
+                hot("nbd-server-stop")
+                send({"return": {}})
+            elif command == "migrate-incoming":
+                key = mig_key(mig.get("params", {}).get("tls-creds"))
+                if not deferred or key is None:
+                    send({"error": {"class": "GenericError", "desc": "'-incoming' was not specified on the command line"}})
+                else:
+                    host, port = arguments["uri"][4:].rsplit(":", 1)
+                    try:
+                        mig_listen(host, int(port), key, mig_serve_ram)
+                        hot("migrate-incoming %s" % port)
+                        send({"return": {}})
+                    except OSError as e:
+                        send({"error": {"class": "GenericError", "desc": "Failed to bind socket: %s" % e}})
+            elif command == "blockdev-add":
+                key = mig_key(arguments.get("tls-creds"))
+                try:
+                    link = mig_connect(arguments["server"]["host"], arguments["server"]["port"], key)
+                    link.sendall(("EXPORT %s\n" % arguments["export"]).encode())
+                    if mig_line(link) != "OK":
+                        raise OSError("export '%s' not present" % arguments["export"])
+                    mig["nodes"][arguments["node-name"]] = link
+                    hot("blockdev-add nbd %s %s" % (arguments["node-name"], arguments["export"]))
+                    send({"return": {}})
+                except OSError as e:
+                    send({"error": {"class": "GenericError", "desc": "Failed to linkect to '%s:%s': %s" % (arguments["server"]["host"], arguments["server"]["port"], e)}})
+            elif command == "blockdev-del":
+                link = mig["nodes"].pop(arguments["node-name"], None)
+                if link:
+                    link.close()
+                hot("blockdev-del %s" % arguments["node-name"])
+                send({"return": {}})
+            elif command == "blockdev-mirror":
+                link = mig["nodes"].get(arguments["target"])
+                if link is None or arguments["device"] not in devices or arguments.get("copy-mode") != "write-blocking":
+                    send({"error": {"class": "GenericError", "desc": "Cannot find device='%s' nor node-name='%s'" % (arguments["target"], arguments["target"])}})
+                else:
+                    data = open(devices[arguments["device"]], "rb").read()
+                    link.sendall(("DATA %d\n" % len(data)).encode() + data)
+                    mig_line(link)
+                    # "aynasiz" işaretiyle ayna hemen düşer (hedefe yazılamıyor gibi).
+                    if not os.path.exists(sock_path + ".nomirror"):
+                        mig["jobs"][arguments["job-id"]] = arguments["device"]
+                    hot("blockdev-mirror %s %s" % (arguments["device"], arguments["target"]))
+                    send({"return": {}})
+            elif command == "migrate_cancel":
+                hot("migrate_cancel")
+                send({"return": {}})
+            elif command == "migrate" and arguments["uri"].startswith("tcp:"):
+                host, port = arguments["uri"][4:].rsplit(":", 1)
+                if os.path.exists(sock_path + ".nomigrate"):
+                    mig["status"], mig["error"] = "failed", "load of migration failed: Invalid argument"
+                else:
+                    try:
+                        link = mig_connect(host, port, mig_key(mig.get("params", {}).get("tls-creds")))
+                        link.sendall(("RAM %s\n" % value("-name")).encode())
+                        mig_line(link)
+                        link.close()
+                        # "aynakopar" işaretiyle ayna bellek taşınırken düşer.
+                        if os.path.exists(sock_path + ".dropmirror"):
+                            mig["jobs"].clear()
+                        mig["status"], paused = "completed", True
+                    except OSError as e:
+                        mig["status"], mig["error"] = "failed", str(e)
+                hot("migrate %s" % port)
+                send({"return": {}})
+            elif command == "query-migrate" and mig["status"]:
+                reply = {"status": mig["status"], "downtime": 7, "total-time": 90}
+                if mig["error"]:
+                    reply["error-desc"] = mig["error"]
+                send({"return": reply})
             elif command == "migrate":
                 # "askisiz" adlı konukta durum yazılamaz (dolu disk gibi).
                 target = arguments["uri"].split("exec:cat > ", 1)[1].strip("'")
@@ -407,11 +600,16 @@ while True:
                 else:
                     hot("%s %s" % (command, arguments["id"]))
                 send({"return": {}})
+            elif command == "object-add" and arguments["qom-type"] == "tls-creds-psk":
+                mig["tls"][arguments["id"]] = arguments["dir"]
+                hot("object-add tls-creds-psk %s %s" % (arguments["id"], arguments["endpoint"]))
+                send({"return": {}})
             elif command == "object-add":
                 mem_objects[arguments["id"]] = arguments["size"] >> 20
                 hot("object-add %s %s %d" % (arguments["qom-type"], arguments["id"], arguments["size"] >> 20))
                 send({"return": {}})
             elif command == "object-del":
+                mig["tls"].pop(arguments["id"], None)
                 mem_objects.pop(arguments["id"], None)
                 hot("object-del %s" % arguments["id"])
                 send({"return": {}})
@@ -453,14 +651,15 @@ while True:
                     out.write("+".join(k["data"] for k in arguments["keys"]) + "\n")
                 send({"return": {}})
             elif command == "query-status":
-                send({"return": {"status": "paused" if paused else "running", "running": not paused}})
+                status = "inmigrate" if deferred and not mig["arrived"] else "postmigrate" if mig["status"] == "completed" and paused else "paused" if paused else "running"
+                send({"return": {"status": status, "running": not paused}})
             elif command == "stop":
                 paused = True
                 # Gerçek QEMU yanıttan önce olay gönderebilir; istemci bunu atlamalı.
                 send({"timestamp": {"seconds": 1, "microseconds": 0}, "event": "STOP"})
                 send({"return": {}})
             elif command == "query-block-jobs":
-                send({"return": []})
+                send({"return": [{"device": job, "ready": True, "offset": 4, "len": 4, "type": "mirror"} for job in mig["jobs"]]})
             elif command == "block-stream":
                 # Arkalıktaki veri diske akar ve bağ kalkar (sahte imajda arkalık "bagli:<yol>" satırıdır).
                 path = devices.get(arguments["device"])

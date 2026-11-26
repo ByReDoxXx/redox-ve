@@ -1097,3 +1097,55 @@ fn a_memory_snapshot_is_not_loaded_into_a_running_guest_whose_cores_or_memory_ch
     c.guest_mut(103).unwrap().snapshots[0].cores = 0;
     c.check_rollback_state(103, "once").unwrap();
 }
+
+#[test]
+fn only_plain_running_vms_are_migrated_live_and_the_source_copy_does_not_restart() {
+    let mut c = cluster();
+    // Çalışan, sunucuya bağlı donanımı olmayan sanal makine taşınır.
+    assert!(c.check_migrate_out(103).unwrap_err().to_string().contains("çalışmıyor"));
+    c.guest_mut(103).unwrap().status = GuestStatus::Running;
+    c.check_migrate_out(103).unwrap();
+    let running_ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct && g.status == GuestStatus::Running).unwrap().vmid;
+    assert!(c.check_migrate_out(running_ct).unwrap_err().to_string().contains("yalnızca sanal makineler"));
+    // Kayıttan yeniden kurulamayan ya da sunucuya bağlı donanım taşımayı engeller.
+    let blocked = |change: &dyn Fn(&mut Guest)| {
+        let mut c = cluster();
+        let g = c.guest_mut(103).unwrap();
+        g.status = GuestStatus::Running;
+        change(g);
+        c.check_migrate_out(103).unwrap_err().to_string()
+    };
+    assert!(blocked(&|g| g.hw.firmware = crate::hw::Firmware::Uefi).contains("UEFI"));
+    assert!(blocked(&|g| g.hw.tpm = true).contains("TPM"));
+    assert!(blocked(&|g| g.hw.usb.push("046d:c52b".into())).contains("sunucu aygıtı"));
+    assert!(blocked(&|g| g.iso = Some("debian.iso".into())).contains("kalıbı"));
+    assert!(blocked(&|g| g.hw.ci_ssh_key = Some("ssh-ed25519 AAAA ali".into())).contains("cloud-init"));
+    assert!(blocked(&|g| g.hw.base = Some(100)).contains("bağlı"));
+    let task = c.begin_op(103, "vm snapshot 103".into(), "u", NOW, None).unwrap();
+    assert!(matches!(c.check_migrate_out(103), Err(Error::Locked { .. })));
+    c.complete_task(task, Ok(()), NOW).unwrap();
+
+    // Taşınan konuğun kaynaktaki kaydı kapalıdır ve kendiliğinden açılmaz.
+    {
+        let g = c.guest_mut(103).unwrap();
+        (g.onboot, g.hw.restart, g.hw.dimms) = (true, true, vec![512]);
+    }
+    c.after_migrated_out(103);
+    let g = c.guest(103).unwrap();
+    assert_eq!((g.status, g.onboot, g.hw.restart, g.hw.dimms.is_empty()), (GuestStatus::Stopped, false, false, true));
+    assert!(g.tags.iter().any(|t| t == crate::MIGRATED_TAG));
+    c.after_migrated_out(103);
+    assert_eq!(c.guest(103).unwrap().tags.iter().filter(|t| *t == crate::MIGRATED_TAG).count(), 1);
+
+    // Anahtar ve adres QEMU'ya argüman olarak gider: yalnızca beklenen biçim kabul edilir.
+    assert!(crate::valid_migrate_key(&"0a".repeat(32)));
+    for bad in ["", "0a", &"0A".repeat(32), &"zz".repeat(32), &"0a".repeat(33)] {
+        assert!(!crate::valid_migrate_key(bad), "{bad}");
+    }
+    for good in ["10.0.0.7", "sunucu-2.ornek.net", "fd00::7"] {
+        assert!(crate::valid_migrate_host(good), "{good}");
+    }
+    for bad in ["", "-x", "a b", "a,b", "a/b", "a;b"] {
+        assert!(!crate::valid_migrate_host(bad), "{bad}");
+    }
+}

@@ -62,6 +62,7 @@ struct ServeOptions {
     backup_age_days: Option<u64>,
     four_eyes: bool,
     move_precopy: bool,
+    migrate: redox_server::state::MigrateSettings,
 }
 
 fn default_users_path() -> PathBuf {
@@ -107,6 +108,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         backup_age_days: None,
         four_eyes: false,
         move_precopy: false,
+        migrate: Default::default(),
     };
     let mut delay_given = false;
     let mut it = args.iter();
@@ -128,6 +130,21 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--changed-block-tracking" => opts.cbt = true,
             "--backup-mbps" => opts.backup_mbps = number(value()?)?,
             "--move-precopy" => opts.move_precopy = true,
+            "--migrate-ports" => opts.migrate.ports = redox_server::state::parse_migrate_ports(value()?)?,
+            "--migrate-host" => {
+                let host = value()?.clone();
+                if !redox_core::valid_migrate_host(&host) {
+                    return Err(format!("geçersiz --migrate-host adresi: {host}"));
+                }
+                opts.migrate.host = Some(host);
+            }
+            "--migrate-bind" => {
+                let bind = value()?.clone();
+                if !redox_core::valid_migrate_host(&bind) {
+                    return Err(format!("geçersiz --migrate-bind adresi: {bind}"));
+                }
+                opts.migrate.bind = bind;
+            }
             "--backup-passphrase-file" => opts.backup_passphrase_file = Some(PathBuf::from(value()?)),
             "--alert-webhook" => opts.alert_webhook = Some(value()?.clone()),
             "--alert-ntfy" => opts.alert_ntfy = Some(value()?.clone()),
@@ -364,6 +381,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         state.set_oidc(config);
     }
     state.set_move_precopy(opts.move_precopy);
+    state.set_migrate(opts.migrate.clone());
     if opts.four_eyes {
         state.set_four_eyes(true);
         say!("Dört göz ilkesi açık: yedek ve konuk silme ikinci bir yöneticinin onayını bekler.");

@@ -11,6 +11,7 @@ use crate::host::HostSample;
 mod approvals;
 mod failover;
 mod maintenance;
+mod migrate;
 mod ratelimit;
 mod backup;
 mod guest;
@@ -194,6 +195,8 @@ struct Inner {
     four_eyes: std::sync::atomic::AtomicBool,
     /// Çalışan konuk taşınırken diskler önce konuk çalışırken kopyalansın mı (duraklamayı kısaltır)?
     move_precopy: std::sync::atomic::AtomicBool,
+    /// Canlı taşıma: kapı aralığı ve adresler.
+    migrate: Mutex<MigrateSettings>,
     /// Çerezi olmayan ziyaretçiye gösterilecek dil İngilizce mi? (`--lang en`)
     english: std::sync::atomic::AtomicBool,
     /// API hız sınırı: (dakikadaki istek sınırı; 0 kapalı, kullanıcı → (dakika, o dakikadaki istek sayısı)).
@@ -232,6 +235,7 @@ impl AppState {
             backup_age_days: Mutex::new(7),
             four_eyes: std::sync::atomic::AtomicBool::new(false),
             move_precopy: std::sync::atomic::AtomicBool::new(false),
+            migrate: Mutex::new(MigrateSettings::default()),
             english: std::sync::atomic::AtomicBool::new(false),
             api_rate: Mutex::new((0, HashMap::new())),
             report: Mutex::new((None, None)),
@@ -344,6 +348,8 @@ pub fn recover(cluster: &mut Cluster, now: u64) -> usize {
 
 #[cfg(test)]
 mod tests;
+
+pub use migrate::{parse_migrate_ports, MigrateSettings, MIGRATE_PORTS};
 
 /// Yaşam döngüsü dışındaki konuk işlemleri: kurallar çekirdekte, dosya işleri sürücüde.
 impl AppState {

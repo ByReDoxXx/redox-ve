@@ -125,6 +125,7 @@ pub fn app(state: AppState) -> Router {
         .route("/media/{name}/delete", post(ui_ops::media_delete))
         .route("/cluster", get(ui::peers))
         .route("/cluster/import", post(ui::peer_import))
+        .route("/cluster/migrate", post(ui::peer_migrate))
         .route("/cluster/replica", post(ui::replica_action))
         .route("/help", get(ui::help))
         .route("/cmd", post(ui::command))

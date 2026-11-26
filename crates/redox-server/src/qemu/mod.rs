@@ -549,6 +549,65 @@ impl Hypervisor for QemuDriver {
         }
     }
 
+    fn live_migration(&self) -> bool {
+        cfg!(unix)
+    }
+
+    fn migrate_layout(&self, guest: &Guest) -> Option<u8> {
+        #[cfg(unix)]
+        {
+            imp::migrate_layout(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            None
+        }
+    }
+
+    fn migrate_listen(&self, guest: &Guest, layout: u8, bind: &str, nbd_port: u16, ram_port: u16, key: &str) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::migrate_listen(self, guest, layout, bind, nbd_port, ram_port, key)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, layout, bind, nbd_port, ram_port, key);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn migrate_send(&self, guest: &Guest, host: &str, nbd_port: u16, ram_port: u16, key: &str) -> Result<u64, String> {
+        #[cfg(unix)]
+        {
+            imp::migrate_send(self, guest, host, nbd_port, ram_port, key)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, host, nbd_port, ram_port, key);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn migrate_finish(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::migrate_finish(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn migrate_abort(&self, guest: &Guest) {
+        #[cfg(unix)]
+        imp::migrate_abort(self, guest);
+        #[cfg(not(unix))]
+        let _ = guest;
+    }
+
     fn hot_add_memory(&self, guest: &Guest, mb: u64) -> Result<(), String> {
         #[cfg(unix)]
         {

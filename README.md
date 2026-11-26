@@ -129,7 +129,7 @@ Proxmox configuration or backup formats, and is not a drop-in replacement.
 |---|---|---|
 | Form | A Debian-based distribution you install on the machine | One binary you add to an existing Debian or Ubuntu server |
 | Guests | KVM virtual machines, LXC containers | KVM virtual machines, LXC containers |
-| Clustering | Multi-node cluster with shared state, live migration and high availability | Independent servers with a combined view; a running VM can be moved, with a pause |
+| Clustering | Multi-node cluster with shared state, live migration and high availability | Independent servers with a combined view; a running VM can be migrated live between them, but there is no shared state |
 | Storage | LVM, ZFS, Ceph, NFS and more | Directories (local disk or a mounted share), qcow2 |
 | Backup | vzdump and Proxmox Backup Server | Built-in full and incremental backups, off-site copy to a directory or S3 |
 | Web panel | JavaScript application | Server-rendered HTML, no JavaScript outside the live console |
@@ -304,7 +304,7 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 | `GET /jobs`, `POST /jobs`, `DELETE /jobs/{name}`, `POST /jobs/{name}/run` | Backup jobs |
 | `GET /pools`, `POST /pools`, `DELETE /pools/{name}` | Resource pools and quotas |
 | `GET /storage`, `GET /media`, `PUT /media/{name}`, `POST /media/fetch` | Storage, ISO and image upload |
-| `GET /peers`, `POST /peers/{name}/import/{vmid}` | Other servers, VM import |
+| `GET /peers`, `POST /peers/{name}/import/{vmid}`, `POST /peers/{name}/migrate/{vmid}` | Other servers, VM import, live migration |
 | `GET /tasks`, `GET /tasks/{id}` | Task log |
 
 `GET /metrics` (outside `/api/v1`) serves Prometheus metrics with the same token.
@@ -427,11 +427,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-533 tests pass on Linux and 456 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+541 tests pass on Linux and 461 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
-Two driver tests run against **real QEMU** with a Linux kernel as the guest and checks the result from
+Three driver tests run against **real QEMU** with a Linux kernel as the guest and checks the result from
 inside the guest. They are skipped unless you point them at the binaries:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (any kernel whose
 initial file system has a shell at `/bin/sh`, such as a Debian installer's `vmlinuz` and `initrd.gz`).
@@ -455,8 +455,7 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
 ## Limits
 
 - No shared cluster state. Several servers can be viewed together, but each one manages its own guests.
-- Moving a running VM keeps its memory but pauses it while disk and memory are copied. It is not a
-  zero-downtime live migration.
+- Live migration moves a running VM with a pause of tens of milliseconds, but only plain guests: not with UEFI or a virtual TPM, an attached installation image, a cloud-init drive, shared folders, passed-through devices, or disks that depend on a template or backup. The two QEMU processes connect directly (TLS with a one-time pre-shared key), so the target's migration ports must be reachable from the source. It is tested on real QEMU with a Linux guest between two servers on one machine; it has not been tried between two physical machines, with a Windows guest, or under heavy load. The older "move while running" path (suspend, copy, resume) still pauses the guest for as long as the copy takes and remains for guests that cannot be migrated live.
 - Automatic failover exists only for replicated guests and needs a witness server; there is no fencing and no shared-state cluster. It has not been tried in a real outage.
 - Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
 - Restoring a file into a running guest goes through the guest agent, so the guest needs `qemu-guest-agent` and the agent must allow its file commands (some distributions, such as RHEL, block them by default). A single file is written as the agent's user and does not keep its owner or permissions; a folder is unpacked with the guest's own `tar` and must already exist in the guest. Containers are not covered. This path is tested only against the fake QEMU agent and a fake `guestfish`; it has not been run against a real guest agent yet.

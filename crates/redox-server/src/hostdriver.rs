@@ -212,6 +212,32 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.guest_put(guest, target, tar, data)
     }
 
+    fn live_migration(&self) -> bool {
+        self.vm.live_migration()
+    }
+
+    fn migrate_layout(&self, guest: &Guest) -> Option<u8> {
+        self.of(guest).ok()?.migrate_layout(guest)
+    }
+
+    fn migrate_listen(&self, guest: &Guest, layout: u8, bind: &str, nbd_port: u16, ram_port: u16, key: &str) -> Result<(), String> {
+        self.of(guest)?.migrate_listen(guest, layout, bind, nbd_port, ram_port, key)
+    }
+
+    fn migrate_send(&self, guest: &Guest, host: &str, nbd_port: u16, ram_port: u16, key: &str) -> Result<u64, String> {
+        self.of(guest)?.migrate_send(guest, host, nbd_port, ram_port, key)
+    }
+
+    fn migrate_finish(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.migrate_finish(guest)
+    }
+
+    fn migrate_abort(&self, guest: &Guest) {
+        if let Ok(driver) = self.of(guest) {
+            driver.migrate_abort(guest);
+        }
+    }
+
     fn hot_add_memory(&self, guest: &Guest, mb: u64) -> Result<(), String> {
         self.of(guest)?.hot_add_memory(guest, mb)
     }

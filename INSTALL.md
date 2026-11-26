@@ -110,7 +110,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # all must pass (533 tests on Linux; with Node installed the live console client's 7 tests run too)
+cargo test --workspace          # all must pass (541 tests on Linux; with Node installed the live console client's 7 tests run too)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -460,7 +460,7 @@ What the driver offers, from the tabs of a guest page:
 What it does not do yet:
 
 - **The default network is user-mode NAT.** For bridges and containers see section 9.
-- **No real cluster:** no zero-downtime live migration and no automatic failover. See section 10.
+- **No real cluster:** no shared cluster state and (except for replicated guests) no automatic failover. A running VM can be migrated live between servers; see section 10.
 - **The guest firewall is off by default;** see section 12.
 
 ## 9. Bridged networking and LXC containers
@@ -616,7 +616,10 @@ and contents, and so do the UEFI variable store and the virtual TPM state. A gue
 its TPM state cannot be fetched. Containers cannot be moved.
 
 **Moving a running guest (*Çalışırken Al*):** the hub suspends the guest on the peer, downloads its disks and
-memory state and resumes it here **where it was**. It is not zero-downtime: the guest does not respond while
+memory state and resumes it here **where it was**. For guests that qualify, **Migrate Live**
+(`redox peer migrate <peer> <id>`) moves the guest without stopping it, with a pause of tens of milliseconds; the
+source must reach the target's `--migrate-ports` (default 49152-49215). See *Multiple Servers* in the wiki for the
+details and limits. The suspend-and-copy path is not zero-downtime: the guest does not respond while
 disk and memory are copied. Both servers must run the same RedoX VE version and a similar CPU, and the guest
 must have no passthrough device and no mounted share. If the move fails nothing is left on the hub and the
 guest stays suspended on the peer. If it succeeds, **delete** the suspended copy on the peer; do not start it.
@@ -740,8 +743,8 @@ everyone out, delete the file and restart.
 - **Corruption in the incremental store is not noticed by itself:** new backups reuse stored chunks without
   reading them again. Verify important backups now and then.
 - **A multi-disk restore is not atomic:** disks are put in place one by one after all are prepared.
-- **Not done:** LVM/ZFS storage pools, zero-downtime live migration, automatic failover between servers,
-  clipboard and audio in the live console, adding CPU and memory to a running guest, moving containers.
+- **Not done:** LVM/ZFS storage pools, a shared-state cluster, live migration of guests with UEFI or a TPM,
+  clipboard and audio in the live console, removing CPU and memory from a running guest, live migration of containers.
 - **The QEMU unit** (`redox-qemu.service`) uses a looser sandbox than the simulation unit; the file says why.
 - **What was verified where.** The systemd units and the Caddy configuration were not tried on a real server.
   Code and tests ran on Linux (WSL, Ubuntu). On real KVM with NAT networking: snapshots, rollback and backups of

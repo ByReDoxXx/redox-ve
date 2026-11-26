@@ -24,7 +24,7 @@ Sunucu:
               [--driver sim|qemu] [--data-dir DİZİN] [--qemu-bin YOL] [--ovmf-dir DİZİN] [--swtpm-bin YOL]
               [--shutdown-timeout-secs 60] [--no-lxc] [--no-autostart] [--storage AD=DİZİN]...
               [--behind-tls-proxy] [--allow-plain-http] [--task-delay-ms 1500]
-              [--alert-webhook URL] [--alert-email DOSYA] [--peers DOSYA] [--offsite DOSYA] [--offsite-copy DOSYA]... [--oidc DOSYA] [--guestfish-bin YOL] [--backup-test-secs 60] [--backup-report SS:DD] [--backup-age-days 7] [--backup-mbps 0] [--firewall] [--incremental-backups [--changed-block-tracking] [--backup-passphrase-file DOSYA]] [--move-precopy]
+              [--alert-webhook URL] [--alert-email DOSYA] [--peers DOSYA] [--offsite DOSYA] [--offsite-copy DOSYA]... [--oidc DOSYA] [--guestfish-bin YOL] [--migrate-ports 49152-49215] [--migrate-host ADRES] [--migrate-bind 0.0.0.0] [--backup-test-secs 60] [--backup-report SS:DD] [--backup-age-days 7] [--backup-mbps 0] [--firewall] [--incremental-backups [--changed-block-tracking] [--backup-passphrase-file DOSYA]] [--move-precopy]
 
 Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da REDOX_USERS):
   redox user add <ad> [--role admin|operator|viewer]
@@ -116,6 +116,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
         yüklemek için: curl -T debian.iso -H 'Authorization: Bearer TOKEN' REDOX_URL/api/v1/media/debian.iso
   redox peer list                 (birleşik görünümdeki eş sunucular)
   redox peer import <eş> <kimlik> (eşteki kapalı sanal makineyi bu sunucuya kopyalar)
+  redox peer migrate <eş> <kimlik> (eşteki çalışan sanal makineyi kapatmadan bu sunucuya taşır)
   redox task list
 ";
 
@@ -439,6 +440,7 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["job", "remove", name] => req("DELETE", format!("/jobs/{name}"), None, View::Done("yedek işi silindi")),
         ["storage", "list"] => get("/storage", View::Storage),
         ["peer", "list"] => get("/peers", View::Peers),
+        ["peer", "migrate", peer, id] => req("POST", format!("/peers/{peer}/migrate/{}", vmid(id)?), None, View::Done("canlı taşıma başladı; sonuç: redox task list")),
         ["peer", "import", peer, id] => req("POST", format!("/peers/{peer}/import/{}", vmid(id)?), None, View::Done("kopyalama başladı; sonuç: redox task list")),
         ["task", "list"] => get("/tasks", View::Tasks),
         _ => Err(format!("anlaşılmayan komut: {}\n\n{USAGE}", a.join(" "))),
@@ -818,6 +820,9 @@ mod tests {
         assert!(peers.contains("1 düğüm, 2 konuk") && peers.contains("HATA: token reddedildi") && peers.contains("bekleniyor"), "{peers}");
         assert!(render(View::Peers, &json!([])).contains("tanımlı değil"));
         assert_eq!(parse(&["peer".to_string(), "list".to_string()]).unwrap().path, "/peers");
+        let migrate = parse(&args("peer migrate ankara 103")).unwrap();
+        assert_eq!((migrate.method, migrate.path.as_str(), migrate.body), ("POST", "/peers/ankara/migrate/103", None));
+        assert!(parse(&args("peer migrate ankara yuz")).is_err());
         let args = |text: &str| text.split(' ').map(str::to_string).collect::<Vec<_>>();
         assert_eq!(patch_body(&["cpu=Haswell", "balloon=true"]).unwrap(), json!({"cpu_type": "Haswell", "balloon": true}));
         assert_eq!(patch_body(&["nic-guard=true"]).unwrap(), json!({"nic_guard": true}));

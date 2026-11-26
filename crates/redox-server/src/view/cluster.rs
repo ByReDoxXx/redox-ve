@@ -423,7 +423,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
                     (tx("“Buraya Al” kapalı bir sanal makineyi yedeği üzerinden bu sunucuya kopyalar; kaynak yerinde kalır, çalıştığını görünce orada siz silersiniz. "))
                     (tx("“Çalışırken Al” çalışan konuğu orada askıya alır, diskini ve belleğini kopyalar, burada kaldığı yerden sürdürür: konuk yeniden başlamaz ama kopyalama boyunca yanıt vermez. "))
                     (tx("Kaynaktaki kopya askıda kalır; burada çalıştığını görünce orada silin, başlatmayın. "))
-                    (tx("Kesintisiz canlı taşıma, ortak küme durumu ve sunucular arası kendiliğinden devralma yoktur."))
+                    (tx("\"Canlı Taşı\" çalışan sanal makineyi kapatmadan taşır: diskleri aynalanır, belleği aktarılır, kaynak hedefin taşıma kapılarına ulaşabilmelidir. Ortak küme durumu yoktur."))
                 }
             }
             @for v in peers.iter().filter(|v| v.online()) {
@@ -452,6 +452,9 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
                                                     button class="btn sm" type="submit" { (icon("migrate")) (tx("Buraya Al")) }
                                                 } @else {
                                                     button class="btn sm" type="submit" title=(tx("Konuk orada askıya alınır, diski ve belleği kopyalanır, burada kaldığı yerden devam eder")) { (icon("migrate")) (tx("Çalışırken Al")) }
+                                                    @if g.status == GuestStatus::Running && redox_core::migrate_blocker(g).is_none() {
+                                                        button class="btn sm" type="submit" formaction="/cluster/migrate" title=(tx("Konuk kapatılmadan taşınır: diskleri çalışırken aynalanır, belleği taşınır, burada bir saniyeden kısa bir duraklamayla sürer")) { (icon("migrate")) (tx("Canlı Taşı")) }
+                                                    }
                                                 }
                                             }
                                         } @else { span class="dim" title=(tx("Üzerinde işlem süren konuk bekler; konteyner için bu sunucuda LXC gerekir")) { "-" } }

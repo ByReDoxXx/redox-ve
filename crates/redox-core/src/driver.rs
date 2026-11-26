@@ -256,6 +256,36 @@ pub trait Hypervisor: Send + Sync {
         Err("bu sürücü çalışan konuğun içine dosya yazamaz".to_string())
     }
 
+    /// Bu sürücü çalışan konuğu başka bir sunucuya (ya da başka bir sunucudan) canlı taşıyabilir mi?
+    fn live_migration(&self) -> bool {
+        false
+    }
+
+    /// Çalışan konuğun açıldığı donanım yerleşimi (hedef aynı yerleşimle açılır); konuk çalışmıyorsa `None`.
+    fn migrate_layout(&self, _guest: &Guest) -> Option<u8> {
+        None
+    }
+
+    /// Canlı taşımanın hedefi: konuğu taşıma bekler halde (duraklatılmış) açar. Diskleri `nbd_port`'tan
+    /// yazılabilir sunulur, bellek `ram_port`'tan beklenir; bağlantılar `key` ile şifrelenir.
+    fn migrate_listen(&self, _guest: &Guest, _layout: u8, _bind: &str, _nbd_port: u16, _ram_port: u16, _key: &str) -> Result<(), String> {
+        Err("bu sürücü canlı taşımayı desteklemiyor".to_string())
+    }
+
+    /// Canlı taşımanın kaynağı: diskleri hedefe aynalar, sonra belleği taşır. Başarıda konuk burada
+    /// kapanmıştır ve duraklama süresi (ms) döner; bellek hedefe geçmeden hata olursa konuk çalışmayı sürdürür.
+    fn migrate_send(&self, _guest: &Guest, _host: &str, _nbd_port: u16, _ram_port: u16, _key: &str) -> Result<u64, String> {
+        Err("bu sürücü canlı taşımayı desteklemiyor".to_string())
+    }
+
+    /// Hedef: bellek geldi ve kaynak kapandı; konuk sürdürülür.
+    fn migrate_finish(&self, _guest: &Guest) -> Result<(), String> {
+        Err("bu sürücü canlı taşımayı desteklemiyor".to_string())
+    }
+
+    /// Hedef: taşıma olmadı; bekleyen konuk kapatılır.
+    fn migrate_abort(&self, _guest: &Guest) {}
+
     /// UEFI donanım yazılımı kurulu mu?
     fn uefi(&self) -> bool {
         false

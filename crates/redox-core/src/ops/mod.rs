@@ -11,6 +11,7 @@ mod cpu;
 mod disks;
 mod edit;
 mod memory;
+pub mod migrate;
 mod schedule;
 mod snapshots;
 

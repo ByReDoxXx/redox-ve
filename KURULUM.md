@@ -104,7 +104,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # hepsi geçmeli (Linux'ta 533 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
+cargo test --workspace          # hepsi geçmeli (Linux'ta 541 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -561,8 +561,8 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
 Şimdilik yapmadıkları:
 
 - **Varsayılan ağ NAT'tır (kullanıcı kipi).** Konuk internete çıkar; dışarıdan yalnızca yönlendirdiğiniz portlardan erişilir. Köprü ve konteynerler için 9. bölüme bakın.
-- **Gerçek küme yok:** kesintisiz canlı taşıma ve sunucular arası kendiliğinden devralma yok. Birden çok sunucuyu tek
-  sayfada görmek ve çalışan konuğu taşımak için 10. bölüme bakın.
+- **Gerçek küme yok:** ortak küme durumu ve (çoğaltılan konuklar dışında) sunucular arası kendiliğinden devralma yok.
+  Birden çok sunucuyu tek sayfada görmek ve çalışan konuğu canlı taşımak için 10. bölüme bakın.
 - **Konuk güvenlik duvarı varsayılan olarak kapalıdır;** açmak için 12. bölüme bakın.
 
 ## 9. Köprü ağı ve LXC konteynerleri
@@ -745,8 +745,10 @@ TPM durumu disk şifreleme anahtarlarını korur). TPM'li konuğun TPM durumu al
 **Çalışan konuğu taşıma (Çalışırken Al):** eşte çalışan (ya da askıda duran) bir sanal makinede aynı düğme
 **Çalışırken Al** adını alır; komut aynıdır. Merkez konuğu eşte askıya aldırır, diskini ve bellek durumunu indirir
 ve konuğu burada **kaldığı yerden** sürdürür: konuk yeniden başlamaz, açık programları ve bağlantı durumu korunur.
-Bu kesintisiz bir canlı taşıma değildir: konuk, disk ve bellek kopyalanırken (disk boyutuyla orantılı bir süre)
-yanıt vermez. Kimlik merkezde boşsa konuk aynı kimlikle gelir (ağ kartının adresi değişmez). Koşullar: iki sunucu
+Bu yol kesintisiz değildir: konuk, disk ve bellek kopyalanırken (disk boyutuyla orantılı bir süre) yanıt vermez.
+Koşulları sağlayan konuklar için **Canlı Taşı** düğmesi (`redox peer migrate <eş> <kimlik>`) konuğu kapatmadan,
+onlarca milisaniyelik bir duraklamayla taşır; kaynak, hedefin `--migrate-ports` kapılarına (varsayılan 49152-49215)
+ulaşabilmelidir. Ayrıntılar ve kısıtlar için wiki'deki *Birden Çok Sunucu* sayfasına bakın. Kimlik merkezde boşsa konuk aynı kimlikle gelir (ağ kartının adresi değişmez). Koşullar: iki sunucu
 aynı RedoX sürümünü ve benzer işlemciyi kullanmalı, merkezde en az konuk kadar çekirdek ve bellek olmalı, konuğa
 sunucu aygıtı (USB/PCI) aktarılmamış ve konukta paylaşılan klasör bağlı olmamalı. Bellek durumu konuğun belleğinin
 tamamıdır; yalnızca yönetici token'ıyla indirilir. Taşıma başarısız olursa merkezde yarım kopya bırakılmaz ve konuk
@@ -909,8 +911,8 @@ sağlayıcıda zorunlu kılın). Yalnızca sahte bir sağlayıcıyla sınandı; 
 - **Artımlı yedek, değişen blok takibi kapalıyken yerde tasarruf eder, sürede etmez:** her yedekte disk baştan sona
   okunur. `--changed-block-tracking` ile çalışan konukta yalnızca değişen bloklar okunur. Dış hedefe yalnızca yeni
   parçalar gider.
-- **Yapılmayanlar:** LVM/ZFS depolama havuzları, kesintisiz (sıfır duraksamalı) canlı taşıma, sunucular arası
-  kendiliğinden devralma, canlı konsolda pano ve ses, işlemci ve belleği çalışırken ekleme, konteyner taşıma.
+- **Yapılmayanlar:** LVM/ZFS depolama havuzları, ortak durumlu küme, UEFI/TPM'li konukların canlı taşınması,
+  canlı konsolda pano ve ses, çalışan konuktan işlemci ve bellek çıkarma, konteynerlerin canlı taşınması.
 - **QEMU birimi** (`redox-qemu.service`) simülasyon birimine göre daha gevşek bir sandbox kullanır; nedenleri dosyada yazılı.
 - Bu kılavuzdaki systemd birimleri ve Caddy ayarı gerçek bir sunucuda denenmedi. Kod ve testler Linux'ta (WSL, Ubuntu) çalıştırıldı.
   QEMU sürücüsü NAT ağıyla gerçek KVM üzerinde denendi (çalışan konukta anlık görüntü, geri dönüş ve yedek dahil);

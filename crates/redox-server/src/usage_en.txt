@@ -8,7 +8,7 @@ Server:
               [--alert-webhook URL] [--alert-email FILE] [--alert-ntfy URL] [--alert-telegram FILE]
               [--peers FILE] [--offsite FILE] [--offsite-copy FILE]... [--oidc FILE] [--guestfish-bin PATH]
               [--backup-test-secs 60] [--backup-test-every DAYS[@HH:MM]] [--backup-report HH:MM] [--backup-age-days 7]
-              [--backup-mbps 0] [--backup-passphrase-file FILE] [--move-precopy] [--firewall] [--four-eyes] [--api-rate N]
+              [--backup-mbps 0] [--backup-passphrase-file FILE] [--move-precopy] [--migrate-ports 49152-49215] [--migrate-host ADDR] [--migrate-bind 0.0.0.0] [--firewall] [--four-eyes] [--api-rate N]
               [--incremental-backups [--changed-block-tracking]]
 
 Users (edits the user file directly; --users FILE or REDOX_USERS):
@@ -100,4 +100,5 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
         to upload: curl -T debian.iso -H 'Authorization: Bearer TOKEN' REDOX_URL/api/v1/media/debian.iso
   redox peer list                 (peer servers in the combined view)
   redox peer import <peer> <id>   (copies a stopped virtual machine from the peer to this server)
+  redox peer migrate <peer> <id>  (moves a running virtual machine from the peer to this server without stopping it)
   redox task list

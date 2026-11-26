@@ -17,6 +17,7 @@ mod backup_features;
 mod incremental;
 mod lifecycle;
 mod live;
+mod live_migrate;
 mod machine_move;
 mod media_ova;
 mod offsite_machine;
@@ -35,6 +36,8 @@ pub use incremental::*;
 pub use lifecycle::*;
 #[allow(unused_imports)]
 pub use live::*;
+#[allow(unused_imports)]
+pub use live_migrate::*;
 #[allow(unused_imports)]
 pub use machine_move::*;
 #[allow(unused_imports)]

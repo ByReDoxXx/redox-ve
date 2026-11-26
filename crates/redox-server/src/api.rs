@@ -82,6 +82,9 @@ pub fn routes() -> Router<AppState> {
         .route("/media/{name}", axum::routing::put(media_put).delete(media_delete))
         .route("/peers", get(peers))
         .route("/peers/{name}/import/{vmid}", post(peer_import))
+        .route("/peers/{name}/migrate/{vmid}", post(peer_migrate))
+        .route("/guests/{vmid}/migrate/prepare", post(migrate_prepare))
+        .route("/guests/{vmid}/migrate", post(migrate_out))
         .route("/pools", get(pools).post(pool_put))
         .route("/pools/{name}", delete_route(pool_delete))
         .route("/jobs", get(jobs).post(job_put))
@@ -136,6 +139,42 @@ async fn cluster(State(st): State<AppState>) -> Json<ClusterSummary> {
 async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
     st.import_from_peer(&name, vmid, &me.user)?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// Eş sunucudaki çalışan sanal makineyi kapatmadan bu sunucuya taşır; sonuç görev günlüğünde görünür.
+async fn peer_migrate(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
+    st.migrate_from_peer(&name, vmid, &me.user)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Canlı taşımanın kaynağı (hedef sunucu çağırır): konuk taşınabilir mi; hedefin açacağı donanım yerleşimi.
+async fn migrate_prepare(State(st): State<AppState>, Path(vmid): Path<VmId>) -> ApiResult<serde_json::Value> {
+    Ok(Json(json!({ "layout": st.migrate_prepare(vmid)? })))
+}
+
+#[derive(serde::Deserialize)]
+struct MigrateBody {
+    /// Hedefin adresi; verilmezse isteğin geldiği adres.
+    #[serde(default)]
+    host: Option<String>,
+    /// Hedefte disklerin ve belleğin beklendiği kapılar.
+    nbd_port: u16,
+    ram_port: u16,
+    /// Bu taşımanın bağlantılarını şifreleyen tek kullanımlık anahtar (64 onaltılık hane).
+    key: String,
+}
+
+/// Canlı taşımanın kaynağı (hedef sunucu çağırır): konuğu, taşımayı bekleyen hedefe gönderir. Görev döner.
+async fn migrate_out(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Extension(crate::ClientIp(ip)): Extension<crate::ClientIp>,
+    Path(vmid): Path<VmId>,
+    Json(body): Json<MigrateBody>,
+) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let host = body.host.as_deref().map(str::trim).filter(|h| !h.is_empty()).unwrap_or(&ip).to_string();
+    let task = st.migrate_out(vmid, &host, body.nbd_port, body.ram_port, &body.key, &me.user)?;
+    accepted(&st, task)
 }
 
 /// Askıdaki konuğun bellek durumunu indirir (başka sunucuya taşımak için). Konuğun belleğinin tamamıdır:

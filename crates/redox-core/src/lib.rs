@@ -25,6 +25,7 @@ pub use cluster::{Cluster, ClusterSummary};
 pub use driver::{BackupSize, BalloonStats, FsUsage, Hypervisor, Probe, Remote, SimDriver, SnapshotOp};
 pub use error::{Error, ErrorKind};
 pub use hw::Hardware;
+pub use ops::migrate::{migrate_blocker, valid_migrate_host, valid_migrate_key, MIGRATED_TAG};
 pub use jobs::{BackupJob, JobStep, MAX_JOBS};
 pub use pools::{Pool, PoolUsage, MAX_POOLS};
 pub use replicas::Replica;

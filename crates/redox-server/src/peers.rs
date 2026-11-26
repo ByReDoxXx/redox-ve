@@ -1,7 +1,7 @@
 //! Birleşik görünüm: başka RedoX VE sunucularının düğüm ve konuklarını salt okunur olarak toplar.
 //!
-//! Bu gerçek bir küme değildir: ortak durum, çoğunluk oylaması, canlı taşıma ya da yüksek
-//! erişilebilirlik yoktur. Her sunucu kendi konuklarını yönetir; burası yalnızca hepsini tek
+//! Bu gerçek bir küme değildir: ortak durum ve çoğunluk oylaması yoktur. (Çalışan konuk sunucular arasında
+//! canlı taşınabilir; bkz. `state/migrate.rs`.) Her sunucu kendi konuklarını yönetir; burası yalnızca hepsini tek
 //! sayfada gösterir ve yönetmek için ilgili sunucuya bağlantı verir.
 
 use std::sync::Mutex;
@@ -315,6 +315,40 @@ impl Peer {
                     Err(e) => format!("yedek indirilemedi: {e}"),
                 })
             }
+        }
+    }
+
+    /// Eşteki konuk canlı taşınabilir mi? Taşınabiliyorsa hedefin açması gereken donanım yerleşimi döner.
+    pub fn migrate_prepare(&self, vmid: redox_core::VmId) -> Result<u8, String> {
+        let reply = self.json("POST", &format!("/api/v1/guests/{vmid}/migrate/prepare"))?;
+        reply["layout"].as_u64().and_then(|layout| u8::try_from(layout).ok()).ok_or_else(|| "eş sunucu donanım yerleşimini bildirmedi (canlı taşımayı bilmeyen eski bir sürüm olabilir)".to_string())
+    }
+
+    /// Eşe, konuğu taşımayı bekleyen bu sunucuya göndermesini söyler ve görevin bitmesini bekler. `host`
+    /// verilmezse eş, isteğin geldiği adrese bağlanır.
+    pub fn migrate_and_wait(&self, vmid: redox_core::VmId, host: Option<&str>, nbd_port: u16, ram_port: u16, key: &str, timeout: Duration) -> Result<(), String> {
+        let body = serde_json::json!({ "host": host, "nbd_port": nbd_port, "ram_port": ram_port, "key": key });
+        let started: serde_json::Value = self
+            .request("POST", &format!("/api/v1/guests/{vmid}/migrate"), Duration::from_secs(30))
+            .send_json(body)
+            .map_err(peer_error)?
+            .into_json()
+            .map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())?;
+        let task = started["id"].as_u64().ok_or("eş sunucu taşıma görevini bildirmedi")?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let tasks = self.json("GET", "/api/v1/tasks")?;
+            if let Some(found) = tasks.as_array().and_then(|list| list.iter().find(|t| t["id"] == task)) {
+                match found["status"].as_str() {
+                    Some("ok") => return Ok(()),
+                    Some("failed") => return Err(format!("eş sunucu konuğu gönderemedi: {}", found["message"].as_str().unwrap_or("neden bildirilmedi"))),
+                    _ => {}
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("eş sunucudaki taşıma zamanında tamamlanmadı".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(500));
         }
     }
 

@@ -21,7 +21,13 @@ Buttons next to a peer's guest on the *Cluster* page:
   briefly during the backup); the copy arrives stopped. LXC must be installed on this server. **Tested with fake LXC
   tools; not tried with real LXC.**
 
-There is no zero-downtime live migration. For automatic failover see below.
+**Live migration:** a running VM can also be moved **without stopping it** (*Migrate Live* on the *Cluster* page, or `redox peer migrate <peer> <id>` on the target). The target starts the guest's QEMU paused and waiting, the source mirrors every disk to it while the guest keeps running, then migrates the memory; the guest pauses only for the last memory pages (tens of milliseconds in the tests) and continues on the target with the same ID. The guest's record and disks stay on the source, stopped and marked so that they do not start again by themselves; delete them once you are satisfied.
+
+The two QEMU processes connect to each other directly: the source must be able to reach the target on the ports given with `--migrate-ports` (default 49152-49215, two per migration; open them between the servers only). If the address the source sees the target under differs from where the request came from, set `--migrate-host` on the target. Both connections are encrypted with a one-time key (TLS with a pre-shared key) that travels over the management connection, so use `https` between the servers.
+
+Not every guest can be moved live: UEFI or virtual TPM, an attached installation image, a cloud-init drive, shared folders, passed-through host devices and disks that depend on a template or backup block it (the message says which); the same ID must be free on the target, and both servers need the same QEMU version and a compatible CPU model. Tested on real QEMU 10.2 with a Linux guest on one machine (two servers, loopback network); not tried between two physical machines, with a Windows guest, or with large and busy guests.
+
+For automatic failover see below.
 
 ## Replication (standby copy)
 
@@ -95,9 +101,8 @@ SSDs). The source server still reads the whole disk during the pause (for the ba
 fast network there is no gain and the pause may even get longer; that is why the option is off by default. If the
 source server stores its backups encrypted, pre-copy is not possible and the move continues the ordinary way.
 
-This is **not** zero-downtime live migration: the guest still pauses, only for less time. There is no true live
-migration that transfers memory pages while the guest runs. Tested with fake QEMU; the pause was not measured with
-real QEMU.
+This is **not** live migration: the guest still pauses, only for less time. For guests that qualify, *Migrate Live*
+(above) is the better choice. Pre-copy was tested with fake QEMU; its pause was not measured with real QEMU.
 
 ## Failing back after a failover
 

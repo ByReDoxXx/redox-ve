@@ -198,3 +198,95 @@ pub(super) fn real_qemu_adds_memory_and_keeps_it_across_suspend() {
     assert_eq!(status(&d, &g), GuestStatus::Stopped);
     let _ = std::fs::remove_dir_all(&real.dir);
 }
+
+/// Canlı taşıma, sürücünün kendi koduyla gerçek QEMU'da: aynı makinede iki veri dizini iki sunucunun yerini
+/// tutar. Konuk taşıma boyunca diske yazar; hedefte belleği, diskleri ve sonradan eklenmiş çekirdeği ile
+/// belleğiyle kaldığı yerden sürer. Yanlış anahtarla gelen taşıma reddedilir ve konuk kaynakta çalışmayı sürdürür.
+#[test]
+pub(super) fn real_qemu_migrates_a_running_guest_to_another_server() {
+    let (Some(a), Some(b)) = (real(), real()) else { return };
+    let (da, db) = (QemuDriver::new(a.cfg.clone()).unwrap(), QemuDriver::new(b.cfg.clone()).unwrap());
+    let mut g = guest(&a.cfg, "gercek-tasima");
+    (g.cores, g.mem_total_mb, g.hw.max_cores, g.hw.max_mem_mb, g.hw.balloon) = (2, 1024, 4, 2048, true);
+    g.hw.disks.push(redox_core::hw::ExtraDisk { id: 1, size_gb: 1, serial: 1 });
+    da.create(&g).unwrap();
+    da.add_disk(&g, 1, 1).unwrap();
+    assert_eq!(da.migrate_layout(&g), None, "kapalı konuğun yerleşimi sorulmaz");
+    da.apply(&g, Action::Start).unwrap();
+    a.boot();
+    a.ask("depmod -a 2>/dev/null; modprobe virtio_pci 2>/dev/null; modprobe virtio_blk 2>/dev/null; mount -t devtmpfs dev /dev 2>/dev/null; sleep 1");
+    assert_eq!(a.ask("ls /dev/vda /dev/vdb | wc -w"), ["2"], "konuk iki diskini de görmeli");
+    // Çalışırken eklenen çekirdek ve bellek de konukla birlikte gider.
+    da.hot_add_core(&g).unwrap();
+    g.cores = 3;
+    da.hot_add_memory(&g, 512).unwrap();
+    g.mem_total_mb += 512;
+    g.hw.dimms.push(512);
+    std::thread::sleep(Duration::from_secs(3));
+    let memory = a.mem_kb();
+    a.ask("echo birinci-disk | dd of=/dev/vda bs=512 seek=10 conv=notrunc 2>/dev/null; echo ikinci-disk | dd of=/dev/vdb bs=512 seek=7 conv=notrunc 2>/dev/null; sync; echo isaret-4471 > /tmp/isaret");
+    a.ask("(i=0; while true; do i=$((i+1)); echo sayac-$i | dd of=/dev/vda bs=512 seek=2000 conv=notrunc 2>/dev/null; echo $i > /tmp/sayac; done) >/dev/null 2>&1 & true");
+
+    // Hedef: aynı kayıt, boş diskler.
+    db.create(&g).unwrap();
+    db.add_disk(&g, 1, 1).unwrap();
+    let layout = da.migrate_layout(&g).expect("çalışan konuğun yerleşimi");
+    let (nbd, ram) = (49170 + (std::process::id() % 20) as u16 * 2, 49171 + (std::process::id() % 20) as u16 * 2);
+    let key = "5a".repeat(32);
+
+    // Yanlış anahtar: hedef bağlantıyı kabul etmez; konuk kaynakta çalışmayı sürdürür, hedefte iz kalmaz.
+    db.migrate_listen(&g, layout, "127.0.0.1", nbd, ram, &key).unwrap();
+    assert_eq!(status(&db, &g), GuestStatus::Paused, "hedef taşımayı duraklatılmış bekler");
+    let refused = da.migrate_send(&g, "127.0.0.1", nbd, ram, &"6b".repeat(32)).unwrap_err();
+    assert!(refused.contains("bağlanılamadı"), "{refused}");
+    assert_eq!(status(&da, &g), GuestStatus::Running);
+    let before = a.ask("cat /tmp/sayac");
+    std::thread::sleep(Duration::from_secs(1));
+    assert_ne!(a.ask("cat /tmp/sayac"), before, "konuk kaynakta çalışmayı sürdürmeli");
+    db.migrate_abort(&g);
+    assert_eq!(status(&db, &g), GuestStatus::Stopped);
+    // Kimse dinlemiyorken de konuk yerinde kalır.
+    assert!(da.migrate_send(&g, "127.0.0.1", nbd, ram, &key).unwrap_err().contains("bağlanılamadı"));
+    assert_eq!(status(&da, &g), GuestStatus::Running);
+
+    // Doğru anahtarla taşıma.
+    db.migrate_listen(&g, layout, "127.0.0.1", nbd, ram, &key).unwrap();
+    assert!(db.migrate_finish(&g).unwrap_err().contains("tam ulaşmamış"), "bellek gelmeden konuk sürdürülmez");
+    let downtime = da.migrate_send(&g, "127.0.0.1", nbd, ram, &key).unwrap();
+    eprintln!("canlı taşıma: duraklama {downtime} ms");
+    assert!(downtime < 5000, "duraklama kısa olmalı: {downtime} ms");
+    assert_eq!(status(&da, &g), GuestStatus::Stopped, "konuk kaynakta kapanmış olmalı");
+    db.migrate_finish(&g).unwrap();
+    assert_eq!(status(&db, &g), GuestStatus::Running);
+
+    // Hedefte: bellek, çalışan döngü, çekirdekler ve diskler.
+    assert_eq!(b.ask("cat /tmp/isaret"), ["isaret-4471"], "bellek durumu korunmalı");
+    let first: u64 = b.ask("cat /tmp/sayac").pop().unwrap().parse().unwrap();
+    std::thread::sleep(Duration::from_secs(1));
+    let second: u64 = b.ask("cat /tmp/sayac").pop().unwrap().parse().unwrap();
+    assert!(second > first, "konuk hedefte çalışmayı sürdürmeli: {first} -> {second}");
+    assert_eq!(b.cpus().0, "0-2");
+    assert_eq!(b.mem_kb(), memory, "konuk aynı bellekle sürmeli");
+    b.ask("kill %1 2>/dev/null; sleep 1; sync");
+    assert_eq!(b.ask("dd if=/dev/vda bs=512 skip=10 count=1 2>/dev/null | head -c 12; echo").pop().as_deref(), Some("birinci-disk"));
+    assert_eq!(b.ask("dd if=/dev/vdb bs=512 skip=7 count=1 2>/dev/null | head -c 11; echo").pop().as_deref(), Some("ikinci-disk"));
+    let last: u64 = b.ask("cat /tmp/sayac").pop().unwrap().parse().unwrap();
+    let on_disk = b.ask("dd if=/dev/vda bs=512 skip=2000 count=1 2>/dev/null | head -n 1").pop().unwrap();
+    let written: u64 = on_disk.trim_start_matches("sayac-").parse().unwrap();
+    assert!(written >= second && written <= last + 1, "diskteki son yazı konuğun saydığıyla tutmalı: {on_disk}, sayaç {last}");
+    // Taşınan konuk hedefte de büyütülebilir.
+    db.hot_add_core(&g).unwrap();
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(b.cpus().0, "0-3");
+
+    db.apply(&g, Action::Stop).unwrap();
+    assert_eq!(status(&db, &g), GuestStatus::Stopped);
+    // Hedefin disk dosyası, konuğun taşıma sırasında yazdığını içerir.
+    let raw = b.dir.join("disk0.raw");
+    assert!(std::process::Command::new(&b.cfg.qemu_img_bin).args(["convert", "-O", "raw"]).arg(b.cfg.disk_of(&g)).arg(&raw).status().unwrap().success());
+    let bytes = std::fs::read(&raw).unwrap();
+    assert_eq!(&bytes[10 * 512..10 * 512 + 12], b"birinci-disk");
+    assert!(bytes[2000 * 512..2000 * 512 + 16].starts_with(format!("sayac-{written}").as_bytes()));
+    let _ = std::fs::remove_dir_all(&a.dir);
+    let _ = std::fs::remove_dir_all(&b.dir);
+}
