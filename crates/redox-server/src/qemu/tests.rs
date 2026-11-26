@@ -449,7 +449,16 @@ fn free_core_slots_are_declared_only_when_a_limit_is_set() {
     let mut g = guest(None);
     assert!(args(&cfg(), &g).join(" ").contains(" -smp 2 -m "), "sınır yokken eski komut satırı aynen kalır");
     g.hw.max_cores = 6;
-    assert!(args(&cfg(), &g).join(" ").contains(" -smp 2,maxcpus=6 -m "));
+    let with_slots = args(&cfg(), &g).join(" ");
+    assert!(with_slots.contains(" -smp 2,maxcpus=6 -m "));
+    // Disk kuyrukları çekirdek sayısına değil üst sınıra bağlıdır: çekirdek eklenince aygıt değişmez.
+    assert!(with_slots.contains(" -global virtio-blk-pci.num-queues=6 "), "{with_slots}");
+    assert!(!args(&cfg(), &guest(None)).join(" ").contains("num-queues"));
+    g.cores = 4;
+    assert!(args(&cfg(), &g).join(" ").contains(" -global virtio-blk-pci.num-queues=6 "));
+    g.hw.max_cores = 64;
+    assert!(args(&cfg(), &g).join(" ").contains(" -global virtio-blk-pci.num-queues=16 "));
+    g.hw.max_cores = 6;
     // Sınıra ulaşmış konuk da aynı düzenle açılır (askıdan dönüş aynı makineyi bulsun).
     g.cores = 6;
     assert!(args(&cfg(), &g).join(" ").contains(" -smp 6,maxcpus=6 -m "));

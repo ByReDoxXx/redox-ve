@@ -117,8 +117,15 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     }
     // Çalışırken çekirdek ekleme: konuk boş çekirdek yuvalarıyla açılır. Yuva sayısı konuğun kaydındadır;
     // böylece askıya alınan ya da başka sunucuya geçen konuk aynı düzenle döner.
-    let smp = if g.hw.max_cores >= g.cores && g.hw.max_cores > 0 { format!("{},maxcpus={}", g.cores, g.hw.max_cores) } else { g.cores.to_string() };
+    let slots = g.hw.max_cores >= g.cores && g.hw.max_cores > 0;
+    let smp = if slots { format!("{},maxcpus={}", g.cores, g.hw.max_cores) } else { g.cores.to_string() };
     push(&["-smp", &smp, "-m", &format!("{}M", g.mem_total_mb)]);
+    if slots {
+        // QEMU, disk aygıtının kuyruk sayısını açılıştaki çekirdek sayısından türetir. Çekirdek eklenmiş konuk
+        // askıdan yeni sayıyla döndüğünde aygıt değişmiş olur ve bellek durumu yüklenmez; bu yüzden sayı,
+        // çalışırken değişmeyen üst sınıra bağlanır (çalışırken takılan diskler de aynı değeri alır).
+        push(&["-global", &format!("virtio-blk-pci.num-queues={}", core_queues(g.hw.max_cores))]);
+    }
     // Disk hız sınırı her diske ayrı uygulanır (okuma ve yazma toplamı).
     let throttle = disk_throttle(g);
     push(&["-drive", &format!("file={},if=virtio,format=qcow2{throttle}", opt(&cfg.disk_of(g)))]);
@@ -227,6 +234,11 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         push(&["-device", "virtio-balloon-pci,id=balloon0"]);
     }
     a
+}
+
+/// Çekirdek yuvalı konukta disk aygıtlarının kuyruk sayısı.
+pub fn core_queues(max_cores: u32) -> u32 {
+    max_cores.clamp(1, 16)
 }
 
 /// Makine durumu arşivindeki TPM dosyasının adı: yol ayırıcısız, gizli olmayan, sade bir dosya adı.

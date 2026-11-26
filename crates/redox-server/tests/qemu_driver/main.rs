@@ -22,6 +22,7 @@ mod media_ova;
 mod offsite_machine;
 mod peers;
 mod platform;
+mod real_qemu;
 mod suspend_hotplug_net;
 
 #[allow(unused_imports)]
@@ -44,6 +45,8 @@ pub use offsite_machine::*;
 pub use peers::*;
 #[allow(unused_imports)]
 pub use platform::*;
+#[allow(unused_imports)]
+pub use real_qemu::*;
 #[allow(unused_imports)]
 pub use suspend_hotplug_net::*;
 

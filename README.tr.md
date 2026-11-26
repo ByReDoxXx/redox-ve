@@ -429,9 +429,14 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 521, Windows'ta 448 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 522, Windows'ta 448 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
+
+Sürücü testlerinden biri **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
+içinden doğrular. İkililer gösterilmedikçe atlanır:
+`REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (başlangıç dosya sisteminde
+`/bin/sh` kabuğu bulunan herhangi bir çekirdek; örneğin bir Debian kurucusunun `vmlinuz` ve `initrd.gz` dosyaları).
 
 Test takımının dışında QEMU sürücüsü, KVM'li gerçek QEMU 10.2 üzerinde denendi: anlık görüntüler, tam ve
 artımlı yedekler, değişen blok takibi, dış kopyalar, askıya alma ve dönüş, çalışırken takma, VLAN ve hız
@@ -456,7 +461,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
   Kesintisiz bir canlı taşıma değildir.
 - Kendiliğinden devralma yalnızca çoğaltılan konuklar içindir ve bir hakem sunucu ister; kaynağı zorla kapatma (fencing) ve ortak durumlu küme yoktur. Gerçek bir kesintide denenmedi.
 - Depolama her zaman imaj dosyalarının durduğu bir dizindir. Dizin ZFS, LVM ya da NFS üzerinde olabilir (tanınır ve gösterilir), ama yerleşik zvol ya da mantıksal birim havuzu yönetimi yoktur.
-- Çalışan sanal makineye çekirdek eklenir ama çıkarılmaz; eklenebilecek sayı, konuk kapalıyken verilen "en fazla çekirdek" değeriyle sınırlıdır. Bellek, konuğun açıldığı değerin üstüne çıkarılamaz (balon yalnızca düşürür ve geri verir). Çekirdek ekleme gerçek QEMU'da bir Linux konukla, ardından askıya alıp geri dönerek denendi; Windows konukla denenmedi, yeni çekirdeklerin konuk ajanıyla etkinleştirilmesi yalnızca sahte QEMU'ya karşı sınandı.
+- Çalışan sanal makineye çekirdek eklenir ama çıkarılmaz; eklenebilecek sayı, konuk kapalıyken verilen "en fazla çekirdek" değeriyle sınırlıdır. Bellek, konuğun açıldığı değerin üstüne çıkarılamaz (balon yalnızca düşürür ve geri verir). Çekirdek ekleme, sürücünün kendi koduyla gerçek QEMU'da bir Linux konukla sınanır: çalışırken takılan disk, ardından askıya alma ve geri dönme dahil. Windows konukla denenmedi, yeni çekirdeklerin konuk ajanıyla etkinleştirilmesi yalnızca sahte QEMU'ya karşı sınandı.
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
 - Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).
 - Arayüz yalnızca Türkçe ve İngilizcedir.

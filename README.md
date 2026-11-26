@@ -427,9 +427,14 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-521 tests pass on Linux and 448 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+522 tests pass on Linux and 448 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
+
+One driver test runs against **real QEMU** with a Linux kernel as the guest and checks the result from
+inside the guest. It is skipped unless you point it at the binaries:
+`REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (any kernel whose
+initial file system has a shell at `/bin/sh`, such as a Debian installer's `vmlinuz` and `initrd.gz`).
 
 Beyond the test suite, the QEMU driver has been exercised against real QEMU 10.2 with KVM: snapshots,
 full and incremental backups, changed-block tracking, off-site copies, suspend and resume, hot-plug,
@@ -454,7 +459,7 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
   zero-downtime live migration.
 - Automatic failover exists only for replicated guests and needs a witness server; there is no fencing and no shared-state cluster. It has not been tried in a real outage.
 - Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
-- Cores can be added to a running VM but not removed, and only up to the "maximum cores" set while it was stopped. Memory cannot be raised above what the VM started with (the balloon only lowers and restores it). Core hot-add was tried on real QEMU with a Linux guest, including suspend and resume afterwards; it was not tried with a Windows guest, and bringing the new cores online through the guest agent was only tested against the fake QEMU.
+- Cores can be added to a running VM but not removed, and only up to the "maximum cores" set while it was stopped. Memory cannot be raised above what the VM started with (the balloon only lowers and restores it). Core hot-add is tested with the driver's own code on real QEMU with a Linux guest, including a disk attached while running and suspend and resume afterwards; it was not tried with a Windows guest, and bringing the new cores online through the guest agent was only tested against the fake QEMU.
 - Containers cannot be moved to another storage or to another server.
 - The live console has no clipboard or audio (text can be typed in as keystrokes).
 - The interface is in Turkish and English only.
