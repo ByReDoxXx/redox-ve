@@ -66,6 +66,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox vm move <kimlik> <depolama>      (kapalı sanal makinenin disklerini başka depolama alanına taşır)
   redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
   redox vm cores <kimlik> <sayı>         (çalışan konuğu <sayı> çekirdeğe çıkarır; önce kapalıyken max-cores=<en fazla> verin)
+  redox vm memory <kimlik> <MB>          (çalışan konuğun belleğini <MB> değerine çıkarır; önce kapalıyken max-memory=<en fazla> verin)
   redox replica list | add <eş> <kimlik> [dakika] | run <eş> <kimlik> | remove <eş> <kimlik>
   redox replica failover <eş> <kimlik> <dakika|off>    # kaynak ölünce yedek kopyayı hakem onayıyla başlat
   redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,...] [--unit]   # sunucular arası ortak ağın kurulum komutlarını (ya da kalıcı systemd birimini) yazar
@@ -195,6 +196,7 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             "ci-dns" => ("ci_dns", Value::from(value)),
             "cores" => ("cores", number()?),
             "max-cores" => ("max_cores", number()?),
+            "max-memory" => ("max_memory_mb", number()?),
             "memory" => ("memory_mb", number()?),
             "backup-keep" => ("backup_keep", number()?),
             "rpo" => ("rpo_hours", number()?),
@@ -244,7 +246,7 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             }
             _ => {
                 return Err(format!(
-                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores max-cores memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
+                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores max-cores memory max-memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
                 ))
             }
         };
@@ -401,6 +403,12 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             format!("/guests/{}/cores", vmid(id)?),
             Some(json!({ "cores": cores.parse::<u32>().map_err(|_| format!("çekirdek sayısı bir sayı olmalı: {cores}"))? })),
             View::Done("çekirdek eklendi"),
+        ),
+        ["vm", "memory", id, mb] => req(
+            "POST",
+            format!("/guests/{}/memory", vmid(id)?),
+            Some(json!({ "memory_mb": mb.parse::<u64>().map_err(|_| format!("bellek bir sayı olmalı (MB): {mb}"))? })),
+            View::Done("bellek eklendi"),
         ),
         ["vm", "balloon", id, "auto", min] => req(
             "POST",
@@ -810,6 +818,10 @@ mod tests {
         let cores = parse(&args("vm cores 103 6")).unwrap();
         assert_eq!((cores.method, cores.path.as_str(), cores.body.unwrap()), ("POST", "/guests/103/cores", json!({"cores": 6})));
         assert!(parse(&args("vm cores 103 cok")).unwrap_err().contains("bir sayı olmalı"));
+        assert_eq!(patch_body(&["memory=2048", "max-memory=8192"]).unwrap(), json!({"memory_mb": 2048, "max_memory_mb": 8192}));
+        let memory = parse(&args("vm memory 103 4096")).unwrap();
+        assert_eq!((memory.method, memory.path.as_str(), memory.body.unwrap()), ("POST", "/guests/103/memory", json!({"memory_mb": 4096})));
+        assert!(parse(&args("vm memory 103 cok")).unwrap_err().contains("bir sayı olmalı"));
         assert_eq!(patch_body(&["rpo=24"]).unwrap(), json!({"rpo_hours": 24}));
         assert_eq!(patch_body(&["test-port=22", "test-cmd=/bin/true"]).unwrap(), json!({"test_port": 22, "test_cmd": "/bin/true"}));
         assert_eq!(patch_body(&["cpu=host"]).unwrap(), json!({"cpu_type": ""}), "host boş değerle gider");

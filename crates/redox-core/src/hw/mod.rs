@@ -60,6 +60,13 @@ pub struct Hardware {
     /// Çalışırken çıkılabilecek en fazla çekirdek sayısı; 0 ise çalışan konuğa çekirdek eklenemez. Konuk bu
     /// kadar çekirdek yuvasıyla açılır, boş yuvalar çalışırken doldurulur.
     pub max_cores: u32,
+    /// Çalışırken çıkılabilecek en fazla bellek (MB); 0 ise çalışan konuğa bellek eklenemez. Konuk boş bellek
+    /// yuvalarıyla açılır, eklenen her parça bir yuvaya takılır.
+    pub max_mem_mb: u64,
+    /// Bu açılışta çalışırken eklenen bellek parçaları (MB), eklenme sırasıyla. Konuğun toplam belleğine
+    /// dahildir; askıya alınan konuk aynı parçalarla döner. Konuk sıfırdan açılırken liste boşaltılır:
+    /// eklenen bellek artık açılış belleğinin parçasıdır.
+    pub dimms: Vec<u64>,
     /// Bellek balonu aygıtı takılı mı? Takılıysa konuğun belleği çalışırken küçültülüp büyütülebilir.
     pub balloon: bool,
     /// Balonla hedeflenen bellek (MB); 0 ise konuk belleğinin tamamını kullanır.

@@ -155,3 +155,59 @@ pub(super) async fn cores_are_added_to_a_running_vm_from_the_hardware_tab() {
     assert!(post_ok(&sim, "/guests/103/cores", "cores=9").await.contains("error="));
     assert_eq!(sim_state.snapshot().guest(103).unwrap().cores, 8);
 }
+
+// ---------- Çalışırken bellek ekleme ----------
+
+#[tokio::test]
+pub(super) async fn memory_is_added_to_a_running_vm_from_the_hardware_tab() {
+    let (app, state) = setup_real();
+    let mem = |state: &AppState| state.snapshot().guest(103).unwrap().mem_total_mb;
+    let run = |state: &AppState, status| state.mutate(|c| c.guest_mut_for_import(103).unwrap().status = status);
+    let base = "part=donanim&cores=2&memory_mb=16384&iso=&bridge=vmbr0&forwards=&firmware=bios&nics=";
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains(r#"<input id="max_memory_mb" form="hw" name="max_memory_mb""#) && !tab.contains("Çalışırken bellek"), "sınır yokken ekleme formu yok");
+    assert!(!page(&app, "/guests/202?tab=donanim").await.contains(r#"name="max_memory_mb""#), "konteynerde yok");
+
+    // Sınır bellekten küçük olamaz.
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&max_memory_mb=8192")).await.contains("error="));
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&max_memory_mb=20480")).await.contains("notice="));
+    assert_eq!((mem(&state), state.snapshot().guest(103).unwrap().hw.max_mem_mb), (16384, 20480));
+    assert!(post_ok(&app, "/guests/103/memory", "memory_mb=17408").await.contains("error="), "kapalı konuğa çalışırken eklenmez");
+
+    run(&state, GuestStatus::Running);
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains(r#"action="/guests/103/memory""#) && tab.contains("16384 / 20480 MB") && tab.contains(r#"name="memory_mb" type="text" inputmode="numeric" value="17408""#), "{tab}");
+
+    // API: konuğun yeni belleği kullandığının doğrulanıp doğrulanmadığı da döner.
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/memory", &json!({ "memory_mb": 17408 }))).await;
+    assert_eq!((status, v["online"].as_bool(), mem(&state)), (StatusCode::OK, Some(true), 17408), "{v}");
+    assert_eq!(state.snapshot().guest(103).unwrap().hw.dimms, vec![1024]);
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/memory", &json!({ "memory_mb": 99999 }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+
+    assert!(post_ok(&app, "/guests/103/memory", "memory_mb=17536").await.contains("notice="));
+    assert_eq!((mem(&state), state.snapshot().tasks[0].command.as_str()), (17536, "vm memory 103 17536"));
+    for bad in ["memory_mb=17536", "memory_mb=16384", "memory_mb=17600", "memory_mb=30000", "memory_mb=cok"] {
+        assert!(post_ok(&app, "/guests/103/memory", bad).await.contains("error="), "{bad}");
+    }
+    assert_eq!(mem(&state), 17536, "reddedilen istek kaydı değiştirmez");
+
+    // Sürücü ekleyemezse kayıt değişmez.
+    assert!(post_ok(&app, "/guests/103/memory", "memory_mb=18560").await.contains("error="));
+    let after = state.snapshot();
+    assert_eq!((after.guest(103).unwrap().mem_total_mb, after.guest(103).unwrap().hw.dimms.len(), after.tasks[0].status), (17536, 2, TaskStatus::Failed));
+
+    // İzleyiciye ve operatöre açık değildir.
+    let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, "/guests/103/memory"), "memory_mb=18560")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(redox_server::operator_target("/guests/103/memory"), None);
+
+    // Çalışırken takmayı bilmeyen sürücü (benzetim) reddeder.
+    let (sim, sim_state) = setup();
+    sim_state.mutate(|c| {
+        let g = c.guest_mut_for_import(103).unwrap();
+        (g.hw.max_mem_mb, g.status) = (32768, GuestStatus::Running);
+    });
+    assert!(post_ok(&sim, "/guests/103/memory", "memory_mb=17408").await.contains("error="));
+    assert_eq!(sim_state.snapshot().guest(103).unwrap().mem_total_mb, 16384);
+}

@@ -85,6 +85,13 @@ impl Real {
         self.ask("mount -t proc proc /proc 2>/dev/null; mount -t sysfs sys /sys 2>/dev/null");
     }
 
+    /// Konuğun kullandığı bellek (kB, `/proc/meminfo`). Kendiliğinden etkinleşmemiş bloklar önce etkinleştirilir.
+    pub fn mem_kb(&self) -> u64 {
+        self.ask("for m in /sys/devices/system/memory/memory*/state; do grep -q offline $m && echo online > $m; done");
+        let line = self.ask("grep MemTotal /proc/meminfo").pop().unwrap_or_default();
+        line.split_whitespace().nth(1).and_then(|kb| kb.parse().ok()).unwrap_or_else(|| panic!("bellek okunamadı: {line}"))
+    }
+
     /// Konuğun gördüğü `(takılı, etkin)` çekirdek aralıkları.
     pub fn cpus(&self) -> (String, String) {
         let read = |file: &str| self.ask(&format!("cat /sys/devices/system/cpu/{file}")).pop().unwrap_or_default();
@@ -132,6 +139,61 @@ pub(super) fn real_qemu_adds_cores_and_keeps_them_across_suspend() {
     assert_eq!(real.cpus().0, "0-3");
     assert!(d.hot_add_core(&g).unwrap_err().contains("boş çekirdek yuvası kalmadı"));
 
+    d.apply(&g, Action::Stop).unwrap();
+    assert_eq!(status(&d, &g), GuestStatus::Stopped);
+    let _ = std::fs::remove_dir_all(&real.dir);
+}
+
+/// Bellek ekleme, sürücünün kendi koduyla gerçek QEMU'da: konuk eklenen belleği kullanır, askıya alınıp aynı
+/// bellekle döner, döndükten sonra yeniden bellek alır; sıfırdan açılışta eklenen bellek açılış belleğidir.
+#[test]
+pub(super) fn real_qemu_adds_memory_and_keeps_it_across_suspend() {
+    let Some(real) = real() else { return };
+    let d = QemuDriver::new(real.cfg.clone()).unwrap();
+    let mut g = guest(&real.cfg, "gercek-bellek");
+    (g.cores, g.mem_total_mb, g.hw.max_cores, g.hw.max_mem_mb, g.hw.balloon) = (2, 1024, 4, 4096, true);
+    let add = |g: &mut Guest, mb: u64| {
+        d.hot_add_memory(g, mb).unwrap();
+        g.mem_total_mb += mb;
+        g.hw.dimms.push(mb);
+        std::thread::sleep(Duration::from_secs(3));
+    };
+    d.create(&g).unwrap();
+    d.apply(&g, Action::Start).unwrap();
+    real.boot();
+    let first = real.mem_kb();
+
+    add(&mut g, 512);
+    assert_eq!(real.mem_kb(), first + 512 * 1024, "konuk eklenen belleğin tamamını kullanmalı");
+    assert!(!d.online_memory(&g), "konukta ajan yok: sürücü doğrulayamadığını bildirmeli");
+    // Bellek düğümü tanımlı makinede çekirdek yuvaları da çalışır.
+    d.hot_add_core(&g).unwrap();
+    g.cores = 3;
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(real.cpus().0, "0-2");
+    add(&mut g, 256);
+    assert_eq!(real.mem_kb(), first + 768 * 1024);
+    let over = d.hot_add_memory(&g, 4096).unwrap_err();
+    assert!(over.contains("bellek konuğa eklenemedi"), "{over}");
+
+    real.ask("echo isaret-5512 > /tmp/isaret");
+    d.suspend(&g).unwrap();
+    d.apply(&g, Action::Start).unwrap();
+    assert_eq!(real.ask("cat /tmp/isaret"), ["isaret-5512"], "bellek durumu korunmalı");
+    assert_eq!(real.mem_kb(), first + 768 * 1024, "konuk aynı bellekle dönmeli");
+    assert_eq!(real.cpus().0, "0-2");
+    add(&mut g, 128);
+    assert_eq!(real.mem_kb(), first + 896 * 1024, "döndükten sonra da eklenir");
+    d.apply(&g, Action::Stop).unwrap();
+
+    // Sıfırdan açılış: parçalar açılış belleğine katılmıştır, yuvalar yeniden boştur.
+    g.hw.dimms.clear();
+    d.apply(&g, Action::Start).unwrap();
+    real.boot();
+    let cold = real.mem_kb();
+    assert!(cold.abs_diff(first + 896 * 1024) < 64 * 1024, "sıfırdan açılan konuk toplam belleği görmeli: {cold} kB");
+    add(&mut g, 128);
+    assert_eq!(real.mem_kb(), cold + 128 * 1024);
     d.apply(&g, Action::Stop).unwrap();
     assert_eq!(status(&d, &g), GuestStatus::Stopped);
     let _ = std::fs::remove_dir_all(&real.dir);

@@ -490,3 +490,71 @@ pub(super) fn cores_are_hot_added_into_free_slots_and_brought_online_by_the_agen
     d.apply(&g, Action::Stop).unwrap();
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+pub(super) fn memory_is_hot_added_as_parts_that_come_back_after_suspend() {
+    if !python_available() {
+        return;
+    }
+    let (cfg, dir) = config();
+    let d = QemuDriver::new(cfg.clone()).unwrap();
+    let mut g = guest(&cfg, "bellek");
+    d.create(&g).unwrap();
+    let (base, vmid) = (g.mem_total_mb, g.vmid);
+    let file = |suffix: &str| std::fs::read_to_string(format!("{}{suffix}", cfg.qmp_path(vmid).display())).unwrap_or_default();
+    let added = |g: &mut Guest, mb: u64| {
+        g.mem_total_mb += mb;
+        g.hw.dimms.push(mb);
+    };
+
+    assert!(d.hot_add_memory(&g, 128).unwrap_err().contains("çalışmıyor"), "kapalı konuğa eklenmez");
+    // Boş yuvasız açılmış konuk: bir kez kapatıp açmak gerekir.
+    d.apply(&g, Action::Start).unwrap();
+    assert!(d.hot_add_memory(&g, 128).unwrap_err().contains("bir kez kapatıp açın"));
+    d.apply(&g, Action::Stop).unwrap();
+
+    g.hw.max_mem_mb = base + 512;
+    let slots = format!("-m\n{base}M,slots=8,maxmem={}M\n", base + 512);
+    d.apply(&g, Action::Start).unwrap();
+    assert!(file(".args").contains(&slots), "{}", file(".args"));
+    d.hot_add_memory(&g, 128).unwrap();
+    added(&mut g, 128);
+    assert!(!d.online_memory(&g), "ajan yokken doğrulanamaz");
+    d.hot_add_memory(&g, 256).unwrap();
+    added(&mut g, 256);
+    assert!(file(".hot").contains("object-add memory-backend-ram xmem0 128\ndevice_add pc-dimm xdimm0 xmem0 slot 0\nobject-add memory-backend-ram xmem1 256\ndevice_add pc-dimm xdimm1 xmem1 slot 1\n"), "{}", file(".hot"));
+    // Konuk reddederse tanıtılan bellek geri alınır.
+    let over = d.hot_add_memory(&g, 512).unwrap_err();
+    assert!(over.contains("bellek konuğa eklenemedi") && over.contains("not enough space"), "{over}");
+    assert!(file(".hot").ends_with("object-add memory-backend-ram xmem2 512\nobject-del xmem2\n"), "{}", file(".hot"));
+
+    // Askıdan dönüş: açılış belleği aynı, parçalar komut satırında aynı sırayla.
+    d.suspend(&g).unwrap();
+    d.apply(&g, Action::Start).unwrap();
+    let resumed = file(".args");
+    assert!(resumed.contains(&slots) && resumed.contains("memory-backend-ram,id=xmem0,size=128M\n-device\npc-dimm,id=xdimm0,memdev=xmem0,slot=0\n") && resumed.contains("memory-backend-ram,id=xmem1,size=256M\n-device\npc-dimm,id=xdimm1,memdev=xmem1,slot=1\n"), "{resumed}");
+    // Dönen konukta dolu yuvaya yeniden takılmaz; sıradaki yuva kullanılır.
+    d.hot_add_memory(&g, 128).unwrap();
+    added(&mut g, 128);
+    assert!(file(".hot").ends_with("device_add pc-dimm xdimm2 xmem2 slot 2\n"), "{}", file(".hot"));
+    d.apply(&g, Action::Stop).unwrap();
+
+    // Sıfırdan açılışta (kayıttaki parçalar boşaltılmıştır) eklenen bellek açılış belleğidir.
+    g.hw.dimms.clear();
+    std::fs::write(cfg.qmp_path(g.vmid).parent().unwrap().join("ajan-var"), b"").unwrap();
+    d.apply(&g, Action::Start).unwrap();
+    let cold = file(".args");
+    assert!(cold.contains(&format!("-m\n{}M\n", base + 512)) && !cold.contains("pc-dimm") && !cold.contains("maxmem"), "{cold}");
+    d.apply(&g, Action::Stop).unwrap();
+
+    // Ajan varsa yeni bellek konukta etkinleştirilir (yalnızca kapalı görünen bloklar).
+    g.hw.max_mem_mb = base + 1024;
+    d.apply(&g, Action::Start).unwrap();
+    d.hot_add_memory(&g, 128).unwrap();
+    added(&mut g, 128);
+    assert!(d.online_memory(&g));
+    assert_eq!(std::fs::read_to_string(format!("{}.mem", cfg.qga_path(g.vmid).display())).unwrap(), ((base + 512) / 128).to_string(), "yalnızca yeni blok açılır");
+    assert!(d.online_memory(&g), "hepsi açıkken yapılacak iş yok");
+    d.apply(&g, Action::Stop).unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}

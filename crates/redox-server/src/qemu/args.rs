@@ -119,12 +119,25 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     // böylece askıya alınan ya da başka sunucuya geçen konuk aynı düzenle döner.
     let slots = g.hw.max_cores >= g.cores && g.hw.max_cores > 0;
     let smp = if slots { format!("{},maxcpus={}", g.cores, g.hw.max_cores) } else { g.cores.to_string() };
-    push(&["-smp", &smp, "-m", &format!("{}M", g.mem_total_mb)]);
+    // Çalışırken bellek ekleme: konuk boş bellek yuvalarıyla açılır. Açılış belleği, toplamdan çalışırken
+    // eklenmiş parçalar çıkarılarak bulunur; parçalar (askıdan dönüşte) aynı sırayla yeniden takılır.
+    let base_mb = g.mem_total_mb.saturating_sub(g.hw.dimms.iter().sum());
+    let mem_slots = base_mb > 0 && g.hw.max_mem_mb > base_mb;
+    let mem = if mem_slots { format!("{base_mb}M,slots={},maxmem={}M", redox_core::hw::MEM_SLOTS, g.hw.max_mem_mb) } else { format!("{}M", g.mem_total_mb) };
+    push(&["-smp", &smp, "-m", &mem]);
     if slots {
         // QEMU, disk aygıtının kuyruk sayısını açılıştaki çekirdek sayısından türetir. Çekirdek eklenmiş konuk
         // askıdan yeni sayıyla döndüğünde aygıt değişmiş olur ve bellek durumu yüklenmez; bu yüzden sayı,
         // çalışırken değişmeyen üst sınıra bağlanır (çalışırken takılan diskler de aynı değeri alır).
         push(&["-global", &format!("virtio-blk-pci.num-queues={}", core_queues(g.hw.max_cores))]);
+    }
+    if mem_slots {
+        // Sonradan takılan belleği Windows konuklar yalnızca bellek düğümü (NUMA) tanımlıysa kabul eder.
+        push(&["-object", &format!("memory-backend-ram,id=ram0,size={base_mb}M"), "-numa", "node,nodeid=0,memdev=ram0"]);
+        for (i, mb) in g.hw.dimms.iter().enumerate() {
+            push(&["-object", &format!("memory-backend-ram,id={},size={mb}M", dimm_backend(i))]);
+            push(&["-device", &format!("pc-dimm,id={},memdev={},slot={i}", dimm_device(i), dimm_backend(i))]);
+        }
     }
     // Disk hız sınırı her diske ayrı uygulanır (okuma ve yazma toplamı).
     let throttle = disk_throttle(g);
@@ -234,6 +247,15 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         push(&["-device", "virtio-balloon-pci,id=balloon0"]);
     }
     a
+}
+
+/// Çalışırken eklenen bellek parçasının arka ucu ve aygıtı (`index`: 0 ilk parça).
+pub fn dimm_backend(index: usize) -> String {
+    format!("xmem{index}")
+}
+
+pub fn dimm_device(index: usize) -> String {
+    format!("xdimm{index}")
 }
 
 /// Çekirdek yuvalı konukta disk aygıtlarının kuyruk sayısı.

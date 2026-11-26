@@ -23,6 +23,7 @@ redox vm set 103 cores=4 memory=8192 nested=true
 redox vm disk add 103 50
 redox vm balloon 103 4096     # or: auto 2048
 redox vm cores 103 6          # raises a running guest to 6 cores (first, while stopped: vm set 103 max-cores=8)
+redox vm memory 103 8192      # raises a running guest's memory to 8192 MB (first, while stopped: vm set 103 max-memory=16384)
 redox vm move 103 fast
 redox snapshot create 103 before [--production]
 redox backup create 103
@@ -38,7 +39,7 @@ redox task list
 redox usage
 ```
 
-`redox vm set` keys: `name cores max-cores memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops
+`redox vm set` keys: `name cores max-cores memory max-memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops
 net-mbps vlan cpu balloon nested nic-guard firewall rpo test-port test-cmd backup-time backup-keep backup-pre backup-post`
 and more; `redox help` prints the full list.
 

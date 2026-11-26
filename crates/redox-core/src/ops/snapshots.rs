@@ -37,7 +37,8 @@ impl Cluster {
     /// `disk_only`: bellek durumu olmadan alınmış (üretim) denetim noktası; `quiesced`: dosya sistemleri dondurulmuştu.
     pub fn add_snapshot_kind(&mut self, vmid: VmId, name: &str, now: u64, disk_only: bool, quiesced: bool) {
         if let Ok(g) = self.guest_mut(vmid) {
-            g.snapshots.push(Snapshot { name: name.to_string(), created: now, disk_only, quiesced });
+            let (cores, mem_mb, dimms) = (g.cores, g.mem_total_mb, g.hw.dimms.clone());
+            g.snapshots.push(Snapshot { name: name.to_string(), created: now, disk_only, quiesced, cores, mem_mb, dimms });
         }
     }
 
@@ -47,6 +48,11 @@ impl Cluster {
         let disk_only = g.snapshots.iter().any(|s| s.name == name && s.disk_only);
         if disk_only && g.status != GuestStatus::Stopped {
             return Err(Error::RequiresStopped { vmid, what: "bellek durumu olmayan (üretim) denetim noktasına dönmek".to_string() });
+        }
+        // Görüntüden sonra çalışırken çekirdek ya da bellek eklendiyse, kayıtlı bellek durumu bu donanıma yüklenemez.
+        let changed = g.snapshots.iter().any(|s| s.name == name && s.cores > 0 && (s.cores != g.cores || s.mem_mb != g.mem_total_mb || s.dimms != g.hw.dimms));
+        if changed && g.status != GuestStatus::Stopped {
+            return Err(Error::RequiresStopped { vmid, what: "çekirdek ya da bellek sayısı değişmeden önce alınmış görüntüye dönmek".to_string() });
         }
         Ok(())
     }

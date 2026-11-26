@@ -31,6 +31,7 @@ impl Cluster {
             || patch.cpu_type.as_ref().is_some_and(|c| *c != guest.hw.cpu_type)
             || patch.balloon.is_some_and(|b| b != guest.hw.balloon)
             || patch.max_cores.is_some_and(|m| m != guest.hw.max_cores)
+            || patch.max_memory_mb.is_some_and(|m| m != guest.hw.max_mem_mb)
             || patch.nested.is_some_and(|n| n != guest.hw.nested);
         if hardware && guest.status != GuestStatus::Stopped {
             return Err(Error::RequiresStopped { vmid, what: "donanım ayarlarını değiştirmek".to_string() });
@@ -62,6 +63,15 @@ impl Cluster {
             let min = guest.kind.min_memory_mb();
             if mem < min || mem > node.mem_total_mb {
                 return Err(Error::InvalidSpec(format!("bellek {min} MB ile {} MB arasında olmalı", node.mem_total_mb)));
+            }
+        }
+        if patch.memory_mb.is_some() || patch.max_memory_mb.is_some() {
+            let (mem, max) = (patch.memory_mb.unwrap_or(guest.mem_total_mb), patch.max_memory_mb.unwrap_or(guest.hw.max_mem_mb));
+            if max != 0 && guest.kind != GuestKind::Vm {
+                return Err(Error::InvalidSpec("çalışırken bellek ekleme yalnızca sanal makinelerde kullanılır".to_string()));
+            }
+            if max != 0 && (max < mem || max > node.mem_total_mb) {
+                return Err(Error::InvalidSpec(format!("en fazla bellek {mem} MB ile {} MB arasında olmalı (0: çalışırken bellek eklenmez)", node.mem_total_mb)));
             }
         }
         if let Some(iso) = patch.iso.as_deref().filter(|i| !i.is_empty()) {
@@ -171,6 +181,8 @@ impl Cluster {
         if let Some(mem) = patch.memory_mb {
             g.mem_total_mb = mem;
             g.mem_used_mb = g.mem_used_mb.min(mem);
+            // Bellek kapalıyken yeniden belirlendi: çalışırken eklenmiş parçaların kaydı geçersizdir.
+            g.hw.dimms.clear();
         }
         if let Some(os) = &patch.os {
             g.os = os.clone();
@@ -268,6 +280,9 @@ impl Cluster {
         }
         if let Some(max) = patch.max_cores {
             g.hw.max_cores = max;
+        }
+        if let Some(max) = patch.max_memory_mb {
+            g.hw.max_mem_mb = max;
         }
         if let Some(guard) = patch.nic_guard {
             g.hw.nic_guard = guard;

@@ -237,6 +237,18 @@ pub trait Hypervisor: Send + Sync {
         false
     }
 
+    /// Çalışan konuğa `mb` MB bellek ekler (konuk boş bellek yuvalarıyla açılmış olmalıdır). Parçanın sırası
+    /// konuğun kaydındaki parça sayısıdır.
+    fn hot_add_memory(&self, _guest: &Guest, _mb: u64) -> Result<(), String> {
+        Err("bu sürücü çalışan konuğa bellek ekleyemez".to_string())
+    }
+
+    /// Sonradan eklenen belleği konuk ajanıyla etkinleştirir. Ajan yoksa ya da yapamadıysa `false`: bellek
+    /// takılıdır, konuk onu kendiliğinden kullanmıyorsa içinde elle etkinleştirilmesi gerekir.
+    fn online_memory(&self, _guest: &Guest) -> bool {
+        false
+    }
+
     /// UEFI donanım yazılımı kurulu mu?
     fn uefi(&self) -> bool {
         false

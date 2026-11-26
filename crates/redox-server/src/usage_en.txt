@@ -52,6 +52,7 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox vm move <id> <storage>           (moves the disks of a stopped VM to another storage)
   redox vm balloon <id> <MB>             (memory target; also while running, 0: all memory)
   redox vm cores <id> <count>            (raises a running guest to <count> cores; set max-cores=<most> while stopped first)
+  redox vm memory <id> <MB>              (raises a running guest's memory to <MB>; set max-memory=<most> while stopped first)
   redox vm balloon <id> auto <MB>        (dynamic memory: the target follows usage between <MB> and all memory; 0 turns it off)
   redox vm suspend <id> | discard-suspend <id>   (suspends; start resumes where it left off)
   redox vm template <id> on|off          (converts to a template / back)

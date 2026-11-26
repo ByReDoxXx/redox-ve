@@ -208,6 +208,14 @@ impl Hypervisor for HostDriver {
         self.of(guest).is_ok_and(|d| d.online_cores(guest))
     }
 
+    fn hot_add_memory(&self, guest: &Guest, mb: u64) -> Result<(), String> {
+        self.of(guest)?.hot_add_memory(guest, mb)
+    }
+
+    fn online_memory(&self, guest: &Guest) -> bool {
+        self.of(guest).is_ok_and(|d| d.online_memory(guest))
+    }
+
     fn uefi(&self) -> bool {
         self.vm.uefi()
     }

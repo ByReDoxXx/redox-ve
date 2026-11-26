@@ -48,7 +48,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Install from an ISO, or create from a cloud image with cloud-init (user, SSH key, host name). The
   cloud-init settings, including a static address, can be edited later from the panel.
 - Selectable CPU model per VM, and a memory balloon whose target can be changed while the VM runs.
-- Cores can be added to a running VM (`redox vm cores 103 6`), up to a per-VM maximum.
+- Cores and memory can be added to a running VM (`redox vm cores 103 6`, `redox vm memory 103 8192`), up to a per-VM maximum.
 - Import `vmdk`, `vdi`, `vhdx` disks and OVA archives; export a guest as OVA.
 - Templates, full clones and linked clones (a linked clone is ready in under a second).
 - Up to 8 extra data disks and 3 extra network cards; both can be hot-plugged into a running VM.
@@ -295,7 +295,7 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 | `POST /guests/{vmid}/{start,stop,reboot,pause,resume}` | Power actions |
 | `POST /guests/{vmid}/suspend`, `/discard-suspend`, `/detach` | Suspend to disk, detach from backup |
 | `POST /guests/{vmid}/snapshots`, `.../{name}/rollback` | Snapshots |
-| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/cores`, `/move` | Clones, hardware, storage move |
+| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/cores`, `/memory`, `/move` | Clones, hardware, storage move |
 | `GET /guests/{vmid}/export` | OVA export |
 | `POST /guests/{vmid}/backups`, `GET /backups` | Backups |
 | `POST /backups/{id}/restore`, `/push`, `/verify`, `GET .../download` | Restore, off-site, verify, download |
@@ -427,12 +427,12 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-522 tests pass on Linux and 448 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+529 tests pass on Linux and 453 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
-One driver test runs against **real QEMU** with a Linux kernel as the guest and checks the result from
-inside the guest. It is skipped unless you point it at the binaries:
+Two driver tests run against **real QEMU** with a Linux kernel as the guest and checks the result from
+inside the guest. They are skipped unless you point them at the binaries:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (any kernel whose
 initial file system has a shell at `/bin/sh`, such as a Debian installer's `vmlinuz` and `initrd.gz`).
 
@@ -459,7 +459,7 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
   zero-downtime live migration.
 - Automatic failover exists only for replicated guests and needs a witness server; there is no fencing and no shared-state cluster. It has not been tried in a real outage.
 - Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
-- Cores can be added to a running VM but not removed, and only up to the "maximum cores" set while it was stopped. Memory cannot be raised above what the VM started with (the balloon only lowers and restores it). Core hot-add is tested with the driver's own code on real QEMU with a Linux guest, including a disk attached while running and suspend and resume afterwards; it was not tried with a Windows guest, and bringing the new cores online through the guest agent was only tested against the fake QEMU.
+- Cores and memory can be added to a running VM but not removed, and only up to the "maximum cores" and "maximum memory" set while it was stopped. Memory is added in steps of 128 MB, at most 8 times per start (a stop and start makes the added memory ordinary memory and frees the slots); to lower memory while running there is only the balloon. A snapshot with memory state taken before cores or memory were added can only be rolled back to with the guest stopped. Both are tested with the driver's own code on real QEMU with a Linux guest, including suspend and resume afterwards; neither was tried with a Windows guest, and bringing new cores or memory online through the guest agent was only tested against the fake QEMU (the Linux guest used in the tests brings new memory online by itself).
 - Containers cannot be moved to another storage or to another server.
 - The live console has no clipboard or audio (text can be typed in as keystrokes).
 - The interface is in Turkish and English only.

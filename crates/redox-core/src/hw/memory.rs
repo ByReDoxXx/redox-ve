@@ -28,3 +28,9 @@ pub fn dynamic_memory_target(total_mb: u64, min_mb: u64, current_mb: u64, stats:
     let slack = (total_mb / 20).max(2 * DYNAMIC_STEP_MB);
     (current - target >= slack).then_some(target)
 }
+
+/// Çalışan konuğa bellek bu adımın katlarıyla eklenir (MB): konuk işletim sistemleri sonradan takılan belleği
+/// bu büyüklükteki bloklar halinde kullanır, artan kısım boşa gider.
+pub const MEM_STEP_MB: u64 = 128;
+/// Bir açılışta çalışırken kaç kez bellek eklenebilir (konuğun boş bellek yuvası sayısı).
+pub const MEM_SLOTS: usize = 8;

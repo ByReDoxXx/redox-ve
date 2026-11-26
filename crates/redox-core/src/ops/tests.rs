@@ -1006,3 +1006,94 @@ fn cores_are_added_to_a_running_vm_only_up_to_its_limit() {
     c.update_guest(103, &limit(0), "u", NOW).unwrap();
     assert_eq!(c.guest(103).unwrap().hw.max_cores, 0);
 }
+
+#[test]
+fn memory_is_added_to_a_running_vm_in_steps_up_to_its_limit() {
+    let mut c = cluster();
+    let limit = |max: u64| GuestPatch { max_memory_mb: Some(max), ..patch() };
+    let node_mem = c.node(&c.guest(103).unwrap().node.clone()).unwrap().mem_total_mb;
+    // Sınır yalnızca kapalı sanal makinede, bellek ile düğümün belleği arasında verilir.
+    assert!(matches!(c.update_guest(100, &limit(65536), "u", NOW), Err(Error::RequiresStopped { .. })));
+    c.update_guest(103, &GuestPatch { memory_mb: Some(2048), ..patch() }, "u", NOW).unwrap();
+    for bad in [1024, node_mem + 1] {
+        assert!(c.update_guest(103, &limit(bad), "u", NOW).unwrap_err().to_string().contains("en fazla bellek 2048 MB ile"), "{bad}");
+    }
+    let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct && g.status == GuestStatus::Stopped).unwrap().vmid;
+    assert!(c.update_guest(ct, &limit(4096), "u", NOW).unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
+    c.update_guest(103, &limit(4096), "u", NOW).unwrap();
+    assert_eq!(c.guest(103).unwrap().hw.max_mem_mb, 4096);
+    assert!(c.update_guest(103, &GuestPatch { memory_mb: Some(8192), ..patch() }, "u", NOW).unwrap_err().to_string().contains("en fazla bellek"));
+
+    assert!(c.check_memory_add(103, 3072).unwrap_err().to_string().contains("çalışmıyor"));
+    assert!(c.check_memory_add(100, 1 << 30).unwrap_err().to_string().contains("çalışırken bellek ekleme kapalı"));
+    c.guest_mut(103).unwrap().status = GuestStatus::Running;
+    assert_eq!(c.check_memory_add(103, 3072).unwrap(), 1024, "eklenecek miktar döner");
+    assert!(c.check_memory_add(103, 2048).unwrap_err().to_string().contains("yalnızca artırılır"));
+    assert!(c.check_memory_add(103, 4224).unwrap_err().to_string().contains("en fazla 4096 MB"));
+    // Adım dışı değerde en yakın geçerli değer önerilir.
+    assert!(c.check_memory_add(103, 3000).unwrap_err().to_string().contains("en yakın geçerli değer 3072 MB"));
+    assert!(c.check_memory_add(103, 4090).unwrap_err().to_string().contains("en yakın geçerli değer 4096 MB"));
+
+    // Eklenen parça toplam belleğe ve parça listesine işlenir; elle verilmiş balon hedefi de aynı kadar yükselir.
+    {
+        let g = c.guest_mut(103).unwrap();
+        (g.hw.balloon, g.hw.balloon_mb) = (true, 1024);
+    }
+    c.note_memory_added(103, 1024);
+    let g = c.guest(103).unwrap();
+    assert_eq!((g.mem_total_mb, g.hw.dimms.clone(), g.hw.balloon_mb), (3072, vec![1024], 2048));
+    // Sınıra bir adımdan az kalmışsa bunu söyler.
+    c.guest_mut(103).unwrap().hw.max_mem_mb = 3100;
+    assert!(c.check_memory_add(103, 3090).unwrap_err().to_string().contains("bir adımlık yer kalmadı"));
+    c.guest_mut(103).unwrap().hw.max_mem_mb = 8192;
+    // Yuvalar dolunca konuğun bir kez kapatılıp açılması gerekir.
+    for _ in 1..crate::hw::MEM_SLOTS {
+        c.note_memory_added(103, 128);
+    }
+    assert!(c.check_memory_add(103, 8192).unwrap_err().to_string().contains("bir kez kapatıp açın"));
+}
+
+#[test]
+fn hot_added_memory_becomes_boot_memory_on_a_cold_start_but_not_on_resume() {
+    let mut c = cluster();
+    {
+        let g = c.guest_mut(103).unwrap();
+        (g.mem_total_mb, g.hw.max_mem_mb, g.hw.dimms) = (3072, 4096, vec![512, 512]);
+    }
+    // Askıdaki konuk parçalarıyla döner.
+    c.guest_mut(103).unwrap().hw.suspended = true;
+    let task = c.begin_action(103, Action::Start, "u", NOW).unwrap();
+    assert_eq!(c.guest(103).unwrap().hw.dimms, vec![512, 512]);
+    c.complete_task(task, Ok(()), NOW).unwrap();
+    c.guest_mut(103).unwrap().status = GuestStatus::Stopped;
+    // Sıfırdan açılışta parçalar açılış belleğine katılır: toplam aynı, yuvalar boş.
+    c.guest_mut(103).unwrap().hw.suspended = false;
+    c.begin_action(103, Action::Start, "u", NOW).unwrap();
+    let g = c.guest(103).unwrap();
+    assert_eq!((g.mem_total_mb, g.hw.dimms.is_empty()), (3072, true));
+}
+
+#[test]
+fn a_memory_snapshot_is_not_loaded_into_a_running_guest_whose_cores_or_memory_changed() {
+    let mut c = cluster();
+    {
+        let g = c.guest_mut(103).unwrap();
+        (g.status, g.cores, g.mem_total_mb, g.hw.max_cores, g.hw.max_mem_mb) = (GuestStatus::Running, 2, 2048, 4, 4096);
+    }
+    c.add_snapshot(103, "once", NOW);
+    c.check_rollback_state(103, "once").unwrap();
+    c.note_core_added(103);
+    assert!(matches!(c.check_rollback_state(103, "once"), Err(Error::RequiresStopped { .. })));
+    c.guest_mut(103).unwrap().cores = 2;
+    c.note_memory_added(103, 512);
+    assert!(matches!(c.check_rollback_state(103, "once"), Err(Error::RequiresStopped { .. })));
+    // Aynı donanımla alınan görüntüye dönülür; kapalı konukta (yalnızca disk döner) kısıt yoktur.
+    c.add_snapshot(103, "sonra", NOW);
+    c.check_rollback_state(103, "sonra").unwrap();
+    c.guest_mut(103).unwrap().status = GuestStatus::Stopped;
+    c.check_rollback_state(103, "once").unwrap();
+    // Eski kayıtlarda (donanım bilgisi yok) davranış değişmez.
+    c.guest_mut(103).unwrap().status = GuestStatus::Running;
+    c.guest_mut(103).unwrap().snapshots[0].cores = 0;
+    c.check_rollback_state(103, "once").unwrap();
+}

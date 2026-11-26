@@ -37,6 +37,13 @@ used_ports = set(a.split("bus=", 1)[1].split(",")[0] for a in args if ",bus=hp" 
 smp = value("-smp").split(",")
 cpus = [True] * int(smp[0])
 cpus += [False] * (max([int(part.split("=")[1]) for part in smp[1:] if part.startswith("maxcpus=")] + [len(cpus)]) - len(cpus))
+# Bellek yuvaları: "-m TABANM,slots=N,maxmem=ENFAZLAM". Komut satırındaki parçalar açılışta takılıdır.
+mem = value("-m").split(",")
+base_mb = int(mem[0].rstrip("M"))
+max_mb = max([int(part.split("=")[1].rstrip("M")) for part in mem[1:] if part.startswith("maxmem=")] + [0])
+mem_objects = {a.split("id=", 1)[1].split(",")[0]: int(a.split("size=", 1)[1].split(",")[0].rstrip("M")) for a in args if a.startswith("memory-backend-ram,")}
+cold_dimms = [mem_objects[a.split("memdev=", 1)[1].split(",")[0]] for a in args if a.startswith("pc-dimm,")]
+hot_dimms = {}
 # Bir diskin kopyası başarısız olunca durdurulmayı bekleyen diğer işler.
 waiting = set()
 
@@ -136,6 +143,16 @@ def agent(listener):
                         opened = os.path.exists(qga_path + ".cpus")
                         cold = int(smp[0])
                         reply = {"return": [{"logical-id": i, "online": i < cold or opened, "can-offline": i > 0} for i in range(sum(cpus))]}
+                    elif command == "guest-get-memory-block-info":
+                        reply = {"return": {"size": 128 << 20}}
+                    elif command == "guest-get-memory-blocks":
+                        # Sonradan takılan bellek konukta kapalı görünür; ajan açana kadar.
+                        opened = os.path.exists(qga_path + ".mem")
+                        cold = (base_mb + sum(cold_dimms)) // 128
+                        reply = {"return": [{"phys-index": i, "online": i < cold or opened, "can-offline": i > 0} for i in range(cold + sum(hot_dimms.values()) // 128)]}
+                    elif command == "guest-set-memory-blocks":
+                        open(qga_path + ".mem", "w").write(" ".join(str(b["phys-index"]) for b in arguments["mem-blks"]))
+                        reply = {"return": [{"phys-index": b["phys-index"], "response": "success"} for b in arguments["mem-blks"]]}
                     elif command == "guest-set-vcpus":
                         open(qga_path + ".cpus", "w").write(" ".join(str(c["logical-id"]) for c in arguments["vcpus"]))
                         reply = {"return": len(arguments["vcpus"])}
@@ -318,6 +335,22 @@ while True:
                     if os.path.exists(sock_path + ".nohot"):
                         send({"error": {"class": "GenericError", "desc": "Hot plug refused"}})
                         continue
+                    if arguments["driver"] == "pc-dimm":
+                        size = mem_objects.get(arguments.get("memdev"))
+                        slot = arguments.get("slot", -1)
+                        if not max_mb:
+                            send({"error": {"class": "GenericError", "desc": "memory hotplug is not enabled: missing acpi-dev link"}})
+                        elif size is None:
+                            send({"error": {"class": "GenericError", "desc": "Property 'pc-dimm.memdev' can't find value '%s'" % arguments.get("memdev")}})
+                        elif slot in hot_dimms or slot < len(cold_dimms):
+                            send({"error": {"class": "GenericError", "desc": "slot %d is busy" % slot}})
+                        elif base_mb + sum(cold_dimms) + sum(hot_dimms.values()) + size > max_mb:
+                            send({"error": {"class": "GenericError", "desc": "not enough space, currently in use of total space for memory devices"}})
+                        else:
+                            hot_dimms[slot] = size
+                            hot("device_add pc-dimm %s %s slot %d" % (arguments["id"], arguments["memdev"], slot))
+                            send({"return": {}})
+                        continue
                     if arguments["driver"].endswith("-cpu"):
                         core = arguments.get("core-id", -1)
                         if not 0 <= core < len(cpus) or cpus[core]:
@@ -339,6 +372,14 @@ while True:
                     hot("netdev_add %s %s %s" % (arguments["type"], arguments["id"], arguments.get("br", "-")))
                 else:
                     hot("%s %s" % (command, arguments["id"]))
+                send({"return": {}})
+            elif command == "object-add":
+                mem_objects[arguments["id"]] = arguments["size"] >> 20
+                hot("object-add %s %s %d" % (arguments["qom-type"], arguments["id"], arguments["size"] >> 20))
+                send({"return": {}})
+            elif command == "object-del":
+                mem_objects.pop(arguments["id"], None)
+                hot("object-del %s" % arguments["id"])
                 send({"return": {}})
             elif command == "query-hotpluggable-cpus":
                 # Gerçek QEMU gibi: en yüksek numaralı yuva başta; dolu yuvaların "qom-path" alanı vardır.

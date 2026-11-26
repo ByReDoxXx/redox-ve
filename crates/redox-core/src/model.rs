@@ -333,6 +333,14 @@ pub struct Snapshot {
     /// Görüntü alınırken dosya sistemleri konuk ajanıyla donduruldu mu (uygulama tutarlı)?
     #[serde(default)]
     pub quiesced: bool,
+    /// Görüntü alındığı andaki çekirdek sayısı, bellek (MB) ve çalışırken eklenmiş bellek parçaları. Bellek
+    /// durumlu görüntü yalnızca aynı donanımlı çalışan konuğa yüklenebilir. (Eski kayıtlarda 0: bilinmiyor.)
+    #[serde(default)]
+    pub cores: u32,
+    #[serde(default)]
+    pub mem_mb: u64,
+    #[serde(default)]
+    pub dimms: Vec<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -458,6 +466,8 @@ pub struct GuestPatch {
     pub cpu_type: Option<String>,
     /// Çalışırken çıkılabilecek en fazla çekirdek; 0 kapatır.
     pub max_cores: Option<u32>,
+    /// Çalışırken çıkılabilecek en fazla bellek (MB); 0 kapatır.
+    pub max_memory_mb: Option<u64>,
     /// Bellek balonu aygıtı.
     pub balloon: Option<bool>,
     /// İç içe sanallaştırma.

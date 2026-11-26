@@ -47,6 +47,7 @@ pub struct EditForm {
     pub cpu_type: String,
     pub balloon: Option<String>,
     pub max_cores: String,
+    pub max_memory_mb: String,
     pub nested: Option<String>,
     pub ci_user: String,
     pub ci_ssh_key: String,
@@ -93,6 +94,7 @@ impl EditForm {
             cpu_type: g.hw.cpu_type.clone(),
             balloon: g.hw.balloon.then(|| "1".to_string()),
             max_cores: g.hw.max_cores.to_string(),
+            max_memory_mb: g.hw.max_mem_mb.to_string(),
             nested: g.hw.nested.then(|| "1".to_string()),
             ci_user: g.hw.ci_user.clone().unwrap_or_default(),
             ci_ssh_key: g.hw.ci_ssh_key.clone().unwrap_or_default(),
@@ -165,6 +167,11 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                             label for="max_cores" { (tx("En fazla çekirdek")) }
                             input id="max_cores" form="hw" name="max_cores" type="text" inputmode="numeric" value=(f.max_cores) disabled[off];
                             span class="hint" tabindex="0" role="note" { (tx("Çalışırken çıkılabilecek çekirdek sayısı; 0 ise çalışan konuğa çekirdek eklenmez. Konuk bu kadar çekirdek yuvasıyla açılır, kullanılmayan yuvalar işlemci harcamaz.")) }
+                        }
+                        div class="field" {
+                            label for="max_memory_mb" { (tx("En fazla bellek (MB)")) }
+                            input id="max_memory_mb" form="hw" name="max_memory_mb" type="text" inputmode="numeric" value=(f.max_memory_mb) disabled[off];
+                            span class="hint" tabindex="0" role="note" { (tx("Çalışırken çıkılabilecek bellek; 0 ise çalışan konuğa bellek eklenmez. Konuk boş bellek yuvalarıyla açılır, eklenmemiş bellek sunucuda yer tutmaz.")) }
                         }
                         div class="field" {
                             span class="label" { (tx("Bellek balonu")) }
@@ -291,6 +298,25 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         footer {
                             (tx("Yalnızca konuk çalışırken ve yalnızca artırılır; azaltmak için konuğu kapatıp çekirdek sayısını değiştirin. "))
                             (tx("Konukta ajan (qemu-guest-agent) çalışıyorsa yeni çekirdekler kendiliğinden etkinleşir; yoksa konuğun içinde etkinleştirmeniz gerekebilir."))
+                        }
+                    }
+                }
+                @if vm && g.hw.max_mem_mb > 0 {
+                    @let step = redox_core::hw::MEM_STEP_MB;
+                    @let room = g.hw.max_mem_mb.saturating_sub(g.mem_total_mb) / step * step;
+                    @let full = room == 0 || g.hw.dimms.len() >= redox_core::hw::MEM_SLOTS;
+                    div class="card" {
+                        header { h2 { (tx("Çalışırken bellek")) } (tip("Çalışan konuğa, kapatmadan bellek ekler.")) span class="note" { (g.mem_total_mb) " / " (g.hw.max_mem_mb) " MB" } }
+                        @if p.admin {
+                            form class="inline" method="post" action={ (base) "/memory" } {
+                                label for="hot_memory" { (tx("Bellek (MB)")) }
+                                input id="hot_memory" name="memory_mb" type="text" inputmode="numeric" value=(g.mem_total_mb + room.min(1024)) required disabled[!hot || full];
+                                button class="btn sm" type="submit" disabled[!hot || full] { (icon("check")) (tx("Uygula")) }
+                            }
+                        }
+                        footer {
+                            (tx("Yalnızca konuk çalışırken, 128 MB'lık adımlarla ve yalnızca artırılır; azaltmak için bellek balonunu kullanın ya da konuğu kapatın. "))
+                            (tx("Linux konuklar yeni belleği çoğunlukla kendiliğinden kullanır; kullanmıyorsa konuk ajanı (qemu-guest-agent) etkinleştirir."))
                         }
                     }
                 }

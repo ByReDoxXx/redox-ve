@@ -142,3 +142,57 @@ pub fn online_cores(d: &QemuDriver, g: &Guest) -> bool {
     }
     false
 }
+
+pub(super) const NO_MEM_SLOTS: &str = "bu konuk boş bellek yuvası olmadan açılmış; bir kez kapatıp açın, sonra yeniden deneyin";
+
+/// Çalışan konuğa `mb` MB'lık bir bellek parçası takar. Parçanın sırası konuğun kaydındaki parça sayısıdır;
+/// aynı sıra ve yuva, konuk askıdan dönerken komut satırında yeniden kurulur.
+pub fn hot_add_memory(d: &QemuDriver, g: &Guest, mb: u64) -> Result<(), String> {
+    let Some(pid) = live_pid(d, g.vmid) else {
+        return Err("konuk çalışmıyor (QEMU süreci yok)".to_string());
+    };
+    if !std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|c| String::from_utf8_lossy(&c).contains(",maxmem=")) {
+        return Err(NO_MEM_SLOTS.to_string());
+    }
+    let sock = d.cfg.qmp_path(g.vmid);
+    let index = g.hw.dimms.len();
+    let (backend, dimm) = (crate::qemu::dimm_backend(index), crate::qemu::dimm_device(index));
+    let object = serde_json::json!({ "execute": "object-add", "arguments": { "qom-type": "memory-backend-ram", "id": backend, "size": mb << 20 } });
+    qmp_values(&sock, &[object]).map_err(|e| format!("bellek konuğa tanıtılamadı: {e}"))?;
+    let device = serde_json::json!({ "execute": "device_add", "arguments": { "driver": "pc-dimm", "id": dimm, "memdev": backend, "slot": index } });
+    qmp_values(&sock, &[device]).map(|_| ()).map_err(|e| {
+        let _ = qmp_values(&sock, &[serde_json::json!({ "execute": "object-del", "arguments": { "id": backend } })]);
+        format!("bellek konuğa eklenemedi: {e}")
+    })
+}
+
+/// Sonradan eklenen belleği konuk ajanıyla etkinleştirir ve konuğun belleğin tamamını kullandığını doğrular.
+/// Konuk yeni belleği hemen görmeyebilir: birkaç kez sorulur.
+pub fn online_memory(d: &QemuDriver, g: &Guest) -> bool {
+    let qga = d.cfg.qga_path(g.vmid);
+    let Ok(info) = crate::qga::call(&qga, "guest-get-memory-block-info", Duration::from_secs(3)) else {
+        return false;
+    };
+    let block_mb = info["size"].as_u64().unwrap_or(0) >> 20;
+    for attempt in 0..8 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        let Ok(reply) = crate::qga::call(&qga, "guest-get-memory-blocks", Duration::from_secs(3)) else {
+            return false;
+        };
+        let Some(list) = reply.as_array() else { return false };
+        let offline: Vec<Value> = list.iter().filter(|block| block["online"] == false).map(|block| serde_json::json!({ "phys-index": block["phys-index"], "online": true })).collect();
+        if !offline.is_empty() {
+            if crate::qga::call_with(&qga, "guest-set-memory-blocks", Some(serde_json::json!({ "mem-blks": offline })), Duration::from_secs(10)).is_err() {
+                return false;
+            }
+            continue;
+        }
+        // Blok boyu bilinmiyorsa, kapalı blok kalmaması yeterli sayılır.
+        if block_mb == 0 || list.len() as u64 * block_mb >= g.mem_total_mb {
+            return true;
+        }
+    }
+    false
+}

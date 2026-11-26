@@ -466,3 +466,26 @@ fn free_core_slots_are_declared_only_when_a_limit_is_set() {
     g.hw.max_cores = 4;
     assert!(args(&cfg(), &g).join(" ").contains(" -smp 6 -m "));
 }
+
+#[test]
+fn free_memory_slots_are_declared_only_when_a_limit_is_set() {
+    let mut g = guest(None);
+    let total = g.mem_total_mb;
+    let plain = args(&cfg(), &g).join(" ");
+    assert!(plain.contains(&format!(" -m {total}M ")) && !plain.contains("maxmem") && !plain.contains("-numa"), "sınır yokken eski komut satırı aynen kalır: {plain}");
+    g.hw.max_mem_mb = total + 2048;
+    let with = args(&cfg(), &g).join(" ");
+    assert!(with.contains(&format!(" -m {total}M,slots=8,maxmem={}M -object memory-backend-ram,id=ram0,size={total}M -numa node,nodeid=0,memdev=ram0 ", total + 2048)), "{with}");
+    assert!(!with.contains("pc-dimm"));
+    // Çalışırken eklenmiş parçalar toplam belleğe dahildir: açılış belleği aynı kalır, parçalar sırayla takılır.
+    (g.mem_total_mb, g.hw.dimms) = (total + 640, vec![512, 128]);
+    let with = args(&cfg(), &g).join(" ");
+    assert!(with.contains(&format!(" -m {total}M,slots=8,maxmem={}M ", total + 2048)), "{with}");
+    assert!(with.contains(" -object memory-backend-ram,id=xmem0,size=512M -device pc-dimm,id=xdimm0,memdev=xmem0,slot=0 -object memory-backend-ram,id=xmem1,size=128M -device pc-dimm,id=xdimm1,memdev=xmem1,slot=1 "), "{with}");
+    // Sınıra parçalarla ulaşmış konuk aynı düzenle açılır; sınıra açılış belleğiyle ulaşmış konukta yuva gerekmez.
+    (g.mem_total_mb, g.hw.dimms) = (total + 2048, vec![2048]);
+    assert!(args(&cfg(), &g).join(" ").contains(&format!(" -m {total}M,slots=8,maxmem={}M ", total + 2048)));
+    g.hw.dimms.clear();
+    let at_limit = args(&cfg(), &g).join(" ");
+    assert!(at_limit.contains(&format!(" -m {}M ", total + 2048)) && !at_limit.contains("maxmem"), "{at_limit}");
+}

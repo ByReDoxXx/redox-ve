@@ -43,7 +43,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - ISO'dan kurulum ya da hazır bulut imajından cloud-init ile oluşturma (kullanıcı, SSH anahtarı, makine adı).
   cloud-init ayarları, sabit adres dahil, sonradan panelden düzenlenir.
 - Sanal makine başına seçilebilen işlemci modeli ve hedefi çalışırken değişen bellek balonu.
-- Çalışan sanal makineye çekirdek ekleme (`redox vm cores 103 6`); üst sınır konuk başına verilir.
+- Çalışan sanal makineye çekirdek ve bellek ekleme (`redox vm cores 103 6`, `redox vm memory 103 8192`); üst sınır konuk başına verilir.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
 - Şablonlar, tam klonlar ve bağlı klonlar (bağlı klon bir saniyenin altında hazır olur).
 - En fazla 8 ek veri diski ve 3 ek ağ kartı; ikisi de çalışan sanal makineye takılabilir.
@@ -296,7 +296,7 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 | `POST /guests/{vmid}/{start,stop,reboot,pause,resume}` | Güç işlemleri |
 | `POST /guests/{vmid}/suspend`, `/discard-suspend`, `/detach` | Diske askıya alma, yedekten ayırma |
 | `POST /guests/{vmid}/snapshots`, `.../{name}/rollback` | Anlık görüntüler |
-| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/cores`, `/move` | Klonlar, donanım, depolar arası taşıma |
+| `POST /guests/{vmid}/clone`, `/template`, `/resize`, `/disks`, `/nics`, `/balloon`, `/cores`, `/memory`, `/move` | Klonlar, donanım, depolar arası taşıma |
 | `GET /guests/{vmid}/export` | OVA dışa aktarma |
 | `POST /guests/{vmid}/backups`, `GET /backups` | Yedekler |
 | `POST /backups/{id}/restore`, `/push`, `/verify`, `GET .../download` | Geri yükleme, dış kopya, doğrulama, indirme |
@@ -429,12 +429,12 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 522, Windows'ta 448 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 529, Windows'ta 453 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
-Sürücü testlerinden biri **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
-içinden doğrular. İkililer gösterilmedikçe atlanır:
+Sürücü testlerinden ikisi **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
+içinden doğrular. İkililer gösterilmedikçe atlanırlar:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (başlangıç dosya sisteminde
 `/bin/sh` kabuğu bulunan herhangi bir çekirdek; örneğin bir Debian kurucusunun `vmlinuz` ve `initrd.gz` dosyaları).
 
@@ -461,7 +461,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
   Kesintisiz bir canlı taşıma değildir.
 - Kendiliğinden devralma yalnızca çoğaltılan konuklar içindir ve bir hakem sunucu ister; kaynağı zorla kapatma (fencing) ve ortak durumlu küme yoktur. Gerçek bir kesintide denenmedi.
 - Depolama her zaman imaj dosyalarının durduğu bir dizindir. Dizin ZFS, LVM ya da NFS üzerinde olabilir (tanınır ve gösterilir), ama yerleşik zvol ya da mantıksal birim havuzu yönetimi yoktur.
-- Çalışan sanal makineye çekirdek eklenir ama çıkarılmaz; eklenebilecek sayı, konuk kapalıyken verilen "en fazla çekirdek" değeriyle sınırlıdır. Bellek, konuğun açıldığı değerin üstüne çıkarılamaz (balon yalnızca düşürür ve geri verir). Çekirdek ekleme, sürücünün kendi koduyla gerçek QEMU'da bir Linux konukla sınanır: çalışırken takılan disk, ardından askıya alma ve geri dönme dahil. Windows konukla denenmedi, yeni çekirdeklerin konuk ajanıyla etkinleştirilmesi yalnızca sahte QEMU'ya karşı sınandı.
+- Çalışan sanal makineye çekirdek ve bellek eklenir ama çıkarılmaz; eklenebilecek miktar, konuk kapalıyken verilen "en fazla çekirdek" ve "en fazla bellek" değerleriyle sınırlıdır. Bellek 128 MB'lık adımlarla ve bir açılışta en fazla 8 kez eklenir (konuk kapatılıp açılınca eklenen bellek olağan belleğe katılır, yuvalar boşalır); çalışırken belleği düşürmenin yolu yalnızca balondur. Çekirdek ya da bellek eklenmeden önce alınmış bellek durumlu anlık görüntüye ancak konuk kapalıyken dönülür. İkisi de sürücünün kendi koduyla gerçek QEMU'da bir Linux konukla, ardından askıya alıp geri dönerek sınanır; Windows konukla denenmedi, yeni çekirdeklerin ve belleğin konuk ajanıyla etkinleştirilmesi yalnızca sahte QEMU'ya karşı sınandı (testlerdeki Linux konuk yeni belleği kendiliğinden kullanıyor).
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
 - Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).
 - Arayüz yalnızca Türkçe ve İngilizcedir.

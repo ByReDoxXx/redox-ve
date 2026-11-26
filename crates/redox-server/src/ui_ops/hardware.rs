@@ -50,6 +50,29 @@ pub async fn cores_add(State(st): State<AppState>, Extension(me): Extension<Iden
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
+pub struct MemoryForm {
+    memory_mb: String,
+}
+
+/// Donanım sekmesindeki çalışırken bellek ekleme formu.
+pub async fn memory_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(raw): Path<String>, Form(f): Form<MemoryForm>) -> Redirect {
+    let vmid = match vmid_of(&raw) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let back = format!("/guests/{vmid}?tab=donanim");
+    let Ok(mb) = f.memory_mb.trim().parse::<u64>() else {
+        return flash(&back, "error", (tx("Bellek bir tam sayı olmalı (MB).")));
+    };
+    match st.memory_add(vmid, mb, &me.user) {
+        Ok(true) => flash(&back, "notice", &tfmt(format!("Konuğun belleği {mb} MB oldu; konuk yeni belleği kullanıyor."))),
+        Ok(false) => flash(&back, "notice", &tfmt(format!("Konuğun belleği {mb} MB oldu. Konuk ajanı yanıt vermedi: konuk yeni belleği kendiliğinden kullanmıyorsa içinde etkinleştirmeniz gerekir."))),
+        Err(e) => failed(&back, &e),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 pub struct BalloonForm {
     mb: String,
     /// Dinamik bellek formunda: alt sınır (MB); 0 kapatır.

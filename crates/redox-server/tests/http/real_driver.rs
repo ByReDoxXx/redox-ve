@@ -48,6 +48,13 @@ impl Hypervisor for RealLike {
     fn online_cores(&self, _: &Guest) -> bool {
         true
     }
+    // Üçüncü bellek parçası "eklenemez": başarısız eklemenin kaydı değiştirmediği sınansın.
+    fn hot_add_memory(&self, g: &Guest, _: u64) -> Result<(), String> {
+        if g.hw.dimms.len() >= 2 { Err("bellek yuvası yanıt vermedi".into()) } else { Ok(()) }
+    }
+    fn online_memory(&self, _: &Guest) -> bool {
+        true
+    }
     fn templates(&self) -> Vec<String> {
         vec!["alpine-3.20".into(), "debian-12".into()]
     }

@@ -12,6 +12,7 @@ Donanım ayarları (*Donanım* sekmesi) konuk **kapalıyken** değişir; aşağ�
 | İşlemci türü | Varsayılan `host` (en hızlı). Farklı işlemcili sunucuya taşıyacaksanız ortak bir model seçin. |
 | İç içe sanallaştırma | Konuk kendi sanal makinelerini çalıştırır. Sunucuda `kvm_intel`/`kvm_amd` modülünde `nested` açık olmalı. |
 | En fazla çekirdek | 0'dan büyükse konuk bu kadar çekirdek yuvasıyla açılır ve **çalışırken** çekirdek eklenir: `redox vm set 103 max-cores=8`, sonra konuk çalışırken `redox vm cores 103 6`. Yalnızca artırılır; azaltmak için konuk kapatılır. Konukta ajan (qemu-guest-agent) varsa yeni çekirdekler kendiliğinden etkinleşir; yoksa konukta `echo 1 > /sys/devices/system/cpu/cpuN/online` gerekebilir. |
+| En fazla bellek | 0'dan büyükse konuk boş bellek yuvalarıyla açılır ve **çalışırken** bellek eklenir: `redox vm set 103 max-memory=16384`, sonra konuk çalışırken `redox vm memory 103 8192`. 128 MB'lık adımlarla ve yalnızca artırılır; bir açılışta en fazla 8 kez eklenir, konuk kapatılıp açılınca yuvalar boşalır. Linux konuklar yeni belleği çoğunlukla kendiliğinden kullanır; kullanmıyorsa konuk ajanı etkinleştirir, ajan da yoksa konukta `echo online > /sys/devices/system/memory/memoryN/state` gerekir. Eklenmemiş bellek sunucuda yer tutmaz. |
 | Bellek balonu | Takılıysa bellek hedefi **çalışırken** değişir. |
 | Dinamik bellek | Hedefi konuğun kullanımına göre RedoX ayarlar: `redox vm balloon 103 auto 2048`. Konukta balon sürücüsü gerekir. |
 | Ek diskler (en çok 8) | **Çalışırken** de eklenir. Disk yalnızca büyütülür. |

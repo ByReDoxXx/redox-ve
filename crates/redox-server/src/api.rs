@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
         .route("/guests/{vmid}/nics", post(nic_add))
         .route("/guests/{vmid}/balloon", post(balloon))
         .route("/guests/{vmid}/cores", post(cores_add))
+        .route("/guests/{vmid}/memory", post(memory_add))
         .route("/guests/{vmid}/usage", get(usage).delete(usage_reset))
         .route("/guests/{vmid}/filesystems", get(filesystems))
         .route("/usage", get(usage_all))
@@ -555,6 +556,18 @@ struct CoresBody {
 async fn cores_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<CoresBody>) -> ApiResult<serde_json::Value> {
     let online = st.cores_add(vmid, body.cores, &me.user)?;
     Ok(Json(json!({ "cores": body.cores, "online": online })))
+}
+
+#[derive(serde::Deserialize)]
+struct MemoryBody {
+    /// Çıkılacak bellek (MB; şimdikinden büyük, konuğun en fazla bellek değerinden büyük değil).
+    memory_mb: u64,
+}
+
+/// Çalışan sanal makineye bellek ekler. `online`: konuğun yeni belleği kullandığı konuk ajanıyla doğrulandı mı?
+async fn memory_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<MemoryBody>) -> ApiResult<serde_json::Value> {
+    let online = st.memory_add(vmid, body.memory_mb, &me.user)?;
+    Ok(Json(json!({ "memory_mb": body.memory_mb, "online": online })))
 }
 
 #[derive(serde::Deserialize)]
