@@ -94,6 +94,29 @@ mod imp {
             .collect()
     }
 
+    /// Akıştaki veriyi konuğun içindeki dosyaya yazar (dosya varsa üzerine); yazılan bayt sayısını döndürür.
+    /// Her parça ayrı bir istektir: kanal, parçalar arasında ajanı kullanan diğer işlere (ölçüm, adres) açık kalır.
+    pub fn write_file(sock: &Path, path: &str, data: &mut dyn std::io::Read) -> Result<u64, String> {
+        let opened = call_with(sock, "guest-file-open", Some(serde_json::json!({ "path": path, "mode": "wb" })), Duration::from_secs(10))?;
+        let handle = opened.as_i64().ok_or("konuk ajanı dosya tanıtıcısı döndürmedi")?;
+        let mut buf = vec![0u8; super::FILE_CHUNK];
+        let mut total = 0u64;
+        let written = loop {
+            let n = match data.read(&mut buf) {
+                Ok(0) => break Ok(total),
+                Ok(n) => n,
+                Err(e) => break Err(format!("yedekteki dosya okunamadı: {e}")),
+            };
+            match call_with(sock, "guest-file-write", Some(serde_json::json!({ "handle": handle, "buf-b64": super::base64(&buf[..n]) })), Duration::from_secs(60)) {
+                Ok(reply) if reply["count"].as_u64() == Some(n as u64) => total += n as u64,
+                Ok(_) => break Err("konuk, dosyanın tamamını yazmadı (konukta disk dolu olabilir)".to_string()),
+                Err(e) => break Err(e),
+            }
+        };
+        let closed = call_with(sock, "guest-file-close", Some(serde_json::json!({ "handle": handle })), Duration::from_secs(60));
+        written.and_then(|n| closed.map(|_| n))
+    }
+
     /// `call`'ın argüman alan hali.
     pub fn call_with(sock: &Path, command: &str, arguments: Option<Value>, timeout: Duration) -> Result<Value, String> {
         let absent = || "konuk ajanı yanıt vermiyor (konukta qemu-guest-agent kurulu ve çalışıyor mu?)".to_string();
@@ -143,7 +166,23 @@ mod imp {
 }
 
 #[cfg(unix)]
-pub use imp::{call, call_with, exec};
+pub use imp::{call, call_with, exec, write_file};
+
+/// Konuğa dosya yazarken bir istekte gönderilen ham veri (bayt).
+pub const FILE_CHUNK: usize = 48 * 1024;
+
+/// Ajanın dosya yazma isteğinde beklediği kodlama.
+pub fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() { TABLE[(n >> (18 - 6 * i)) as usize & 63] as char } else { '=' });
+        }
+    }
+    out
+}
 
 /// `guest-get-fsinfo` yanıtından dosya sistemi dolulukları. Boyut bildirmeyen (sanal) dosya sistemleri atlanır;
 /// bağlama noktası denetim karakteri içeriyorsa ya da çok uzunsa da atlanır (konuk bu metni kendisi belirler).
@@ -208,5 +247,19 @@ mod tests {
         assert_eq!(os_name(&json!({"pretty-name": "  \n "})), None);
         let long = os_name(&json!({"pretty-name": format!("a\u{7}b{}", "x".repeat(200))})).unwrap();
         assert!(long.starts_with("ab") && long.chars().count() == 60, "denetim karakteri atılır, 60 karakterde kesilir");
+    }
+}
+
+#[cfg(test)]
+mod encode_tests {
+    use super::base64;
+
+    #[test]
+    fn file_chunks_are_encoded_as_standard_base64() {
+        for (plain, encoded) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("foobar", "Zm9vYmFy")] {
+            assert_eq!(base64(plain.as_bytes()), encoded);
+        }
+        assert_eq!(base64(&[0xff, 0xfe]), "//4=");
+        assert_eq!(base64(&[0u8; 4]), "AAAAAA==");
     }
 }

@@ -21,7 +21,11 @@ redox vm detach <id>                      # detaches an instantly recovered gues
 ```
 
 **File-level restore:** browse a backup on the *Backups* page and download single files (needs `libguestfs-tools` on the
-server; administrators only, every access is written to the audit log).
+server; administrators only, every access is written to the audit log). With the guest running and `qemu-guest-agent`
+installed in it, *Restore to guest* next to a file or folder writes it straight back into the guest: you choose the
+target path (the original path by default), and the result appears on the *Tasks* page. A file overwrites the target and
+does not keep its owner or permissions; a folder is unpacked into an existing directory with the guest's own `tar`.
+From the command line: `redox backup put <backup> /etc/hostname` or `redox backup put-dir <backup> /etc/ssh`.
 
 ## Scheduling and retention
 

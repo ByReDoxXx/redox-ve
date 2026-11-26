@@ -30,6 +30,14 @@ pub fn valid_path(path: &str) -> bool {
     path.starts_with('/') && path.len() <= 4096 && !path.chars().any(|c| c.is_control()) && !path.split('/').any(|part| part == "..")
 }
 
+/// Çalışan konuğun içindeki hedef yol: mutlak olmalıdır (`/...` ya da Windows'ta `C:\...`); denetim
+/// karakteri içermez. Yolu konuk ajanı yorumlar; kabuktan geçmez.
+pub fn valid_target(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && (bytes[2] == b'\\' || bytes[2] == b'/');
+    (path.starts_with('/') || drive) && path.len() <= 1024 && !path.chars().any(|c| c.is_control())
+}
+
 /// Yolu sadeleştirir: yinelenen ve sondaki bölüleri atar (`/etc//` → `/etc`).
 pub fn normalize(path: &str) -> String {
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
@@ -259,5 +267,21 @@ esac
         assert!(open(&bin, &image, "/a/../b", false, Some(Box::new(move || seen.store(true, std::sync::atomic::Ordering::SeqCst)))).is_err());
         assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::valid_target;
+
+    #[test]
+    fn a_restore_target_in_the_guest_must_be_an_absolute_path() {
+        for good in ["/etc/hostname", "/home/ali/Yeni Klasör/a.txt", "C:\\Users\\ali\\a.txt", "d:/veri"] {
+            assert!(valid_target(good), "{good}");
+        }
+        for bad in ["", "etc/hostname", "~/a", "C:a.txt", "/etc/a\nb", ":\\a"] {
+            assert!(!valid_target(bad), "{bad:?}");
+        }
+        assert!(!valid_target(&format!("/{}", "a".repeat(1024))));
     }
 }

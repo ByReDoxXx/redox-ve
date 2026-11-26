@@ -92,6 +92,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox backup list | create <kimlik> | restore <yedek> | delete <yedek>
   redox backup restore-new <yedek> <ad>   (yedekten yeni bir sanal makine açar; özgün konuğa dokunmaz)
   redox backup ls <yedek> [yol]           (yedeğin içindeki dosyaları listeler; sunucuda guestfish gerekir)
+  redox backup put <yedek> <yol> [hedef]  (yedekteki dosyayı çalışan konuğun içine yazar; konukta qemu-guest-agent gerekir)
+  redox backup put-dir <yedek> <yol> [hedef]   (yedekteki klasörü konukta var olan hedef dizine açar)
         dosya indirmek: curl -H 'Authorization: Bearer TOKEN' -o dosya 'REDOX_URL/api/v1/backups/YEDEK/file?path=/etc/hostname'
   redox backup instant <yedek> <ad>       (anında kurtarma: konuk kopyalama beklemeden yedeğin üzerinde açılır)
   redox vm detach <kimlik>                (anında kurtarılmış konuğu yedekten ayırır; çalışırken de yapılır)
@@ -389,6 +391,12 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ),
         ["backup", "ls", id] => get(&format!("/backups/{id}/files?path=/"), View::Files),
         ["backup", "ls", id, path] => get(&format!("/backups/{id}/files?path={}", redox_server_path(path)), View::Files),
+        ["backup", verb @ ("put" | "put-dir"), id, path, rest @ ..] if rest.len() <= 1 => req(
+            "POST",
+            format!("/backups/{id}/file"),
+            Some(json!({ "path": path, "dir": *verb == "put-dir", "target": rest.first().copied().unwrap_or("") })),
+            View::Done("geri yükleme başladı; sonuç: redox task list"),
+        ),
         ["backup", "restore-new", id, name] => req("POST", format!("/backups/{id}/restore-new"), Some(json!({ "name": name })), View::Cloned),
         ["backup", "push", id] => req("POST", format!("/backups/{id}/push"), None, View::Done("dış hedefe gönderiliyor; sonuç: redox task list")),
         ["backup", "verify", id] => req("POST", format!("/backups/{id}/verify"), None, View::Done("doğrulanıyor; sonuç: redox task list")),
@@ -875,6 +883,10 @@ mod tests {
         assert_eq!(gfs.body.unwrap(), json!({"name": "gece", "time": "03:00", "weekly": 4, "monthly": 12, "yearly": 1, "lock": 14}));
         assert_eq!(patch_body(&["backup-weekly=4", "backup-monthly=6", "backup-yearly=1"]).unwrap(), json!({"backup_weekly": 4, "backup_monthly": 6, "backup_yearly": 1}));
         assert_eq!(parse(&args("backup ls vm-103-1")).unwrap().path, "/backups/vm-103-1/files?path=/");
+        let put = parse(&args("backup put vm-103-1 /etc/hostname")).unwrap();
+        assert_eq!((put.method, put.path.as_str(), put.body.unwrap()), ("POST", "/backups/vm-103-1/file", json!({"path": "/etc/hostname", "dir": false, "target": ""})));
+        assert_eq!(parse(&args("backup put-dir vm-103-1 /etc/ssh /tmp/ssh")).unwrap().body.unwrap(), json!({"path": "/etc/ssh", "dir": true, "target": "/tmp/ssh"}));
+        assert!(parse(&args("backup put vm-103-1 /a /b /c")).is_err());
         assert_eq!(parse(&["backup".to_string(), "ls".to_string(), "vm-103-1".to_string(), "/home/ali/Yeni Klasör".to_string()]).unwrap().path, "/backups/vm-103-1/files?path=/home/ali/Yeni%20Klas%C3%B6r");
         let files = render(View::Files, &json!({"path": "/etc", "entries": [{"name": "ssh", "kind": "d"}, {"name": "hostname", "kind": "r"}]}));
         assert_eq!(files, "d ssh\n- hostname");

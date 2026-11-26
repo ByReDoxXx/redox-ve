@@ -88,7 +88,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
   administrator's approval.
 - Replication: a standby copy of a peer server's VM, refreshed on an interval and started by hand on failover.
 - Scheduled boot tests of the newest backups, and a catalog of ready cloud images.
-- File-level restore: browse a backup and download single files (with libguestfs).
+- File-level restore: browse a backup, download single files, or write a file or folder straight back into the running guest through the guest agent (with libguestfs).
 - Weekly, monthly and yearly retention (GFS), locked (immutable) backups, backup windows and a copy speed limit.
 - Commands inside the guest before and after a live backup, through the guest agent.
 - A daily backup report by e-mail and a list of guests that have no recent backup.
@@ -300,7 +300,7 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 | `POST /guests/{vmid}/backups`, `GET /backups` | Backups |
 | `POST /backups/{id}/restore`, `/push`, `/verify`, `GET .../download` | Restore, off-site, verify, download |
 | `POST /backups/{id}/restore-new`, `/instant`, `/test`, `/lock` | New guest, instant recovery, boot test, lock |
-| `GET /backups/{id}/files`, `/file`, `GET /backups/report` | Files inside a backup, backup report |
+| `GET /backups/{id}/files`, `/file`, `POST /backups/{id}/file`, `GET /backups/report` | Files inside a backup, restoring one into the running guest, backup report |
 | `GET /jobs`, `POST /jobs`, `DELETE /jobs/{name}`, `POST /jobs/{name}/run` | Backup jobs |
 | `GET /pools`, `POST /pools`, `DELETE /pools/{name}` | Resource pools and quotas |
 | `GET /storage`, `GET /media`, `PUT /media/{name}`, `POST /media/fetch` | Storage, ISO and image upload |
@@ -427,7 +427,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-529 tests pass on Linux and 453 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+533 tests pass on Linux and 456 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
@@ -459,6 +459,7 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
   zero-downtime live migration.
 - Automatic failover exists only for replicated guests and needs a witness server; there is no fencing and no shared-state cluster. It has not been tried in a real outage.
 - Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
+- Restoring a file into a running guest goes through the guest agent, so the guest needs `qemu-guest-agent` and the agent must allow its file commands (some distributions, such as RHEL, block them by default). A single file is written as the agent's user and does not keep its owner or permissions; a folder is unpacked with the guest's own `tar` and must already exist in the guest. Containers are not covered. This path is tested only against the fake QEMU agent and a fake `guestfish`; it has not been run against a real guest agent yet.
 - Cores and memory can be added to a running VM but not removed, and only up to the "maximum cores" and "maximum memory" set while it was stopped. Memory is added in steps of 128 MB, at most 8 times per start (a stop and start makes the added memory ordinary memory and frees the slots); to lower memory while running there is only the balloon. A snapshot with memory state taken before cores or memory were added can only be rolled back to with the guest stopped. Both are tested with the driver's own code on real QEMU with a Linux guest, including suspend and resume afterwards; neither was tried with a Windows guest, and bringing new cores or memory online through the guest agent was only tested against the fake QEMU (the Linux guest used in the tests brings new memory online by itself).
 - Containers cannot be moved to another storage or to another server.
 - The live console has no clipboard or audio (text can be typed in as keystrokes).

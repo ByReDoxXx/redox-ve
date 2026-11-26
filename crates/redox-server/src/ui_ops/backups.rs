@@ -134,6 +134,35 @@ pub struct FilesQuery {
     path: String,
     /// Dizin, tar arşivi olarak indirilsin mi?
     tar: Option<String>,
+    /// Çalışan konuğa geri yüklenmek üzere seçilen yol ve bunun bir klasör olup olmadığı.
+    pick: Option<String>,
+    dir: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct PutForm {
+    disk: u8,
+    path: String,
+    tar: Option<String>,
+    target: String,
+}
+
+/// Yedekteki dosyalar sayfasındaki "çalışan konuğa geri yükle" formu.
+pub async fn backup_put(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Extension(crate::ClientIp(ip)): Extension<crate::ClientIp>,
+    Path(id): Path<String>,
+    Form(f): Form<PutForm>,
+) -> Redirect {
+    let folder = if crate::guestfs::valid_path(&f.path) { crate::guestfs::parent(&crate::guestfs::normalize(&f.path)) } else { "/".to_string() };
+    let back = format!("/backups/{}/files?disk={}&path={}", crate::view::enc(&id), f.disk, crate::view::enc(&folder));
+    st.auth().audit.record(now(), &me.user, &ip, &format!("backup put {id} {} {}", f.path, f.target), true);
+    match st.backup_put(&id, f.disk, &f.path, f.tar.is_some(), &f.target, &me.user) {
+        Ok(vmid) => flash(&back, "notice", &tfmt(format!("Geri yükleme başladı: konuk {vmid}. Sonuç Görevler sayfasına yazılır."))),
+        Err(e) => failed(&back, &e),
+    }
 }
 
 impl FilesQuery {
@@ -181,7 +210,9 @@ pub async fn backup_files(
     };
     let path = query.path();
     let listed = list_backup_files(&st, &me.user, &ip, &id, query.disk, &path).await.map_err(|e| capitalize(&e.to_string()));
-    Html(crate::view::backup_files(&ctx.page(Current::Backups, "/backups"), &backup, query.disk, &crate::guestfs::normalize(&path), &listed)).into_response()
+    let pick = query.pick.as_deref().filter(|p| crate::guestfs::valid_path(p)).map(|p| (crate::guestfs::normalize(p), query.dir.is_some())).filter(|(p, _)| p != "/");
+    let running = st.snapshot().guest(backup.vmid).is_ok_and(|g| g.kind == redox_core::GuestKind::Vm && g.status == redox_core::GuestStatus::Running);
+    Html(crate::view::backup_files(&ctx.page(Current::Backups, "/backups"), &backup, query.disk, &crate::guestfs::normalize(&path), &listed, pick.as_ref().map(|(p, dir)| (p.as_str(), *dir)), running)).into_response()
 }
 
 /// Yedeğin içinden tek bir dosyayı ya da (`tar=1` ile) bir dizinin tar arşivini indirir. Yalnızca yönetici.

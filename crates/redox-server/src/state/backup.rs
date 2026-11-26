@@ -67,6 +67,63 @@ impl AppState {
         }
     }
 
+    /// Yedeğin içindeki bir dosyayı (ya da `tar` ile bir klasörü), yedeğin alındığı **çalışan** konuğun içine
+    /// geri yükler (konuk ajanıyla). Arka planda çalışır; sonuç görev günlüğüne yazılır. `target` boşsa dosya
+    /// yedekteki yoluna yazılır.
+    pub fn backup_put(&self, id: &str, disk: u8, path: &str, tar: bool, target: &str, user: &str) -> Result<VmId, Error> {
+        use std::io::Read;
+        if !crate::guestfs::valid_path(path) {
+            return Err(Error::InvalidSpec(format!("geçersiz yol: {path}")));
+        }
+        let path = crate::guestfs::normalize(path);
+        if path == "/" {
+            return Err(Error::InvalidSpec("kök dizinin tamamı konuğa geri yüklenmez; bir dosya ya da klasör seçin".to_string()));
+        }
+        let target = if target.trim().is_empty() { path.clone() } else { target.trim().to_string() };
+        if !crate::guestfs::valid_target(&target) {
+            return Err(Error::InvalidSpec(format!("geçersiz hedef yol: {target}")));
+        }
+        let backup = self.lock().backup(id)?.clone();
+        if self.guestfish().is_none() {
+            return Err(Error::InvalidSpec("dosya düzeyinde geri yükleme için sunucuda guestfish gerekir (sudo apt install libguestfs-tools)".to_string()));
+        }
+        let vmid = backup.vmid;
+        let guest = self.lock().guest(vmid).cloned().map_err(|_| Error::InvalidSpec("yedeğin alındığı konuk artık yok; dosyayı indirip elle kopyalayın".to_string()))?;
+        if guest.kind != redox_core::GuestKind::Vm || guest.status != redox_core::GuestStatus::Running {
+            return Err(Error::InvalidSpec(format!("{vmid} çalışmıyor; dosya yalnızca çalışan sanal makinenin içine geri yüklenir")));
+        }
+        if let Some(task) = guest.lock {
+            return Err(Error::Locked { vmid, task });
+        }
+        if self.driver().guest_agent(&guest).is_none() {
+            return Err(Error::InvalidSpec("konuk ajanı yanıt vermiyor; konukta qemu-guest-agent kurulu ve çalışıyor olmalı".to_string()));
+        }
+        let (me, user, id) = (self.clone(), user.to_string(), id.to_string());
+        self.dispatch(move || {
+            let outcome = (|| -> Result<(), String> {
+                let (bin, image, temporary) = me.backup_image(&id, disk).map_err(|e| e.to_string())?;
+                let cleanup: Option<Box<dyn FnOnce() + Send>> = if temporary {
+                    let image = image.clone();
+                    Some(Box::new(move || crate::state::discard_export(&image)))
+                } else {
+                    None
+                };
+                let mut stream = crate::guestfs::open(&bin, &image, &path, tar, cleanup)?;
+                // İlk parça konuğa dokunmadan önce okunur: yedekte olmayan bir dosya, konuktaki dosyayı boşaltmaz.
+                let mut first = vec![0u8; 64 * 1024];
+                let n = stream.read(&mut first).map_err(|e| format!("yedekteki dosya okunamadı: {e}"))?;
+                if n == 0 {
+                    return Err("dosya yedekte yok, boş ya da okunamıyor; konuğa dokunulmadı".to_string());
+                }
+                first.truncate(n);
+                let mut data = std::io::Cursor::new(first).chain(stream);
+                me.driver().guest_put(&guest, &target, tar, &mut data).map(|_| ())
+            })();
+            me.mutate(|c| c.log(&guest.node, &user, format!("backup put {id} {path} {target}"), &outcome, now(), Some(vmid)));
+        });
+        Ok(vmid)
+    }
+
     /// Yedeğin bozulmamış olduğunu arka planda denetler; sonuç görev günlüğüne yazılır.
     pub fn backup_verify(&self, id: &str, user: &str) -> Result<(), Error> {
         let backup = self.lock().backup(id)?.clone();

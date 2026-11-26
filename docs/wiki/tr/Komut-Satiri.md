@@ -28,6 +28,7 @@ redox snapshot create 103 once [--production]
 redox backup create 103
 redox backup list
 redox backup restore <yedek>
+redox backup put <yedek> /etc/hostname       # yedekteki bir dosyayı çalışan konuğun içine yazar (konuk ajanı gerekir)
 redox job add gece time=03:00 days=1-5 tags=web
 redox pool add web cores=32 memory=65536 disk=500
 redox replica add ankara 500 60

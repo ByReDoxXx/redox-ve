@@ -85,7 +85,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
   onayını ister.
 - Çoğaltma: eş sunucudaki sanal makinenin, aralıkla tazelenen ve devralmada elle başlatılan yedek kopyası.
 - En yeni yedeklerin zamanlanmış açarak sınanması ve hazır bulut imajı kataloğu.
-- Dosya düzeyinde geri yükleme: yedeğin içinde gezip tek dosya indirme (libguestfs ile).
+- Dosya düzeyinde geri yükleme: yedeğin içinde gezme, tek dosya indirme ya da bir dosyayı/klasörü konuk ajanıyla doğrudan çalışan konuğun içine geri yazma (libguestfs ile).
 - Haftalık, aylık, yıllık saklama (GFS), kilitli (değiştirilemez) yedekler, yedek penceresi ve kopyalama hız sınırı.
 - Canlı yedekten önce ve sonra konuk ajanıyla konuğun içinde komut çalıştırma.
 - E-postayla günlük yedek raporu ve yakın zamanda yedeği alınmamış konukların listesi.
@@ -301,7 +301,7 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 | `POST /guests/{vmid}/backups`, `GET /backups` | Yedekler |
 | `POST /backups/{id}/restore`, `/push`, `/verify`, `GET .../download` | Geri yükleme, dış kopya, doğrulama, indirme |
 | `POST /backups/{id}/restore-new`, `/instant`, `/test`, `/lock` | Yeni konuk, anında kurtarma, açarak sınama, kilit |
-| `GET /backups/{id}/files`, `/file`, `GET /backups/report` | Yedeğin içindeki dosyalar, yedek raporu |
+| `GET /backups/{id}/files`, `/file`, `POST /backups/{id}/file`, `GET /backups/report` | Yedeğin içindeki dosyalar, bir dosyayı çalışan konuğa geri yükleme, yedek raporu |
 | `GET /jobs`, `POST /jobs`, `DELETE /jobs/{name}`, `POST /jobs/{name}/run` | Yedek işleri |
 | `GET /pools`, `POST /pools`, `DELETE /pools/{name}` | Kaynak havuzları ve kotalar |
 | `GET /storage`, `GET /media`, `PUT /media/{name}`, `POST /media/fetch` | Depolama, kalıp ve imaj yükleme |
@@ -429,7 +429,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 529, Windows'ta 453 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 533, Windows'ta 456 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
@@ -461,6 +461,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
   Kesintisiz bir canlı taşıma değildir.
 - Kendiliğinden devralma yalnızca çoğaltılan konuklar içindir ve bir hakem sunucu ister; kaynağı zorla kapatma (fencing) ve ortak durumlu küme yoktur. Gerçek bir kesintide denenmedi.
 - Depolama her zaman imaj dosyalarının durduğu bir dizindir. Dizin ZFS, LVM ya da NFS üzerinde olabilir (tanınır ve gösterilir), ama yerleşik zvol ya da mantıksal birim havuzu yönetimi yoktur.
+- Çalışan konuğa dosya geri yükleme konuk ajanı üzerinden yapılır: konukta `qemu-guest-agent` çalışmalı ve ajan dosya komutlarına izin vermelidir (RHEL gibi bazı dağıtımlar bunları varsayılan olarak engeller). Tek dosya ajanın kullanıcısıyla yazılır, sahibi ve izinleri korunmaz; klasör konuğun kendi `tar` programıyla açılır ve hedef dizin konukta var olmalıdır. Konteynerler kapsam dışıdır. Bu yol yalnızca sahte QEMU ajanına ve sahte `guestfish` aracına karşı sınandı; gerçek bir konuk ajanıyla henüz çalıştırılmadı.
 - Çalışan sanal makineye çekirdek ve bellek eklenir ama çıkarılmaz; eklenebilecek miktar, konuk kapalıyken verilen "en fazla çekirdek" ve "en fazla bellek" değerleriyle sınırlıdır. Bellek 128 MB'lık adımlarla ve bir açılışta en fazla 8 kez eklenir (konuk kapatılıp açılınca eklenen bellek olağan belleğe katılır, yuvalar boşalır); çalışırken belleği düşürmenin yolu yalnızca balondur. Çekirdek ya da bellek eklenmeden önce alınmış bellek durumlu anlık görüntüye ancak konuk kapalıyken dönülür. İkisi de sürücünün kendi koduyla gerçek QEMU'da bir Linux konukla, ardından askıya alıp geri dönerek sınanır; Windows konukla denenmedi, yeni çekirdeklerin ve belleğin konuk ajanıyla etkinleştirilmesi yalnızca sahte QEMU'ya karşı sınandı (testlerdeki Linux konuk yeni belleği kendiliğinden kullanıyor).
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
 - Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).

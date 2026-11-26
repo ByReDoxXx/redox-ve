@@ -4,9 +4,11 @@ ve Unix soketi üzerinden QMP konuşur. Hiçbir şey sanallaştırmaz.
 
 Konuk adı "inatci" ise system_powerdown isteğini yok sayar (zorla kapatma yolunu sınamak için).
 """
+import base64
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -98,6 +100,12 @@ qga_path = next((a.split("path=", 1)[1].split(",")[0] for a in args if a.startsw
 has_agent = value("-name").startswith("ajanli") or os.path.exists(os.path.join(os.path.dirname(sock_path), "ajan-var"))
 
 
+# Ajanın yazdığı dosyalar: konuğun "kökü" bu dizindir. Üst dizini olmayan dosya gerçek konuktaki gibi açılamaz.
+guest_root = (qga_path or "") + ".files"
+guest_files = {}
+tar_result = [0]
+
+
 def agent(listener):
     while True:
         conn, _ = listener.accept()
@@ -119,7 +127,33 @@ def agent(listener):
                             out.write("guest-exec %s %s\n" % (arguments.get("path"), " ".join(arguments.get("arg", []))))
                         elif command != "guest-exec-status":
                             out.write(command + "\n")
-                    if command == "guest-exec":
+                    if command == "guest-file-open":
+                        host = guest_root + arguments["path"]
+                        if not os.path.isdir(os.path.dirname(host)):
+                            reply = {"error": {"class": "GenericError", "desc": "failed to open file '%s' (mode: 'wb'): No such file or directory" % arguments["path"]}}
+                        else:
+                            handle = 1000 + len(guest_files)
+                            guest_files[handle] = open(host, "wb")
+                            reply = {"return": handle}
+                    elif command == "guest-file-write":
+                        data = base64.b64decode(arguments["buf-b64"])
+                        guest_files[arguments["handle"]].write(data)
+                        # "Disk dolu": istenenden azı yazılır.
+                        reply = {"return": {"count": len(data) - (1 if os.path.exists(qga_path + ".full") else 0), "eof": False}}
+                    elif command == "guest-file-close":
+                        guest_files.pop(arguments["handle"]).close()
+                        reply = {"return": {}}
+                    elif command == "guest-exec" and arguments.get("path") == "tar":
+                        # tar -xpf ARŞİV -C DİZİN: konuğun kökü sayılan dizinde gerçekten açılır.
+                        a = arguments["arg"]
+                        tar_result[0] = subprocess.call(["tar", a[0], guest_root + a[1], a[2], guest_root + a[3]], stderr=subprocess.DEVNULL)
+                        reply = {"return": {"pid": 20}}
+                    elif command == "guest-exec" and arguments.get("path") == "rm":
+                        os.remove(guest_root + arguments["arg"][-1])
+                        reply = {"return": {"pid": 7}}
+                    elif command == "guest-exec-status" and arguments.get("pid") == 20:
+                        reply = {"return": {"exited": True, "exitcode": tar_result[0], "out-data": "" if tar_result[0] == 0 else "dGFyOiBoYXRhCg=="}}
+                    elif command == "guest-exec":
                         # Çalıştırılan programın yolunda "basarisiz" geçiyorsa program hata koduyla biter.
                         reply = {"return": {"pid": 3 if "basarisiz" in arguments.get("path", "") else 7}}
                     elif command == "guest-exec-status":

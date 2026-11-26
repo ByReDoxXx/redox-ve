@@ -29,6 +29,7 @@ redox snapshot create 103 before [--production]
 redox backup create 103
 redox backup list
 redox backup restore <backup>
+redox backup put <backup> /etc/hostname      # writes one file from the backup into the running guest (needs the guest agent)
 redox job add nightly time=03:00 days=1-5 tags=web
 redox pool add web cores=32 memory=65536 disk=500
 redox replica add ankara 500 60

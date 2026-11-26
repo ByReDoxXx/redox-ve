@@ -72,7 +72,7 @@ pub fn routes() -> Router<AppState> {
         .route("/backups/{id}/block", get(crate::ui_ops::backup_block))
         .route("/backups/{id}/machine", get(backup_machine))
         .route("/backups/{id}/files", get(backup_files))
-        .route("/backups/{id}/file", get(crate::ui_ops::backup_file))
+        .route("/backups/{id}/file", get(crate::ui_ops::backup_file).post(backup_put))
         .route("/guests/{vmid}/{action}", post(act))
         .route("/storage", get(storage))
         .route("/media", get(media_list))
@@ -448,6 +448,34 @@ async fn backup_machine(State(st): State<AppState>, Extension(me): Extension<Ide
         Ok(Ok(bytes)) => ([(axum::http::header::CONTENT_TYPE, "application/x-tar")], bytes).into_response(),
         _ => missing(),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct PutBody {
+    /// 0: asıl disk; diğerleri yedekteki ek disk numarası.
+    #[serde(default)]
+    disk: u8,
+    /// Yedeğin içindeki yol.
+    path: String,
+    /// Yol bir klasör mü? (Klasör, konukta var olan hedef dizine tar ile açılır.)
+    #[serde(default)]
+    dir: bool,
+    /// Konuktaki hedef yol; verilmezse yedekteki yol.
+    #[serde(default)]
+    target: String,
+}
+
+/// Yedeğin içindeki bir dosyayı ya da klasörü çalışan konuğun içine geri yükler; sonuç görev günlüğünde görünür.
+async fn backup_put(
+    State(st): State<AppState>,
+    Extension(me): Extension<Identity>,
+    Extension(crate::ClientIp(ip)): Extension<crate::ClientIp>,
+    Path(id): Path<String>,
+    Json(body): Json<PutBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    st.auth().audit.record(crate::state::now(), &me.user, &ip, &format!("backup put {id} {} {}", body.path, body.target), true);
+    let vmid = st.backup_put(&id, body.disk, &body.path, body.dir, &body.target, &me.user)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "vmid": vmid }))))
 }
 
 /// Yedeğin içindeki bir dizini listeler (yalnızca yönetici; sunucuda guestfish gerekir).

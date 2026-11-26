@@ -377,3 +377,82 @@ pub(super) fn backup_copies_respect_the_configured_speed_limit() {
     assert!(!std::fs::read_to_string(dir.join("img.log")).unwrap().contains(" -r "));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[tokio::test]
+pub(super) async fn a_file_from_a_backup_is_written_into_the_running_guest() {
+    if !python_available() {
+        return;
+    }
+    let (cfg, dir) = config();
+    let cluster = local_cluster(&cfg);
+    let node = cluster.nodes[0].id.clone();
+    let state = AppState::new(cluster, Box::new(QemuDriver::new(cfg.clone()).unwrap()), Duration::ZERO, None, Auth::new(UserFile::default(), None, false, Cost::Test));
+    let id = state.create_guest(&spec("ajanli-dosya", &node), "admin").unwrap();
+    let backup = state.backup_create(id, "admin").unwrap();
+    let last = |state: &AppState| {
+        let c = state.snapshot();
+        (c.tasks[0].command.clone(), c.tasks[0].status, c.tasks[0].message.clone().unwrap_or_default())
+    };
+
+    // guestfish yokken ve konuk kapalıyken açık hata; konuğa dokunulmaz.
+    assert!(matches!(state.backup_put(&backup, 0, "/etc/hostname", false, "", "admin"), Err(Error::InvalidSpec(m)) if m.contains("guestfish gerekir")));
+    state.set_guestfish(Some(script(&dir, "guestfish", FAKE_GUESTFISH)));
+    assert!(matches!(state.backup_put(&backup, 0, "/etc/hostname", false, "", "admin"), Err(Error::InvalidSpec(m)) if m.contains("çalışmıyor")));
+    for (path, target) in [("/", ""), ("etc/hostname", ""), ("/etc/../shadow", ""), ("/etc/hostname", "tmp/x"), ("/etc/hostname", "/tmp/a\nb")] {
+        assert!(matches!(state.backup_put(&backup, 0, path, false, target, "admin"), Err(Error::InvalidSpec(_))), "{path} {target:?}");
+    }
+    assert!(state.backup_put("vm-999-1", 0, "/etc/hostname", false, "", "admin").is_err());
+
+    // Yedeğin "içi" ve konuğun "kökü" (sahte ajan dosyaları buraya yazar).
+    let image = cfg.backups_dir().join(format!("{backup}.qcow2"));
+    let inside = PathBuf::from(format!("{}.d", image.display()));
+    std::fs::create_dir_all(inside.join("etc/ssh/keys")).unwrap();
+    std::fs::write(inside.join("etc/hostname"), "dosyali-konuk\n").unwrap();
+    std::fs::write(inside.join("etc/ssh/sshd_config"), "Port 2222\n").unwrap();
+    std::fs::write(inside.join("etc/ssh/keys/host"), "anahtar\n").unwrap();
+    let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(inside.join("etc/buyuk.bin"), &big).unwrap();
+    let root = PathBuf::from(format!("{}.files", cfg.qga_path(id).display()));
+    std::fs::create_dir_all(root.join("etc/ssh")).unwrap();
+    std::fs::write(root.join("etc/hostname"), "bozulmus\n").unwrap();
+
+    state.run_action(id, Action::Start, "admin").unwrap();
+    // Dosya yedekteki yoluna yazılır (hedef verilmediyse), var olanın üzerine.
+    assert_eq!(state.backup_put(&backup, 0, "/etc//hostname", false, "", "admin").unwrap(), id);
+    assert_eq!(last(&state), (format!("backup put {backup} /etc/hostname /etc/hostname"), TaskStatus::Ok, String::new()));
+    assert_eq!(std::fs::read_to_string(root.join("etc/hostname")).unwrap(), "dosyali-konuk\n");
+    // Büyük dosya parçalar halinde gider ve bayt bayt aynıdır; başka bir hedefe de yazılabilir.
+    state.backup_put(&backup, 0, "/etc/buyuk.bin", false, "/etc/ssh/kopya.bin", "admin").unwrap();
+    assert_eq!(last(&state).1, TaskStatus::Ok, "{:?}", last(&state));
+    assert!(std::fs::read(root.join("etc/ssh/kopya.bin")).unwrap() == big);
+
+    // Klasör: arşiv konukta var olan dizine açılır ve arşiv geride bırakılmaz.
+    std::fs::remove_file(root.join("etc/ssh/kopya.bin")).unwrap();
+    state.backup_put(&backup, 0, "/etc/ssh", true, "", "admin").unwrap();
+    assert_eq!(last(&state).1, TaskStatus::Ok, "{:?}", last(&state));
+    assert_eq!(std::fs::read_to_string(root.join("etc/ssh/sshd_config")).unwrap(), "Port 2222\n");
+    assert_eq!(std::fs::read_to_string(root.join("etc/ssh/keys/host")).unwrap(), "anahtar\n");
+    let left: Vec<String> = std::fs::read_dir(root.join("etc/ssh")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".tar")).collect();
+    assert!(left.is_empty(), "{left:?}");
+
+    // Hedef dizin konukta yoksa, yedekte dosya yoksa ya da konukta yer yoksa görev başarısız olur.
+    state.backup_put(&backup, 0, "/etc/hostname", false, "/yok/hostname", "admin").unwrap();
+    assert!(last(&state).1 == TaskStatus::Failed && last(&state).2.contains("No such file"), "{:?}", last(&state));
+    state.backup_put(&backup, 0, "/etc/ssh", true, "/yok", "admin").unwrap();
+    assert!(last(&state).1 == TaskStatus::Failed && last(&state).2.contains("hedef dizin konukta var mı"), "{:?}", last(&state));
+    state.backup_put(&backup, 0, "/etc/olmayan", false, "/etc/hostname", "admin").unwrap();
+    assert!(last(&state).1 == TaskStatus::Failed && last(&state).2.contains("konuğa dokunulmadı"), "{:?}", last(&state));
+    assert_eq!(std::fs::read_to_string(root.join("etc/hostname")).unwrap(), "dosyali-konuk\n", "yedekte olmayan dosya konuktakini boşaltmaz");
+    std::fs::write(format!("{}.full", cfg.qga_path(id).display()), b"").unwrap();
+    state.backup_put(&backup, 0, "/etc/hostname", false, "", "admin").unwrap();
+    assert!(last(&state).1 == TaskStatus::Failed && last(&state).2.contains("tamamını yazmadı"), "{:?}", last(&state));
+
+    // Ajansız konuk: iş başlamadan reddedilir.
+    let plain = state.create_guest(&spec("ajansiz", &node), "admin").unwrap();
+    let other = state.backup_create(plain, "admin").unwrap();
+    state.run_action(plain, Action::Start, "admin").unwrap();
+    assert!(matches!(state.backup_put(&other, 0, "/etc/hostname", false, "", "admin"), Err(Error::InvalidSpec(m)) if m.contains("konuk ajanı yanıt vermiyor")));
+    state.run_action(plain, Action::Stop, "admin").unwrap();
+    state.run_action(id, Action::Stop, "admin").unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}

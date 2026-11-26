@@ -249,6 +249,13 @@ pub trait Hypervisor: Send + Sync {
         false
     }
 
+    /// Akıştaki veriyi çalışan konuğun içine yazar (konuk ajanıyla); yazılan bayt sayısını döndürür. `tar`
+    /// yanlışsa veri `target` dosyasına yazılır (varsa üzerine); doğruysa veri bir tar arşividir ve konukta var
+    /// olan `target` dizinine açılır.
+    fn guest_put(&self, _guest: &Guest, _target: &str, _tar: bool, _data: &mut dyn std::io::Read) -> Result<u64, String> {
+        Err("bu sürücü çalışan konuğun içine dosya yazamaz".to_string())
+    }
+
     /// UEFI donanım yazılımı kurulu mu?
     fn uefi(&self) -> bool {
         false

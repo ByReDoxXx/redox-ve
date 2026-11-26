@@ -65,6 +65,8 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox backup list | create <id> | restore <backup> | delete <backup>
   redox backup report                     (backup report of the last 24 hours and unprotected guests)
   redox backup restore-new <backup> <name>   (opens a new virtual machine from the backup; the original is not touched)
+  redox backup put <backup> <path> [target]   (writes a file from the backup into the running guest; needs qemu-guest-agent in the guest)
+  redox backup put-dir <backup> <path> [target]   (unpacks a folder from the backup into an existing directory in the guest)
   redox backup ls <backup> [path]         (lists files inside the backup; needs guestfish on the server)
         to download a file: curl -H 'Authorization: Bearer TOKEN' -o file 'REDOX_URL/api/v1/backups/BACKUP/file?path=/etc/hostname'
   redox backup instant <backup> <name>    (instant recovery: the guest starts on top of the backup without waiting for a copy)

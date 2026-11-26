@@ -954,6 +954,35 @@ impl Hypervisor for QemuDriver {
         }
     }
 
+    fn guest_put(&self, guest: &Guest, target: &str, tar: bool, data: &mut dyn std::io::Read) -> Result<u64, String> {
+        #[cfg(unix)]
+        {
+            let sock = self.cfg.qga_path(guest.vmid);
+            if !tar {
+                return crate::qga::write_file(&sock, target, data);
+            }
+            // Arşiv önce hedef dizine yazılır, konuğun kendi `tar` programıyla açılır, sonra silinir.
+            let backslash = target.contains('\\');
+            let windows = backslash || target.as_bytes().get(1) == Some(&b':');
+            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0) ^ std::process::id();
+            let archive = format!("{}{}redox-geri-yukleme-{stamp:08x}.tar", target.trim_end_matches(['/', '\\']), if backslash { '\\' } else { '/' });
+            let written = crate::qga::write_file(&sock, &archive, data).map_err(|e| format!("{e} (hedef dizin konukta var mı?)"))?;
+            let run = |program: &str, args: &[&str], limit: u64| crate::qga::exec(&sock, program, &args.iter().map(|a| a.to_string()).collect::<Vec<_>>(), Duration::from_secs(limit));
+            let extracted = run("tar", &["-xpf", &archive, "-C", target], 1800);
+            let _ = if windows { run("cmd.exe", &["/c", "del", "/q", &archive], 60) } else { run("rm", &["-f", &archive], 60) };
+            match extracted {
+                Ok((0, _)) => Ok(written),
+                Ok((code, last)) => Err(format!("arşiv konukta açılamadı: tar {code} koduyla bitti ({last})")),
+                Err(e) => Err(format!("arşiv konukta açılamadı: {e}")),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, target, tar, data);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
     // Yazılım öykünmesinde (KVM yokken) uzantıyı QEMU kendisi sağlar.
     fn nested_virt(&self) -> bool {
         !self.cfg.kvm || nested_enabled(&self.cfg.sys_module)

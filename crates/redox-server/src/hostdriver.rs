@@ -208,6 +208,10 @@ impl Hypervisor for HostDriver {
         self.of(guest).is_ok_and(|d| d.online_cores(guest))
     }
 
+    fn guest_put(&self, guest: &Guest, target: &str, tar: bool, data: &mut dyn std::io::Read) -> Result<u64, String> {
+        self.of(guest)?.guest_put(guest, target, tar, data)
+    }
+
     fn hot_add_memory(&self, guest: &Guest, mb: u64) -> Result<(), String> {
         self.of(guest)?.hot_add_memory(guest, mb)
     }

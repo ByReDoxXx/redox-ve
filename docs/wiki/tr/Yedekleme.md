@@ -21,7 +21,11 @@ redox vm detach <kimlik>                # anında kurtarılan konuğu yedekten a
 ```
 
 **Dosya düzeyinde geri yükleme:** *Yedekler* sayfasından yedeğin içine göz atıp tek dosya indirirsiniz (sunucuda
-`libguestfs-tools` gerekir; yalnızca yöneticiler, her erişim denetim günlüğüne yazılır).
+`libguestfs-tools` gerekir; yalnızca yöneticiler, her erişim denetim günlüğüne yazılır). Konuk çalışıyorsa ve içinde
+`qemu-guest-agent` kuruluysa, dosyanın ya da klasörün yanındaki *Konuğa yükle* onu doğrudan konuğun içine geri yazar:
+hedef yolu siz seçersiniz (varsayılan, özgün yoldur), sonuç *Görevler* sayfasında görünür. Dosya hedefin üzerine yazılır,
+sahibi ve izinleri korunmaz; klasör, konukta var olan dizine konuğun kendi `tar` programıyla açılır.
+Komut satırından: `redox backup put <yedek> /etc/hostname` ya da `redox backup put-dir <yedek> /etc/ssh`.
 
 ## Zamanlama ve saklama
 

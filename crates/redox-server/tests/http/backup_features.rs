@@ -73,6 +73,42 @@ pub(super) async fn files_inside_a_backup_need_guestfish_and_an_admin() {
     assert!(audit.contains(&format!("backup ls {id} /etc")) && audit.contains(&format!("backup get {id} /etc/hostname")), "{audit}");
 }
 
+#[tokio::test]
+pub(super) async fn a_file_is_restored_into_the_running_guest_only_by_an_admin() {
+    let (app, state) = setup_real();
+    let id = state.backup_create(103, "admin").unwrap();
+    let put = format!("/backups/{id}/file");
+    // guestfish yokken ve konuk kapalıyken reddedilir.
+    assert!(post_ok(&app, &put, "disk=0&path=%2Fetc%2Fhostname&target=").await.contains("error="));
+    let (status, v) = api(&app, post_json(&format!("/api/v1/backups/{id}/file"), &json!({ "path": "/etc/hostname" }))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("guestfish"), "{status} {v}");
+    state.set_guestfish(Some("/yok/guestfish".into()));
+    let (status, v) = api(&app, post_json(&format!("/api/v1/backups/{id}/file"), &json!({ "path": "/etc/hostname" }))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("çalışmıyor"), "{status} {v}");
+    for bad in [json!({ "path": "/" }), json!({ "path": "etc" }), json!({ "path": "/etc/hostname", "target": "tmp" }), json!({})] {
+        let (status, _) = api(&app, post_json(&format!("/api/v1/backups/{id}/file"), &bad)).await;
+        assert!(status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::BAD_REQUEST, "{bad} {status}");
+    }
+
+    // Seçilen dosya için hedefi soran form: konuk kapalıyken yalnızca açıklama, çalışırken form.
+    let chosen = format!("/backups/{id}/files?disk=0&path=/etc&pick=/etc/hostname");
+    assert!(!page(&app, &format!("/backups/{id}/files?disk=0&path=/etc")).await.contains("Çalışan konuğa geri yükle"), "seçim yokken form yok");
+    let stopped = page(&app, &chosen).await;
+    assert!(stopped.contains("Çalışan konuğa geri yükle") && stopped.contains("Konuk çalışmıyor") && !stopped.contains(r#"name="target""#), "{stopped}");
+    state.mutate(|c| c.guest_mut_for_import(103).unwrap().status = GuestStatus::Running);
+    let running = page(&app, &chosen).await;
+    assert!(running.contains(&format!(r#"method="post" action="/backups/{id}/file""#)) && running.contains(r#"name="path" value="/etc/hostname""#) && running.contains(r#"name="target" type="text" value="/etc/hostname""#) && !running.contains(r#"name="tar""#), "{running}");
+    assert!(page(&app, &format!("{chosen}&dir=1")).await.contains(r#"name="tar" value="1""#));
+    assert!(!page(&app, &format!("/backups/{id}/files?disk=0&path=/etc&pick=../etc")).await.contains(r#"name="target""#), "geçersiz seçim yok sayılır");
+
+    // İzleyici ve operatör yapamaz; her istek denetim günlüğüne yazılır.
+    let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, &put), "disk=0&path=%2Fetc%2Fhostname&target=")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(redox_server::operator_target(&put), None);
+    let _ = post_ok(&app, &put, "disk=0&path=%2Fetc%2Fhostname&target=%2Ftmp%2Fx").await;
+    assert!(format!("{:?}", state.auth().audit.recent("", 20)).contains(&format!("backup put {id} /etc/hostname /tmp/x")));
+}
+
 // ---------- GFS saklama ve değiştirilemez yedek ----------
 
 #[tokio::test]

@@ -82,8 +82,10 @@ pub fn backups(p: &Page) -> String {
 }
 
 /// Yedeğin içindeki bir dizin: alt dizinlere inilir, dosyalar tek tek ya da dizin tar olarak indirilir.
-pub fn backup_files(p: &Page, b: &redox_core::Backup, disk: u8, path: &str, listed: &Result<Vec<crate::guestfs::Entry>, String>) -> String {
+pub fn backup_files(p: &Page, b: &redox_core::Backup, disk: u8, path: &str, listed: &Result<Vec<crate::guestfs::Entry>, String>, pick: Option<(&str, bool)>, running: bool) -> String {
     let link = |target: &str| format!("/backups/{}/files?disk={disk}&path={}", b.id, enc(target));
+    // Geri yüklenecek dosyayı seçer: aynı sayfa, üstte hedefi soran formla açılır.
+    let choose = |target: &str, dir: bool| format!("/backups/{}/files?disk={disk}&path={}&pick={}{}#geri", b.id, enc(path), enc(target), if dir { "&dir=1" } else { "" });
     let download = |target: &str, tar: bool| format!("/backups/{}/file?disk={disk}&path={}{}", b.id, enc(target), if tar { "&tar=1" } else { "" });
     let body = html! {
         (page_head(
@@ -101,6 +103,28 @@ pub fn backup_files(p: &Page, b: &redox_core::Backup, disk: u8, path: &str, list
             nav class="tabs" aria-label=(tx("Diskler")) {
                 a href={ "/backups/" (b.id) "/files?disk=0&path=/" } aria-current=[(disk == 0).then_some("page")] { (tx("Asıl disk")) }
                 @for d in &b.disks { a href={ "/backups/" (b.id) "/files?disk=" (d.id) "&path=/" } aria-current=[(disk == d.id).then_some("page")] { "Disk " (d.id) } }
+            }
+        }
+        div class="stack" {
+        @if let Some((picked, dir)) = pick {
+            div class="card" id="geri" {
+                header { h2 { (tx("Çalışan konuğa geri yükle")) } (tip("Seçilen dosyayı ya da klasörü, konuk ajanı üzerinden çalışan konuğun içine yazar.")) span class="note mono" { (picked) @if dir { "/" } } }
+                @if running {
+                    form class="inline" method="post" action={ "/backups/" (b.id) "/file" } {
+                        input type="hidden" name="disk" value=(disk);
+                        input type="hidden" name="path" value=(picked);
+                        @if dir { input type="hidden" name="tar" value="1"; }
+                        label for="target" { (tx("Konuktaki hedef")) }
+                        input id="target" class="mono" name="target" type="text" value=(picked) required;
+                        button class="btn sm" type="submit" { (icon("restart")) (tx("Geri Yükle")) }
+                    }
+                } @else {
+                    p class="empty" { (tx("Konuk çalışmıyor: dosya yalnızca çalışan sanal makinenin içine geri yüklenir. Dosyayı indirebilir ya da yedeğin tamamını geri yükleyebilirsiniz.")) }
+                }
+                footer {
+                    (tx("Dosya, hedefte varsa üzerine yazılır; sahibi ve izinleri korunmaz. Klasör, konukta var olan hedef dizinin içine konuğun tar programıyla açılır; izinler korunur, aynı adlı dosyaların üzerine yazılır. "))
+                    (tx("Konukta qemu-guest-agent çalışmalıdır. Windows konukta hedefi sürücü harfiyle yazın (örn. C:/Users/ali/not.txt). Sonuç Görevler sayfasına yazılır."))
+                }
             }
         }
         div class="card" {
@@ -123,6 +147,7 @@ pub fn backup_files(p: &Page, b: &redox_core::Backup, disk: u8, path: &str, list
                                     td class="act" {
                                         @if e.kind == 'r' { a class="btn sm" href=(download(&full, false)) download { (icon("disk")) (tx("İndir")) } }
                                         @if e.is_dir() { a class="btn sm" href=(download(&full, true)) download { (icon("disk")) "tar" } }
+                                        @if e.kind == 'r' || e.is_dir() { a class="btn sm" href=(choose(&full, e.is_dir())) { (icon("restart")) (tx("Konuğa yükle")) } }
                                     }
                                 }
                             }
@@ -135,6 +160,7 @@ pub fn backup_files(p: &Page, b: &redox_core::Backup, disk: u8, path: &str, list
                 (tx("Yedek salt okunur açılır; konuğa ve yedeğe dokunulmaz. Her listeleme birkaç saniye sürer (artımlı yedekte önce disk geçici bir dosyaya dökülür). "))
                 (tx("Yedeğin içeriği konuğun bütün dosyalarıdır: bu sayfayı yalnızca yöneticiler açabilir ve her erişim denetim günlüğüne yazılır."))
             }
+        }
         }
     };
     layout(p, (tx("Yedekteki dosyalar")), &[((tx("Yedekler")), "/backups"), (b.id.as_str(), "")], false, body)
