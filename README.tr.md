@@ -429,14 +429,16 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 541, Windows'ta 461 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 542, Windows'ta 461 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
-Sürücü testlerinden üçü **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
+Sürücü testlerinden dördü **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
 içinden doğrular. İkililer gösterilmedikçe atlanırlar:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (başlangıç dosya sisteminde
 `/bin/sh` kabuğu bulunan herhangi bir çekirdek; örneğin bir Debian kurucusunun `vmlinuz` ve `initrd.gz` dosyaları).
+Konuk ajanı testi ayrıca `REDOX_REAL_INITRD_AGENT` ister: içine `qemu-ga` ve onu başlatan bir `/ga/start` betiği
+eklenmiş aynı başlangıç dosya sistemi.
 
 Test takımının dışında QEMU sürücüsü, KVM'li gerçek QEMU 10.2 üzerinde denendi: anlık görüntüler, tam ve
 artımlı yedekler, değişen blok takibi, dış kopyalar, askıya alma ve dönüş, çalışırken takma, VLAN ve hız
@@ -460,8 +462,8 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 - Canlı taşıma, çalışan sanal makineyi onlarca milisaniyelik bir duraklamayla taşır, ama yalnızca sade konukları: UEFI ya da sanal TPM, takılı kurulum kalıbı, cloud-init sürücüsü, paylaşılan klasör, aktarılmış aygıt ya da bir şablona/yedeğe bağlı disk varsa taşımaz. İki QEMU birbirine doğrudan bağlanır (tek kullanımlık ön paylaşımlı anahtarlı TLS); hedefin taşıma kapıları kaynaktan erişilebilir olmalıdır. Gerçek QEMU'da bir Linux konukla, tek makinedeki iki sunucu arasında sınandı; iki fiziksel makine arasında, Windows konukla ya da ağır yük altında denenmedi. Eski "çalışırken al" yolu (askıya al, kopyala, sürdür) konuğu kopyalama süresince duraklatır ve canlı taşınamayan konuklar için durmaktadır.
 - Kendiliğinden devralma yalnızca çoğaltılan konuklar içindir ve bir hakem sunucu ister; kaynağı zorla kapatma (fencing) ve ortak durumlu küme yoktur. Gerçek bir kesintide denenmedi.
 - Depolama her zaman imaj dosyalarının durduğu bir dizindir. Dizin ZFS, LVM ya da NFS üzerinde olabilir (tanınır ve gösterilir), ama yerleşik zvol ya da mantıksal birim havuzu yönetimi yoktur.
-- Çalışan konuğa dosya geri yükleme konuk ajanı üzerinden yapılır: konukta `qemu-guest-agent` çalışmalı ve ajan dosya komutlarına izin vermelidir (RHEL gibi bazı dağıtımlar bunları varsayılan olarak engeller). Tek dosya ajanın kullanıcısıyla yazılır, sahibi ve izinleri korunmaz; klasör konuğun kendi `tar` programıyla açılır ve hedef dizin konukta var olmalıdır. Konteynerler kapsam dışıdır. Bu yol yalnızca sahte QEMU ajanına ve sahte `guestfish` aracına karşı sınandı; gerçek bir konuk ajanıyla henüz çalıştırılmadı.
-- Çalışan sanal makineye çekirdek ve bellek eklenir ama çıkarılmaz; eklenebilecek miktar, konuk kapalıyken verilen "en fazla çekirdek" ve "en fazla bellek" değerleriyle sınırlıdır. Bellek 128 MB'lık adımlarla ve bir açılışta en fazla 8 kez eklenir (konuk kapatılıp açılınca eklenen bellek olağan belleğe katılır, yuvalar boşalır); çalışırken belleği düşürmenin yolu yalnızca balondur. Çekirdek ya da bellek eklenmeden önce alınmış bellek durumlu anlık görüntüye ancak konuk kapalıyken dönülür. İkisi de sürücünün kendi koduyla gerçek QEMU'da bir Linux konukla, ardından askıya alıp geri dönerek sınanır; Windows konukla denenmedi, yeni çekirdeklerin ve belleğin konuk ajanıyla etkinleştirilmesi yalnızca sahte QEMU'ya karşı sınandı (testlerdeki Linux konuk yeni belleği kendiliğinden kullanıyor).
+- Çalışan konuğa dosya geri yükleme konuk ajanı üzerinden yapılır: konukta `qemu-guest-agent` çalışmalı ve ajan dosya komutlarına izin vermelidir (RHEL gibi bazı dağıtımlar bunları varsayılan olarak engeller). Tek dosya ajanın kullanıcısıyla yazılır, sahibi ve izinleri korunmaz; klasör konuğun kendi `tar` programıyla açılır ve hedef dizin konukta var olmalıdır. Konteynerler kapsam dışıdır. Konuğun içine yazma (tek dosya ve klasör), sürücünün kendi koduyla gerçek bir konuk ajanına karşı sınanır (Linux konukta qemu-ga 10.2); dosyanın yedekten okunması hâlâ yalnızca sahte `guestfish` ile sınanıyor ve yolun tamamı Windows konukla denenmedi.
+- Çalışan sanal makineye çekirdek ve bellek eklenir ama çıkarılmaz; eklenebilecek miktar, konuk kapalıyken verilen "en fazla çekirdek" ve "en fazla bellek" değerleriyle sınırlıdır. Bellek 128 MB'lık adımlarla ve bir açılışta en fazla 8 kez eklenir (konuk kapatılıp açılınca eklenen bellek olağan belleğe katılır, yuvalar boşalır); çalışırken belleği düşürmenin yolu yalnızca balondur. Çekirdek ya da bellek eklenmeden önce alınmış bellek durumlu anlık görüntüye ancak konuk kapalıyken dönülür. İkisi de sürücünün kendi koduyla gerçek QEMU'da bir Linux konukla, ardından askıya alıp geri dönerek sınanır; yeni çekirdeklerin ve belleğin konuk ajanıyla etkinleştirilmesi de gerçek bir ajana (qemu-ga 10.2) karşı sınanır. İkisi de Windows konukla denenmedi.
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
 - Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).
 - Arayüz yalnızca Türkçe ve İngilizcedir.

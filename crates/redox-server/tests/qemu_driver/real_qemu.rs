@@ -6,6 +6,9 @@
 //! REDOX_REAL_KERNEL=/yol/vmlinuz           REDOX_REAL_INITRD=/yol/initrd.gz
 //! ```
 //!
+//! Konuk ajanına bağlı testler ayrıca, içine ajan eklenmiş bir başlangıç dosya sistemi ister
+//! (`REDOX_REAL_INITRD_AGENT`; içinde ajanı başlatan `/ga/start` bulunur).
+//!
 //! Konuk, çekirdeğin başlangıç dosya sistemindeki kabukla açılır (`rdinit=/bin/sh`) ve seri kapıdan sürülür;
 //! böylece sürücünün yaptığı işin konuğun **içinden** nasıl göründüğü de doğrulanır.
 
@@ -22,9 +25,18 @@ pub(super) struct Real {
 
 /// Gerçek ikililerle yapılandırma; ortam değişkenleri verilmemişse `None` (test atlanır).
 pub(super) fn real() -> Option<Real> {
+    real_from("REDOX_REAL_INITRD")
+}
+
+/// İçinde konuk ajanı bulunan konukla yapılandırma.
+pub(super) fn real_agent() -> Option<Real> {
+    real_from("REDOX_REAL_INITRD_AGENT")
+}
+
+fn real_from(initrd_var: &str) -> Option<Real> {
     let var = |name: &str| std::env::var(name).ok().filter(|v| Path::new(v).is_file());
-    let (Some(qemu), Some(img), Some(kernel), Some(initrd)) = (var("REDOX_REAL_QEMU"), var("REDOX_REAL_QEMU_IMG"), var("REDOX_REAL_KERNEL"), var("REDOX_REAL_INITRD")) else {
-        eprintln!("ATLANDI: gerçek QEMU verilmedi (REDOX_REAL_QEMU, REDOX_REAL_QEMU_IMG, REDOX_REAL_KERNEL, REDOX_REAL_INITRD)");
+    let (Some(qemu), Some(img), Some(kernel), Some(initrd)) = (var("REDOX_REAL_QEMU"), var("REDOX_REAL_QEMU_IMG"), var("REDOX_REAL_KERNEL"), var(initrd_var)) else {
+        eprintln!("ATLANDI: gerçek QEMU verilmedi (REDOX_REAL_QEMU, REDOX_REAL_QEMU_IMG, REDOX_REAL_KERNEL, {initrd_var})");
         return None;
     };
     let dir = PathBuf::from(format!("/tmp/rdx-g{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::SeqCst)));
@@ -59,28 +71,37 @@ impl Real {
             }
         }
         assert!(text.contains("BITTI42"), "konuk yanıt vermedi: {command}\n{text}");
-        text.replace('\r', "").lines().map(str::trim).filter(|l| !l.is_empty() && !l.contains("BITTI") && !l.starts_with("~ #") && !l.starts_with("/ #")).map(str::to_string).collect()
+        text.replace('\r', "").lines().map(str::trim).filter(|l| !l.is_empty() && !l.contains("BITTI") && !["~", "/", "#"].contains(l) && !l.starts_with("~ #") && !l.starts_with("/ #")).map(str::to_string).collect()
     }
 
     /// Kabuk açılana kadar bekler ve `/proc` ile `/sys` dosya sistemlerini bağlar.
     pub fn boot(&self) {
         let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        // Açılmazsa nedenini gösterebilmek için seri kapıdan okunan son çıktı saklanır.
+        let mut seen = String::new();
         loop {
-            let ready = UnixStream::connect(&self.serial).is_ok_and(|mut sock| {
-                sock.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-                let _ = sock.write_all(b"echo HAZIR$((40+2))\n");
-                let (mut text, mut buf, until) = (String::new(), [0u8; 4096], std::time::Instant::now() + Duration::from_secs(3));
+            let mut text = String::new();
+            if let Ok(mut sock) = UnixStream::connect(&self.serial) {
+                sock.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+                let _ = sock.write_all(b"echo HAZIR$((40+2))
+");
+                let (mut buf, until) = ([0u8; 4096], std::time::Instant::now() + Duration::from_secs(3));
                 while !text.contains("HAZIR42") && std::time::Instant::now() < until {
-                    if let Ok(n) = sock.read(&mut buf) {
-                        text.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    match sock.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => text.push_str(&String::from_utf8_lossy(&buf[..n])),
+                        Err(_) => {}
                     }
                 }
-                text.contains("HAZIR42")
-            });
-            if ready {
+            } else {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            if text.contains("HAZIR42") {
                 break;
             }
-            assert!(std::time::Instant::now() < deadline, "konuk açılmadı");
+            seen.push_str(&text);
+            let tail: String = seen.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
+            assert!(std::time::Instant::now() < deadline, "konuk açılmadı; seri kapıdan son okunan: {tail:?}");
         }
         self.ask("mount -t proc proc /proc 2>/dev/null; mount -t sysfs sys /sys 2>/dev/null");
     }
@@ -289,4 +310,70 @@ pub(super) fn real_qemu_migrates_a_running_guest_to_another_server() {
     assert!(bytes[2000 * 512..2000 * 512 + 16].starts_with(format!("sayac-{written}").as_bytes()));
     let _ = std::fs::remove_dir_all(&a.dir);
     let _ = std::fs::remove_dir_all(&b.dir);
+}
+
+/// Konuk ajanına bağlı yollar, gerçek QEMU ve gerçek `qemu-ga` ile: sonradan eklenen çekirdek ve belleğin
+/// etkinleştirilmesi, konuğun içine dosya yazılması ve klasörün konukta açılması.
+#[test]
+pub(super) fn real_guest_agent_brings_hardware_online_and_receives_files() {
+    let Some(real) = real_agent() else { return };
+    let d = QemuDriver::new(real.cfg.clone()).unwrap();
+    let mut g = guest(&real.cfg, "gercek-ajan");
+    (g.cores, g.mem_total_mb, g.hw.max_cores, g.hw.max_mem_mb) = (2, 1024, 4, 2048);
+    d.create(&g).unwrap();
+    d.apply(&g, Action::Start).unwrap();
+    real.boot();
+    assert_eq!(real.ask("/ga/start").pop().as_deref(), Some("ajan-basladi"));
+    assert!(d.guest_agent(&g).is_some(), "ajan yanıt vermeli");
+
+    // Çekirdek: konukta kapalı gelen çekirdeği ajan açar.
+    d.hot_add_core(&g).unwrap();
+    g.cores = 3;
+    assert!(d.online_cores(&g), "ajan yeni çekirdeği etkinleştirmeli");
+    assert_eq!(real.cpus(), ("0-2".to_string(), "0-2".to_string()));
+
+    // Bellek: konuk kendiliğinden etkinleştirmiyorsa ajan etkinleştirir.
+    real.ask("echo offline > /sys/devices/system/memory/auto_online_blocks");
+    let kb = |real: &Real| -> u64 { real.ask("grep MemTotal /proc/meminfo").pop().and_then(|l| l.split_whitespace().nth(1).and_then(|v| v.parse().ok())).unwrap() };
+    let before = kb(&real);
+    d.hot_add_memory(&g, 512).unwrap();
+    g.mem_total_mb += 512;
+    g.hw.dimms.push(512);
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(kb(&real), before, "bellek takılı ama konukta henüz etkin değil");
+    assert!(d.online_memory(&g), "ajan yeni belleği etkinleştirmeli");
+    assert_eq!(kb(&real), before + 512 * 1024);
+
+    // Dosya: parçalar halinde yazılır, içerik bayt bayt aynıdır; var olan dosyanın üzerine yazılır.
+    let lines: String = (0..20_000).map(|i| format!("satir-{i:06}
+")).collect();
+    assert!(lines.len() > 4 * redox_server::qga::FILE_CHUNK);
+    assert_eq!(d.guest_put(&g, "/tmp/geri.txt", false, &mut std::io::Cursor::new(lines.as_bytes())).unwrap(), lines.len() as u64);
+    assert_eq!(real.ask("wc -c < /tmp/geri.txt").pop().as_deref(), Some(lines.len().to_string().as_str()));
+    assert_eq!(real.ask("grep -c '^satir-[0-9]*$' /tmp/geri.txt; head -n 1 /tmp/geri.txt; tail -n 1 /tmp/geri.txt; sort -u /tmp/geri.txt | wc -l").iter().rev().take(4).rev().cloned().collect::<Vec<_>>(), ["20000", "satir-000000", "satir-019999", "20000"]);
+    d.guest_put(&g, "/tmp/geri.txt", false, &mut std::io::Cursor::new(b"kisa
+")).unwrap();
+    assert_eq!(real.ask("cat /tmp/geri.txt"), ["kisa"]);
+    let missing = d.guest_put(&g, "/yok/dizin/dosya", false, &mut std::io::Cursor::new(b"x")).unwrap_err();
+    assert!(missing.contains("konuk ajanı"), "{missing}");
+
+    // Klasör: tar arşivi konukta var olan dizine açılır, izinler korunur, arşiv geride kalmaz.
+    let tree = real.dir.join("agac");
+    std::fs::create_dir_all(tree.join("alt")).unwrap();
+    std::fs::write(tree.join("a.conf"), "Port 2222
+").unwrap();
+    std::fs::write(tree.join("alt/gizli"), "anahtar
+").unwrap();
+    assert!(std::process::Command::new("chmod").arg("600").arg(tree.join("alt/gizli")).status().unwrap().success());
+    let archive = std::process::Command::new("tar").arg("-C").arg(&tree).args(["-cf", "-", "."]).output().unwrap().stdout;
+    real.ask("mkdir -p /tmp/hedef");
+    assert_eq!(d.guest_put(&g, "/tmp/hedef", true, &mut std::io::Cursor::new(&archive)).unwrap(), archive.len() as u64);
+    assert_eq!(real.ask("cat /tmp/hedef/a.conf /tmp/hedef/alt/gizli"), ["Port 2222", "anahtar"]);
+    assert_eq!(real.ask("ls -l /tmp/hedef/alt/gizli | cut -c1-10").pop().as_deref(), Some("-rw-------"));
+    assert_eq!(real.ask("ls /tmp/hedef | grep -c tar").pop().as_deref(), Some("0"), "arşiv konukta bırakılmaz");
+    let no_dir = d.guest_put(&g, "/tmp/olmayan", true, &mut std::io::Cursor::new(&archive)).unwrap_err();
+    assert!(no_dir.contains("hedef dizin konukta var mı"), "{no_dir}");
+
+    d.apply(&g, Action::Stop).unwrap();
+    let _ = std::fs::remove_dir_all(&real.dir);
 }
