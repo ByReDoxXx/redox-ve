@@ -185,6 +185,9 @@ impl Cluster {
         if self.node(&node)?.status != NodeStatus::Online {
             return Err(Error::NodeOffline(node));
         }
+        if action == Action::Start {
+            self.check_reserve(vmid, guest.hw.mem_reserve_mb)?;
+        }
         // Sıfırdan açılış (askıdan dönüş değil): çalışırken eklenmiş bellek artık açılış belleğinin parçasıdır,
         // bellek yuvaları boşalır. Askıdaki konuk, askıya alındığı parçalarla dönmelidir.
         let fold = action == Action::Start && !guest.hw.suspended && !guest.hw.dimms.is_empty();

@@ -203,6 +203,8 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             "max-memory" => ("max_memory_mb", number()?),
             "memory" => ("memory_mb", number()?),
             "backup-keep" => ("backup_keep", number()?),
+            "cpu-shares" => ("cpu_shares", number()?),
+            "mem-reserve" => ("mem_reserve_mb", number()?),
             "rpo" => ("rpo_hours", number()?),
             "backup-weekly" => ("backup_weekly", number()?),
             "backup-monthly" => ("backup_monthly", number()?),
@@ -250,7 +252,7 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             }
             _ => {
                 return Err(format!(
-                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores max-cores memory max-memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
+                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores max-cores cpu-shares memory max-memory mem-reserve os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
                 ))
             }
         };
@@ -833,6 +835,7 @@ mod tests {
         assert_eq!((cores.method, cores.path.as_str(), cores.body.unwrap()), ("POST", "/guests/103/cores", json!({"cores": 6})));
         assert!(parse(&args("vm cores 103 cok")).unwrap_err().contains("bir sayı olmalı"));
         assert_eq!(patch_body(&["memory=2048", "max-memory=8192"]).unwrap(), json!({"memory_mb": 2048, "max_memory_mb": 8192}));
+        assert_eq!(patch_body(&["cpu-shares=200", "mem-reserve=4096"]).unwrap(), json!({"cpu_shares": 200, "mem_reserve_mb": 4096}));
         let memory = parse(&args("vm memory 103 4096")).unwrap();
         assert_eq!((memory.method, memory.path.as_str(), memory.body.unwrap()), ("POST", "/guests/103/memory", json!({"memory_mb": 4096})));
         assert!(parse(&args("vm memory 103 cok")).unwrap_err().contains("bir sayı olmalı"));

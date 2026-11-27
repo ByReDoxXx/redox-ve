@@ -17,6 +17,9 @@ impl Cluster {
             return Err(Error::InvalidSpec("dinamik bellek açık: hedef kendiliğinden ayarlanıyor. Elle hedef vermek için önce dinamik belleği kapatın (en az bellek 0)".to_string()));
         }
         let total = g.mem_total_mb;
+        if target_mb != 0 && target_mb < g.hw.mem_reserve_mb {
+            return Err(Error::InvalidSpec(format!("bellek hedefi, konuğun bellek garantisinin ({} MB) altına inemez", g.hw.mem_reserve_mb)));
+        }
         if target_mb != 0 && !(crate::hw::MIN_BALLOON_MB..=total).contains(&target_mb) {
             return Err(Error::InvalidSpec(format!("bellek hedefi {} MB ile {total} MB arasında olmalı (0: tamamı)", crate::hw::MIN_BALLOON_MB)));
         }
@@ -36,6 +39,9 @@ impl Cluster {
             return Err(Error::InvalidSpec("bu konukta bellek balonu yok; önce Donanım sekmesinden açın (konuk kapalıyken)".to_string()));
         }
         let total = g.mem_total_mb;
+        if min_mb != 0 && min_mb < g.hw.mem_reserve_mb {
+            return Err(Error::InvalidSpec(format!("dinamik belleğin alt sınırı, konuğun bellek garantisinin ({} MB) altına inemez", g.hw.mem_reserve_mb)));
+        }
         if min_mb != 0 && !(crate::hw::MIN_BALLOON_MB..=total).contains(&min_mb) {
             return Err(Error::InvalidSpec(format!("en az bellek {} MB ile {total} MB arasında olmalı (0: dinamik bellek kapalı)", crate::hw::MIN_BALLOON_MB)));
         }
@@ -114,5 +120,22 @@ impl Cluster {
                 g.hw.balloon_mb += mb;
             }
         }
+    }
+}
+
+impl Cluster {
+    /// Konuk `reserve` MB garantiyle çalışabilir mi? Aynı düğümde çalışan öbür konukların garantileriyle
+    /// birlikte düğümün belleğini aşamaz: verilen söz tutulabilmelidir.
+    pub fn check_reserve(&self, vmid: VmId, reserve: u64) -> Result<(), Error> {
+        if reserve == 0 {
+            return Ok(());
+        }
+        let g = self.guest(vmid)?;
+        let total = self.node(&g.node)?.mem_total_mb;
+        let others: u64 = self.guests.iter().filter(|o| o.vmid != vmid && o.node == g.node && o.status != GuestStatus::Stopped).map(|o| o.hw.mem_reserve_mb).sum();
+        if others + reserve > total {
+            return Err(Error::InvalidSpec(format!("sunucuda garanti edilebilecek bellek yetmiyor: çalışan konuklara {others} MB garanti verilmiş, bu konuk {reserve} MB istiyor, sunucuda {total} MB var")));
+        }
+        Ok(())
     }
 }

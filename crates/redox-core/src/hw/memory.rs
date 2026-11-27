@@ -34,3 +34,13 @@ pub fn dynamic_memory_target(total_mb: u64, min_mb: u64, current_mb: u64, stats:
 pub const MEM_STEP_MB: u64 = 128;
 /// Bir açılışta çalışırken kaç kez bellek eklenebilir (konuğun boş bellek yuvası sayısı).
 pub const MEM_SLOTS: usize = 8;
+
+/// İşlemci payının sınırları (0: olağan). Değer, denetim grubunun ağırlığı olarak kullanılır.
+pub const MIN_CPU_SHARES: u32 = 10;
+pub const MAX_CPU_SHARES: u32 = 10_000;
+pub const DEFAULT_CPU_SHARES: u32 = 100;
+
+/// Payın denetim grubundaki ağırlığı.
+pub fn cpu_weight(shares: u32) -> u32 {
+    if shares == 0 { DEFAULT_CPU_SHARES } else { shares.clamp(1, MAX_CPU_SHARES) }
+}

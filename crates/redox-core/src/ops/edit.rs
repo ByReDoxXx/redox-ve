@@ -91,6 +91,31 @@ impl Cluster {
         if patch.rpo_hours.is_some_and(|h| h > crate::hw::MAX_RPO_HOURS) {
             return Err(Error::InvalidSpec(format!("yedek yaşı hedefi en fazla {} saat olabilir (0: genel ayar)", crate::hw::MAX_RPO_HOURS)));
         }
+        if let Some(shares) = patch.cpu_shares.filter(|s| *s != 0) {
+            if guest.kind != GuestKind::Vm {
+                return Err(Error::InvalidSpec("işlemci payı yalnızca sanal makinelerde kullanılır".to_string()));
+            }
+            if !(crate::hw::MIN_CPU_SHARES..=crate::hw::MAX_CPU_SHARES).contains(&shares) {
+                return Err(Error::InvalidSpec(format!("işlemci payı {} ile {} arasında olmalı (0: olağan, {})", crate::hw::MIN_CPU_SHARES, crate::hw::MAX_CPU_SHARES, crate::hw::DEFAULT_CPU_SHARES)));
+            }
+        }
+        if patch.mem_reserve_mb.is_some() || patch.memory_mb.is_some() {
+            let (mem, reserve) = (patch.memory_mb.unwrap_or(guest.mem_total_mb), patch.mem_reserve_mb.unwrap_or(guest.hw.mem_reserve_mb));
+            if reserve != 0 && guest.kind != GuestKind::Vm {
+                return Err(Error::InvalidSpec("bellek garantisi yalnızca sanal makinelerde kullanılır".to_string()));
+            }
+            if reserve > mem {
+                return Err(Error::InvalidSpec(format!("bellek garantisi konuğun belleğinden ({mem} MB) büyük olamaz")));
+            }
+            // Balon, konuğu garantinin altına indiremez: önce balon ayarı yükseltilir.
+            let floor = [guest.hw.balloon_mb, guest.hw.mem_min_mb].into_iter().filter(|mb| *mb > 0).min();
+            if let Some(floor) = floor.filter(|floor| *floor < reserve) {
+                return Err(Error::InvalidSpec(format!("bellek garantisi, balonla inilebilen bellekten ({floor} MB) büyük olamaz; önce bellek hedefini ya da dinamik belleğin alt sınırını yükseltin")));
+            }
+            if patch.mem_reserve_mb.is_some() && guest.status != GuestStatus::Stopped {
+                self.check_reserve(vmid, reserve)?;
+            }
+        }
         if patch.backup_keep.is_some_and(|k| k == 0 || k > MAX_KEEP) {
             return Err(Error::InvalidSpec(format!("saklanacak yedek sayısı 1 ile {MAX_KEEP} arasında olmalı")));
         }
@@ -283,6 +308,12 @@ impl Cluster {
         }
         if let Some(max) = patch.max_memory_mb {
             g.hw.max_mem_mb = max;
+        }
+        if let Some(shares) = patch.cpu_shares {
+            g.hw.cpu_shares = shares;
+        }
+        if let Some(reserve) = patch.mem_reserve_mb {
+            g.hw.mem_reserve_mb = reserve;
         }
         if let Some(guard) = patch.nic_guard {
             g.hw.nic_guard = guard;

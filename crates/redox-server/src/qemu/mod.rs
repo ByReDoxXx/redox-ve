@@ -553,6 +553,19 @@ impl Hypervisor for QemuDriver {
         cfg!(unix)
     }
 
+    /// Çalışırken değişebilen ayarlar (işlemci payı, bellek garantisi) çalışan konuğa hemen uygulanır.
+    fn configure(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::apply_limits(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            Ok(())
+        }
+    }
+
     fn migrate_layout(&self, guest: &Guest) -> Option<u8> {
         #[cfg(unix)]
         {

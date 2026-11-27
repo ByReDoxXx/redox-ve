@@ -115,7 +115,7 @@ pub fn migrate_listen(d: &QemuDriver, g: &Guest, layout: u8, bind: &str, nbd_por
         return Err(e);
     }
     let address = |port: u16| if bind.contains(':') { format!("tcp:[{bind}]:{port}") } else { format!("tcp:{bind}:{port}") };
-    let prepared = limit_network(d, g).and_then(|()| {
+    let prepared = limit_network(d, g).and_then(|()| apply_limits(d, g)).and_then(|()| {
         add_tls(d, g.vmid, key, "server")?;
         let listen = serde_json::json!({ "execute": "nbd-server-start", "arguments": { "addr": { "type": "inet", "data": { "host": bind, "port": nbd_port.to_string() } }, "tls-creds": TLS_ID } });
         qmp_values(&sock, &[listen]).map_err(|e| format!("disk kapısı ({nbd_port}) açılamadı: {e}"))?;

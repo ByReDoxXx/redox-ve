@@ -71,6 +71,13 @@ pub fn apply(d: &QemuDriver, g: &Guest, action: Action) -> Result<(), String> {
                 cleanup(d, g.vmid);
                 return Err(e);
             }
+            // İşlemci payı ve bellek garantisi: istenmiş ama uygulanamıyorsa konuk bu sözler olmadan çalıştırılmaz.
+            if let Err(e) = apply_limits(d, g) {
+                let _ = qmp(&sock, &["quit"]);
+                wait_until(Duration::from_secs(5), || !alive());
+                cleanup(d, g.vmid);
+                return Err(e);
+            }
             // Kayıtlı bellek hedefi yeniden uygulanır (QEMU her açılışta balonu boş başlatır). Uygulanamazsa
             // konuk belleğinin tamamıyla çalışmayı sürdürür; bu bir başlatma hatası değildir.
             if g.hw.balloon && g.hw.balloon_mb > 0 && !resuming {

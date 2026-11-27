@@ -60,6 +60,12 @@ pub struct Hardware {
     /// Çalışırken çıkılabilecek en fazla çekirdek sayısı; 0 ise çalışan konuğa çekirdek eklenemez. Konuk bu
     /// kadar çekirdek yuvasıyla açılır, boş yuvalar çalışırken doldurulur.
     pub max_cores: u32,
+    /// İşlemci payı: sunucunun işlemcisi yetmediğinde konuğun ona ortak olma oranı. 0 olağandır (100);
+    /// 200 paylı konuk 100 paylının iki katı işlemci alır. İşlemci boşken kimse kısılmaz.
+    pub cpu_shares: u32,
+    /// Bellek garantisi (MB): sunucunun belleği daraldığında bu konuktan geri alınmayacak bellek. Çalışan
+    /// konukların garantileri toplamı sunucunun belleğini aşamaz; balon bu değerin altına indirilmez.
+    pub mem_reserve_mb: u64,
     /// Çalışırken çıkılabilecek en fazla bellek (MB); 0 ise çalışan konuğa bellek eklenemez. Konuk boş bellek
     /// yuvalarıyla açılır, eklenen her parça bir yuvaya takılır.
     pub max_mem_mb: u64,

@@ -246,3 +246,57 @@ fn disk_usage_inside_the_guest_is_read_through_the_agent() {
     assert!(state.snapshot().filesystems_of(id).is_empty(), "duran konuğun ölçümü silinir");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+pub(super) fn cpu_shares_and_memory_reservation_are_written_to_the_guests_control_group() {
+    if !python_available() {
+        return;
+    }
+    let (mut cfg, dir) = config();
+    let groups = dir.join("cgroup");
+    std::fs::create_dir_all(&groups).unwrap();
+    cfg.cgroup_base = Some(groups.clone());
+    let d = QemuDriver::new(cfg.clone()).unwrap();
+    let mut g = guest(&cfg, "payli");
+    d.create(&g).unwrap();
+    let group = groups.join(format!("vm-{}", g.vmid));
+    let read = |file: &str| std::fs::read_to_string(group.join(file)).unwrap_or_default();
+
+    // Pay ve garanti istenmemişse konuğun grubu açılmaz.
+    d.apply(&g, Action::Start).unwrap();
+    d.configure(&g).unwrap();
+    assert!(!group.exists());
+
+    // Çalışırken verilince hemen uygulanır: süreç gruba alınır, ağırlık ve garanti yazılır.
+    (g.hw.cpu_shares, g.hw.mem_reserve_mb) = (400, 128);
+    d.configure(&g).unwrap();
+    let pid = std::fs::read_to_string(cfg.pid_path(g.vmid)).unwrap().trim().to_string();
+    assert_eq!((read("cgroup.procs"), read("cpu.weight"), read("memory.min")), (pid, "400".to_string(), (128u64 << 20).to_string()));
+    assert_eq!(std::fs::read_to_string(groups.join("cgroup.subtree_control")).unwrap(), "+memory", "alt gruplarda denetleyiciler açılır");
+    // Sıfırlanınca olağan değerler yazılır.
+    (g.hw.cpu_shares, g.hw.mem_reserve_mb) = (0, 0);
+    d.configure(&g).unwrap();
+    assert_eq!((read("cpu.weight"), read("memory.min")), ("100".to_string(), "0".to_string()));
+    d.apply(&g, Action::Stop).unwrap();
+    d.configure(&g).unwrap();
+
+    // Başlatırken de uygulanır.
+    let _ = std::fs::remove_dir_all(&group);
+    g.hw.cpu_shares = 50;
+    d.apply(&g, Action::Start).unwrap();
+    assert_eq!(read("cpu.weight"), "50");
+    d.apply(&g, Action::Stop).unwrap();
+
+    // Grup açılamıyorsa (yetki yok) pay istenen konuk başlatılmaz; istenmeyen konuk etkilenmez.
+    std::fs::write(dir.join("dosya"), b"").unwrap();
+    let mut locked = cfg.clone();
+    locked.cgroup_base = Some(dir.join("dosya"));
+    let d = QemuDriver::new(locked).unwrap();
+    let refused = d.apply(&g, Action::Start).unwrap_err();
+    assert!(refused.contains("denetim grubu") && refused.contains("Delegate=cpu memory"), "{refused}");
+    assert_eq!(status(&d, &g), GuestStatus::Stopped, "söz verilemeyen konuk çalışır bırakılmaz");
+    g.hw.cpu_shares = 0;
+    d.apply(&g, Action::Start).unwrap();
+    d.apply(&g, Action::Stop).unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -47,7 +47,10 @@ DeviceAllow=/dev/random r
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
-ProtectControlGroups=true
+# İşlemci payı ve bellek garantisi: hizmet, konukları kendi denetim grubunun alt gruplarına alır.
+ProtectControlGroups=false
+Delegate=cpu memory
+DelegateSubgroup=supervisor
 ProtectClock=true
 ProtectHostname=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK

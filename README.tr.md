@@ -44,6 +44,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
   cloud-init ayarları, sabit adres dahil, sonradan panelden düzenlenir.
 - Sanal makine başına seçilebilen işlemci modeli ve hedefi çalışırken değişen bellek balonu.
 - Çalışan sanal makineye çekirdek ve bellek ekleme (`redox vm cores 103 6`, `redox vm memory 103 8192`); üst sınır konuk başına verilir.
+- Sanal makine başına işlemci payı ve bellek garantisi (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): sunucu sıkışınca işlemciyi kimin alacağı ve geri alınmayacak bellek; ikisi de konuk çalışırken değişir.
 - Sunucunun kendi konsolunda durum ekranı: ad, adresler, panelin adresi, hizmetin yanıt verip vermediği ve çalışan konuk sayısı; Enter ile oturum açılır.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
 - Şablonlar, tam klonlar ve bağlı klonlar (bağlı klon bir saniyenin altında hazır olur).
@@ -430,11 +431,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 546, Windows'ta 465 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 550, Windows'ta 467 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
-Sürücü testlerinden dördü **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
+Sürücü testlerinden beşi **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
 içinden doğrular. İkililer gösterilmedikçe atlanırlar:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (başlangıç dosya sisteminde
 `/bin/sh` kabuğu bulunan herhangi bir çekirdek; örneğin bir Debian kurucusunun `vmlinuz` ve `initrd.gz` dosyaları).
@@ -459,6 +460,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 
 ## Sınırlar
 
+- İşlemci payı ve bellek garantisi Linux denetim gruplarını kullanır (cgroup v2: `cpu.weight`, `memory.min`); bu yüzden hizmetin alt grup açma yetkisi olmalıdır (birimde `Delegate=cpu memory`; `deploy/redox-qemu.service` içinde var). Yetki yoksa pay ya da garanti isteyen konuk başlatılmaz. Değerlerin yazılması gerçek çekirdekte sınandı; zamanlayıcının dolu bir işlemciyi sonra nasıl böldüğü ölçülmedi ve hizmetin önce kendini bir alt gruba taşıması gereken yol denenmedi. Garanti yalnızca bir kabul kuralı ile `memory.min` değeridir: sunucu belleği önceden ayrılmaz.
 - Konsol durum ekranı (`redox tty`), `install.sh` ya da ISO ile kurulumdan sonra ilk sanal konsolda oturum açma isteminin yerini alır. Metni ve kurulum betiğinin yazdığı birim dosyası sınandı; gerçek bir konsolda henüz görülmedi (geliştirme makinesinde yok), bu yüzden oradaki yanlış bir terminal ayarı ancak gerçek donanımda ortaya çıkar. Öbür konsollarda (Alt+F2) olağan oturum açma durur.
 - Ortak küme durumu yoktur. Birkaç sunucu birlikte görüntülenebilir, ama her biri kendi konuklarını yönetir.
 - Canlı taşıma, çalışan sanal makineyi onlarca milisaniyelik bir duraklamayla taşır, ama yalnızca sade konukları: UEFI ya da sanal TPM, takılı kurulum kalıbı, cloud-init sürücüsü, paylaşılan klasör, aktarılmış aygıt ya da bir şablona/yedeğe bağlı disk varsa taşımaz. İki QEMU birbirine doğrudan bağlanır (tek kullanımlık ön paylaşımlı anahtarlı TLS); hedefin taşıma kapıları kaynaktan erişilebilir olmalıdır. Gerçek QEMU'da bir Linux konukla, tek makinedeki iki sunucu arasında sınandı; iki fiziksel makine arasında, Windows konukla ya da ağır yük altında denenmedi. Eski "çalışırken al" yolu (askıya al, kopyala, sürdür) konuğu kopyalama süresince duraklatır ve canlı taşınamayan konuklar için durmaktadır.

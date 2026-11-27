@@ -377,3 +377,39 @@ pub(super) fn real_guest_agent_brings_hardware_online_and_receives_files() {
     d.apply(&g, Action::Stop).unwrap();
     let _ = std::fs::remove_dir_all(&real.dir);
 }
+
+/// İşlemci payı ve bellek garantisi, gerçek çekirdeğin denetim gruplarında: QEMU süreci konuğun grubuna alınır
+/// ve değerler oraya yazılır. Test sürecinin, alt grup açabildiği bir denetim grubunda çalışması gerekir
+/// (`systemd-run --user --scope -p Delegate=yes`); değilse atlanır.
+#[test]
+pub(super) fn real_qemu_guest_gets_its_cpu_weight_and_memory_guarantee() {
+    let Some(real) = real() else { return };
+    let d = QemuDriver::new(real.cfg.clone()).unwrap();
+    let mut g = guest(&real.cfg, "gercek-pay");
+    (g.mem_total_mb, g.hw.cpu_shares, g.hw.mem_reserve_mb) = (512, 300, 256);
+    d.create(&g).unwrap();
+    match d.apply(&g, Action::Start) {
+        Err(e) if e.contains("denetim grubu") => {
+            eprintln!("ATLANDI: bu süreç alt denetim grubu açamıyor ({e})");
+            assert_eq!(status(&d, &g), GuestStatus::Stopped, "yetki yokken konuk çalışır bırakılmaz");
+            return;
+        }
+        started => started.unwrap(),
+    }
+    let pid = std::fs::read_to_string(real.cfg.pid_path(g.vmid)).unwrap().trim().to_string();
+    let path = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap().lines().find_map(|l| l.strip_prefix("0::").map(str::to_string)).unwrap();
+    assert!(path.ends_with(&format!("/vm-{}", g.vmid)), "QEMU konuğun grubunda olmalı: {path}");
+    let group = Path::new("/sys/fs/cgroup").join(path.trim_start_matches('/'));
+    let read = |file: &str| std::fs::read_to_string(group.join(file)).unwrap().trim().to_string();
+    assert_eq!((read("cpu.weight"), read("memory.min")), ("300".to_string(), (256u64 << 20).to_string()));
+    assert!(read("cgroup.procs").lines().any(|p| p == pid));
+
+    // Çalışırken değişir.
+    (g.hw.cpu_shares, g.hw.mem_reserve_mb) = (50, 0);
+    d.configure(&g).unwrap();
+    assert_eq!((read("cpu.weight"), read("memory.min")), ("50".to_string(), "0".to_string()));
+
+    d.apply(&g, Action::Stop).unwrap();
+    assert!(!group.exists(), "kapanan konuğun grubu kaldırılır");
+    let _ = std::fs::remove_dir_all(&real.dir);
+}

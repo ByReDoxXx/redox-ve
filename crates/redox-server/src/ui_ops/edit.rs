@@ -78,6 +78,8 @@ pub async fn edit(
             boot_delay: number(&f.boot_delay, (tx("Başlatma gecikmesi")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general),
             schedules: None,
             restart: general.then(|| f.restart.is_some()),
+            cpu_shares: number(&f.cpu_shares, (tx("İşlemci payı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| general && guest.kind == redox_core::GuestKind::Vm),
+            mem_reserve_mb: number(&f.mem_reserve_mb, (tx("Bellek garantisi")))?.filter(|_| general && guest.kind == redox_core::GuestKind::Vm),
             disk_mbps: number(&f.disk_mbps, (tx("Disk hız sınırı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
             disk_iops: number(&f.disk_iops, (tx("Disk işlem sınırı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
             shares: if hardware_sent && guest.kind == redox_core::GuestKind::Vm { Some(redox_core::hw::parse_shares(&f.shares)?) } else { None },

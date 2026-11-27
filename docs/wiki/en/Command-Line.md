@@ -40,7 +40,7 @@ redox task list
 redox usage
 ```
 
-`redox vm set` keys: `name cores max-cores memory max-memory os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops
+`redox vm set` keys: `name cores max-cores cpu-shares memory max-memory mem-reserve os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops
 net-mbps vlan cpu balloon nested nic-guard firewall rpo test-port test-cmd backup-time backup-keep backup-pre backup-post`
 and more; `redox help` prints the full list.
 

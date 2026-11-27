@@ -1149,3 +1149,49 @@ fn only_plain_running_vms_are_migrated_live_and_the_source_copy_does_not_restart
         assert!(!crate::valid_migrate_host(bad), "{bad}");
     }
 }
+
+#[test]
+fn cpu_shares_and_memory_reservations_are_validated_and_reservations_must_fit_the_node() {
+    let mut c = cluster();
+    let set = |shares: Option<u32>, reserve: Option<u64>| GuestPatch { cpu_shares: shares, mem_reserve_mb: reserve, ..patch() };
+    // Pay: 0 olağan; sınırların dışı ve konteyner reddedilir. Çalışan konukta da değişir.
+    for bad in [1, 9, 10_001] {
+        assert!(c.update_guest(100, &set(Some(bad), None), "u", NOW).unwrap_err().to_string().contains("işlemci payı 10 ile 10000"), "{bad}");
+    }
+    c.update_guest(100, &set(Some(400), None), "u", NOW).unwrap();
+    assert_eq!((c.guest(100).unwrap().hw.cpu_shares, c.guest(100).unwrap().status), (400, GuestStatus::Running));
+    c.update_guest(100, &set(Some(0), None), "u", NOW).unwrap();
+    let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct).unwrap().vmid;
+    assert!(c.update_guest(ct, &set(Some(200), None), "u", NOW).unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
+    assert!(c.update_guest(ct, &set(None, Some(128)), "u", NOW).unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
+    assert_eq!((crate::hw::cpu_weight(0), crate::hw::cpu_weight(400), crate::hw::cpu_weight(99_999)), (100, 400, 10_000));
+
+    // Garanti: konuğun belleğini aşamaz; bellek garantinin altına indirilemez.
+    let mem = c.guest(103).unwrap().mem_total_mb;
+    assert!(c.update_guest(103, &set(None, Some(mem + 1)), "u", NOW).unwrap_err().to_string().contains("büyük olamaz"));
+    c.update_guest(103, &set(None, Some(4096)), "u", NOW).unwrap();
+    assert!(c.update_guest(103, &GuestPatch { memory_mb: Some(2048), ..patch() }, "u", NOW).unwrap_err().to_string().contains("büyük olamaz"));
+    // Balon garantinin altına inemez; garanti de balonla inilen belleğin üstüne çıkamaz.
+    c.guest_mut(103).unwrap().hw.balloon = true;
+    assert!(c.set_balloon_target(103, 2048).unwrap_err().to_string().contains("garantisinin (4096 MB) altına"));
+    assert!(c.set_dynamic_memory(103, 1024).unwrap_err().to_string().contains("garantisinin (4096 MB) altına"));
+    c.set_balloon_target(103, 8192).unwrap();
+    assert!(c.update_guest(103, &set(None, Some(12288)), "u", NOW).unwrap_err().to_string().contains("balonla inilebilen bellekten (8192 MB)"));
+    c.set_balloon_target(103, 0).unwrap();
+
+    // Çalışan konukların garantileri düğümün belleğini aşamaz: fazlası başlatılmaz, çalışırken de verilmez.
+    let node = c.guest(103).unwrap().node.clone();
+    let total = c.node(&node).unwrap().mem_total_mb;
+    let other = c.guests.iter().find(|g| g.node == node && g.kind == GuestKind::Vm && g.status == GuestStatus::Running).unwrap().vmid;
+    c.guest_mut(other).unwrap().hw.mem_reserve_mb = total - 2048;
+    let refused = c.begin_action(103, Action::Start, "u", NOW).unwrap_err().to_string();
+    assert!(refused.contains("garanti edilebilecek bellek yetmiyor") && refused.contains(&format!("{} MB garanti verilmiş", total - 2048)), "{refused}");
+    assert_eq!(c.guest(103).unwrap().lock, None, "reddedilen başlatma konuğu kilitlemez");
+    c.update_guest(103, &set(None, Some(2048)), "u", NOW).unwrap();
+    let task = c.begin_action(103, Action::Start, "u", NOW).unwrap();
+    c.complete_task(task, Ok(()), NOW).unwrap();
+    assert!(c.update_guest(103, &set(None, Some(4096)), "u", NOW).unwrap_err().to_string().contains("garanti edilebilecek bellek yetmiyor"));
+    // Kapalı konukların garantisi sayılmaz.
+    c.guest_mut(other).unwrap().status = GuestStatus::Stopped;
+    c.update_guest(103, &set(None, Some(4096)), "u", NOW).unwrap();
+}

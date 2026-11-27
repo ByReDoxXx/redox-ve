@@ -40,6 +40,18 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                         label class="check" { input type="checkbox" name="restart" value="1" checked[f.restart.is_some()]; (tx("Kendiliğinden kapanırsa yeniden başlat")) }
                         span class="hint" tabindex="0" role="note" { (tx("Konuk çökerse ya da içinden kapatılırsa yaklaşık 15 saniye içinde yeniden açılır (10 dakikada en çok ")) (crate::ha::MAX_RESTARTS) (tx(" kez). Kalıcı kapatmak için panelden kapatın.")) }
                     }
+                    @if g.kind == GuestKind::Vm {
+                        div class="field" {
+                            label for="cpu_shares" { (tx("İşlemci payı")) }
+                            input id="cpu_shares" name="cpu_shares" type="text" inputmode="numeric" value=(f.cpu_shares);
+                            span class="hint" tabindex="0" role="note" { (tx("Sunucunun işlemcisi yetmediğinde konuğun payı: 200 paylı konuk 100 paylının iki katı işlemci alır. 0 olağandır (100). İşlemci boşken kimse kısılmaz; çalışırken de değişir.")) }
+                        }
+                        div class="field" {
+                            label for="mem_reserve_mb" { (tx("Bellek garantisi (MB)")) }
+                            input id="mem_reserve_mb" name="mem_reserve_mb" type="text" inputmode="numeric" value=(f.mem_reserve_mb);
+                            span class="hint" tabindex="0" role="note" { (tx("Sunucunun belleği daraldığında bu konuktan geri alınmayacak bellek. Çalışan konukların garantileri toplamı sunucunun belleğini aşamaz; sığmayan konuk başlatılmaz. 0: garanti yok.")) }
+                        }
+                    }
                     div class="field" {
                         label for="boot_order" { (tx("Başlatma sırası")) }
                         input id="boot_order" name="boot_order" type="text" inputmode="numeric" value=(f.boot_order);

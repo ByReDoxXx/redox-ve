@@ -36,6 +36,8 @@ pub struct QemuConfig {
     pub cbt: bool,
     /// Yedek kopyalama hız sınırı (MB/sn, disk başına); 0 sınırsız. Yedek, konukların disk hızını tüketmesin diye.
     pub backup_mbps: u64,
+    /// Konukların denetim gruplarının açılacağı dizin; `None` ise hizmetin kendi grubundan bulunur.
+    pub cgroup_base: Option<PathBuf>,
 }
 
 impl QemuConfig {
@@ -57,6 +59,7 @@ impl QemuConfig {
             incremental_backups: false,
             backup_passphrase: None,
             backup_mbps: 0,
+            cgroup_base: None,
             cbt: false,
         }
     }

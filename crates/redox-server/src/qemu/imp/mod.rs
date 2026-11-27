@@ -10,6 +10,7 @@ use super::{cpu_pct, last_line, lock, parse_qmp_line, parse_stat_ticks, parse_vm
 
 mod host;
 mod hotplug;
+mod limits;
 mod live;
 mod measure;
 mod migrate;
@@ -17,6 +18,7 @@ mod power;
 
 pub(super) use host::*;
 pub use hotplug::*;
+pub use limits::*;
 pub use live::*;
 pub(super) use measure::*;
 pub use migrate::*;
@@ -114,6 +116,7 @@ fn tool(bin: &str, args: &[&str]) -> Result<(), String> {
 }
 
 fn cleanup(d: &QemuDriver, vmid: VmId) {
+    drop_limits(d, vmid);
     stop_tpm(d, vmid);
     remove_vlan_taps(d, vmid);
     let _ = std::fs::remove_file(d.cfg.pid_path(vmid));

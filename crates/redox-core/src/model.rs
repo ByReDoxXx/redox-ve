@@ -468,6 +468,10 @@ pub struct GuestPatch {
     pub max_cores: Option<u32>,
     /// Çalışırken çıkılabilecek en fazla bellek (MB); 0 kapatır.
     pub max_memory_mb: Option<u64>,
+    /// İşlemci payı (0: olağan).
+    pub cpu_shares: Option<u32>,
+    /// Bellek garantisi (MB; 0: yok).
+    pub mem_reserve_mb: Option<u64>,
     /// Bellek balonu aygıtı.
     pub balloon: Option<bool>,
     /// İç içe sanallaştırma.

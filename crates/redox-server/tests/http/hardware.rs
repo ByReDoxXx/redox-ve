@@ -245,3 +245,30 @@ pub(super) async fn live_migration_endpoints_are_admin_only_and_validate_their_i
         assert_eq!(redox_server::operator_target(path.trim_start_matches("/api/v1")), None, "{path}");
     }
 }
+
+// ---------- İşlemci payı ve bellek garantisi ----------
+
+#[tokio::test]
+pub(super) async fn cpu_shares_and_memory_reservation_are_set_on_the_options_tab() {
+    let (app, state) = setup_real();
+    let hw = |state: &AppState| {
+        let g = state.snapshot().guest(103).unwrap().clone();
+        (g.hw.cpu_shares, g.hw.mem_reserve_mb)
+    };
+    let tab = page(&app, "/guests/103?tab=secenekler").await;
+    assert!(tab.contains(r#"<input id="cpu_shares" name="cpu_shares" type="text" inputmode="numeric" value="0""#) && tab.contains(r#"name="mem_reserve_mb""#), "{tab}");
+    assert!(!page(&app, "/guests/202?tab=secenekler").await.contains(r#"name="cpu_shares""#), "konteynerde yok");
+    let base = "part=secenekler&name=win-build&os=windows-2022&tags=&backup_time=&backup_keep=7&boot_order=0&boot_delay=0&fw_rules=&pool=";
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&cpu_shares=200&mem_reserve_mb=4096")).await.contains("notice="));
+    assert_eq!(hw(&state), (200, 4096));
+    for bad in ["cpu_shares=5&mem_reserve_mb=0", "cpu_shares=200&mem_reserve_mb=999999", "cpu_shares=çok&mem_reserve_mb=0"] {
+        assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&{bad}")).await.contains("error="), "{bad}");
+    }
+    assert_eq!(hw(&state), (200, 4096), "reddedilen istek kaydı değiştirmez");
+    // Çalışırken de değişir (donanım ayarı değildir); API'de aynı alanlar.
+    state.mutate(|c| c.guest_mut_for_import(103).unwrap().status = GuestStatus::Running);
+    let (status, v) = api(&app, request(Method::PATCH, "/api/v1/guests/103").header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "cpu_shares": 50, "mem_reserve_mb": 0 }).to_string())).unwrap()).await;
+    assert_eq!((status, hw(&state)), (StatusCode::OK, (50, 0)), "{v}");
+    let shown = page(&app, "/guests/103?tab=secenekler").await;
+    assert!(shown.contains(r#"name="cpu_shares" type="text" inputmode="numeric" value="50""#), "{shown}");
+}
