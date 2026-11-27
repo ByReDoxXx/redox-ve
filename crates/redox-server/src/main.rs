@@ -948,6 +948,7 @@ fn main() -> ExitCode {
             _ => Err("kullanım: redox ldap test <ayar-dosyası> <kullanıcı>".to_string()),
         },
         Some("host") => host_helper(&args.iter().map(String::as_str).collect::<Vec<_>>()),
+        Some("acme") => redox_server::acme::command(&args[1..].iter().map(String::as_str).collect::<Vec<_>>()).map(|out| println!("{}", redox_server::i18n::cli_text(&out))),
         Some("tls") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
             ["tls", "self-signed", name, "--dir", dir] => redox_server::tls::self_signed("openssl", name, std::path::Path::new(dir)).map(|(cert, key)| println!("{}\n{}", cert.display(), key.display())),
             _ => Err("kullanım: redox tls self-signed <sunucu-adı-ya-da-adresi> --dir <dizin>".to_string()),

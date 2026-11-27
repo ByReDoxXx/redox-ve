@@ -120,6 +120,8 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox user ldap <name> on|off --users <file>  (password checked in LDAP/AD; on the server: serve --ldap <settings-file>)
   redox ldap test <settings-file> <user>        (tries the LDAP settings)
   redox node perf | health | update      (performance hardware; disk health and pending updates; ask to install the updates)
+  redox acme issue --domain <name> --dir <dir> --agree-tos [--email <address>] [--staging]   (Let's Encrypt certificate; port 80 must be reachable)
+  redox acme renew --dir <dir> | status --dir <dir>                 (renews when fewer than 30 days are left; run it from a timer)
   redox tls self-signed <name> --dir <dir>   (self-signed certificate; on the server: serve --tls-cert … --tls-key …)
   redox hostnet list | remove <name>                                (server networks)
   redox hostnet bond <name> <active-backup|802.3ad|balance-xor> <a,b> | vlan <iface> <tag> | bridge <name> [ports=a,b] [vlan-aware=true]

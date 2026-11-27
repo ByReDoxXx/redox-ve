@@ -137,6 +137,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox user ldap <ad> on|off --users <dosya>   (parola LDAP/AD'de doğrulanır; sunucuya: serve --ldap <ayar-dosyası>)
   redox ldap test <ayar-dosyası> <kullanıcı>    (LDAP ayarını dener)
   redox node perf | health | update      (performans donanımı; disk sağlığı ve bekleyen güncellemeler; güncellemeleri kurma isteği)
+  redox acme issue --domain <ad> --dir <dizin> --agree-tos [--email <adres>] [--staging]   (Let's Encrypt sertifikası; 80 numaralı kapı açık olmalı)
+  redox acme renew --dir <dizin> | status --dir <dizin>            (30 günden az kalınca yeniler; zamanlayıcıyla çalıştırın)
   redox tls self-signed <ad> --dir <dizin>   (kendinden imzalı sertifika; sunucuya: serve --tls-cert … --tls-key …)
   redox hostnet list | remove <ad>                                  (sunucu ağları)
   redox hostnet bond <ad> <active-backup|802.3ad|balance-xor> <a,b> | vlan <arayüz> <etiket> | bridge <ad> [ports=a,b] [vlan-aware=true]

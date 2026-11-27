@@ -2,6 +2,7 @@
 // Çeviri işlevi çağrıları hem maud şablonunda hem olağan ifadede geçerli olsun diye parantezlidir.
 #![allow(unused_parens, clippy::double_parens)]
 
+pub mod acme;
 pub mod alerts;
 pub mod api;
 pub mod audit;

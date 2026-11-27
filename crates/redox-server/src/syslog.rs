@@ -242,7 +242,7 @@ fn run(target: Target, host: String, waiting: Receiver<AuditEntry>, dropped: Arc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader, Read};
+    use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
 
     fn entry(action: &str, ok: bool) -> AuditEntry {
@@ -324,6 +324,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn tls_sends_only_to_a_trusted_certificate() {
+        use std::io::Read;
         let dir = std::env::temp_dir().join(format!("redox-syslog-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let (cert, key) = crate::tls::self_signed("openssl", "localhost", &dir).unwrap();
