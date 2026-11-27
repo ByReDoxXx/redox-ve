@@ -416,6 +416,10 @@ impl Hypervisor for HostDriver {
         self.vm.bridges()
     }
 
+    fn oci_images(&self) -> bool {
+        self.ct.as_ref().is_some_and(|d| d.oci_images())
+    }
+
     fn templates(&self) -> Vec<String> {
         self.ct.as_ref().map(|d| d.templates()).unwrap_or_default()
     }

@@ -509,6 +509,11 @@ pub trait Hypervisor: Send + Sync {
     }
 
     /// Konteyner şablonları (dağıtım-sürüm). Boşsa işletim sistemi serbest metindir.
+    /// Konteyner şablonu olarak `oci:<imaj>` kabul ediliyor mu?
+    fn oci_images(&self) -> bool {
+        false
+    }
+
     fn templates(&self) -> Vec<String> {
         Vec::new()
     }

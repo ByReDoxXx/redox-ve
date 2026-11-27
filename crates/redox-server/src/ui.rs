@@ -402,7 +402,7 @@ pub async fn new_form(State(st): State<AppState>,
 /// Oluşturma ve düzenleme formlarının sürücüden gelen seçenekleri.
 pub(crate) fn form_options(st: &AppState) -> view::FormOptions {
     let d = st.driver();
-    view::FormOptions { isos: d.isos(), bridges: d.bridges(), templates: d.templates(), images: d.images(), vnc: false }
+    view::FormOptions { isos: d.isos(), bridges: d.bridges(), templates: d.templates(), oci: d.oci_images(), images: d.images(), vnc: false }
 }
 
 fn number<T: std::str::FromStr>(raw: &str, field: &'static str, label: &str, errors: &mut FieldErrors) -> Option<T> {
@@ -454,7 +454,10 @@ pub async fn create(State(st): State<AppState>,
             memory_mb,
             disk_gb,
             storage: form.storage.clone(),
-            os: form.os.trim().to_string(),
+            os: match form.oci.trim() {
+                "" => form.os.trim().to_string(),
+                image => format!("{}{image}", redox_core::oci::OCI_PREFIX),
+            },
             bridge: form.bridge.trim().to_string(),
             onboot: form.onboot.is_some(),
             iso: Some(form.iso.trim()).filter(|s| !s.is_empty()).map(str::to_string),
@@ -470,6 +473,8 @@ pub async fn create(State(st): State<AppState>,
                 disk_bus: redox_core::hw::DiskBus::parse(form.disk_bus.trim()).unwrap_or_default(),
                 nic_model: redox_core::hw::NicModel::parse(form.nic_model.trim()).unwrap_or_default(),
                 encrypted: form.encrypted.is_some(),
+                ct_address: filled(&form.ct_address),
+                ct_gateway: filled(&form.ct_gateway),
                 ..Default::default()
             },
         };

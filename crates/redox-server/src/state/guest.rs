@@ -30,12 +30,22 @@ impl AppState {
         if spec.hw.encrypted && driver.is_real() && !driver.disk_encryption() {
             return Err(Error::InvalidSpec("disk şifreleme kapalı: sunucuyu --disk-key-file ile başlatın".to_string()));
         }
+        if let Some(image) = redox_core::oci::oci_reference(&spec.os) {
+            if spec.kind != redox_core::GuestKind::Ct {
+                return Err(Error::InvalidSpec("OCI imajı yalnızca konteynerlerde kullanılır".to_string()));
+            }
+            redox_core::oci::ImageRef::parse(image).map_err(Error::InvalidSpec)?;
+        }
         self.check_firewall(spec.hw.firewall)?;
         self.check_machine(spec.hw.firmware == redox_core::hw::Firmware::Uefi, spec.hw.tpm)?;
         if driver.is_real() {
             self.check_bridge(&spec.bridge)?;
             let templates = driver.templates();
-            if spec.kind == redox_core::GuestKind::Ct && !templates.is_empty() && !templates.contains(&spec.os) {
+            let image = redox_core::oci::oci_reference(&spec.os);
+            if image.is_some() && !driver.oci_images() {
+                return Err(Error::InvalidSpec("bu sunucu OCI imajından konteyner oluşturamıyor (LXC gerekir)".to_string()));
+            }
+            if spec.kind == redox_core::GuestKind::Ct && image.is_none() && !templates.is_empty() && !templates.contains(&spec.os) {
                 return Err(Error::InvalidSpec(format!("bilinmeyen konteyner şablonu: {}; seçenekler: {}", spec.os, templates.join(", "))));
             }
         }

@@ -17,6 +17,7 @@ pub use handover::handover_blocker;
 pub mod health;
 pub mod hostnet;
 pub mod hw;
+pub mod oci;
 pub mod jobs;
 pub mod metrics;
 pub mod mirrors;

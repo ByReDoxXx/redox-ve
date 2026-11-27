@@ -899,6 +899,11 @@ fn main() -> ExitCode {
         }),
         Some("user" | "token") => manage_users(&args),
         Some("tty") => redox_server::tty::run(&args[1..]),
+        // İç komut: sunucu, OCI katmanını konteynerin kimlik eşlemesi içinde bununla açar.
+        Some("oci-unpack") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+            ["oci-unpack", root, compression, budget] => redox_server::oci::unpack_command(root, compression, budget),
+            _ => Err("kullanım: redox oci-unpack <kök> <tar|gzip|zstd> <bayt-sınırı>".to_string()),
+        },
         Some("shared") if args.get(1).map(String::as_str) == Some("init") => match args.get(2) {
             Some(dir) if args.len() == 3 => redox_server::shared::init(std::path::Path::new(dir)).map(|id| println!("ortak depo hazır: {id}")),
             _ => Err("kullanım: redox shared init <dizin>".to_string()),

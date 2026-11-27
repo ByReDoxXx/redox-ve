@@ -20,6 +20,7 @@ pub mod history;
 pub mod host;
 pub mod hostdriver;
 pub mod lxc;
+pub mod oci;
 pub mod mail;
 pub mod media;
 pub mod metrics;

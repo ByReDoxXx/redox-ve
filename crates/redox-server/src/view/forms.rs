@@ -25,6 +25,10 @@ pub struct NewGuestForm {
     pub image: String,
     pub ci_user: String,
     pub ci_ssh_key: String,
+    /// OCI imajı; doluysa şablonun yerine geçer.
+    pub oci: String,
+    pub ct_address: String,
+    pub ct_gateway: String,
     pub firmware: String,
     pub tpm: Option<String>,
 }
@@ -70,6 +74,8 @@ pub struct FormOptions {
     pub isos: Vec<String>,
     pub bridges: Vec<String>,
     pub templates: Vec<String>,
+    /// Konteyner OCI imajından oluşturulabiliyor mu?
+    pub oci: bool,
     /// Hazır bulut imajları.
     pub images: Vec<String>,
     /// Görüntülenen konuğun canlı konsolu (VNC soketi) hazır mı?
@@ -135,6 +141,17 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                         (field("os", (tx("Şablon")), true, (tx("Kök dosya sistemi bu dağıtımın hazır imajından indirilir.")), html! {
                             select id="os" name="os" { @for t in &opts.templates { option value=(t) selected[*t == f.os] { (t) } } }
                         }))
+                        @if opts.oci {
+                            (field("oci", (tx("OCI imajı")), false, (tx("Doluysa şablon yerine bu Docker / OCI imajı çekilir ve konteyner imajın programını çalıştırır. Yalnızca herkese açık linux/amd64 imajlar.")), html! {
+                                input id="oci" name="oci" type="text" value=(f.oci) autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="nginx:1.29";
+                            }))
+                            (field("ct_address", (tx("Sabit IP adresi")), false, (tx("İmajlarda genellikle DHCP istemcisi yoktur: ağ için adres verin. Boşsa adres atanmaz.")), html! {
+                                input id="ct_address" name="ct_address" type="text" value=(f.ct_address) autocomplete="off" placeholder="10.0.3.50/24";
+                            }))
+                            (field("ct_gateway", (tx("Ağ geçidi")), false, (tx("Adresin ağ geçidi; ad sunucusu olarak da yazılır. LXC'nin NAT köprüsünde 10.0.3.1.")), html! {
+                                input id="ct_gateway" name="ct_gateway" type="text" value=(f.ct_gateway) autocomplete="off" placeholder="10.0.3.1";
+                            }))
+                        }
                     } @else {
                         (field("os", (tx("İşletim sistemi")), false, (tx("Bilgi amaçlı etiket.")), html! {
                             input id="os" name="os" type="text" value=(f.os);

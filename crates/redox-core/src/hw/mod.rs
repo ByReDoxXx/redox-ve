@@ -77,6 +77,10 @@ pub struct Hardware {
     /// dahildir; askıya alınan konuk aynı parçalarla döner. Konuk sıfırdan açılırken liste boşaltılır:
     /// eklenen bellek artık açılış belleğinin parçasıdır.
     pub dimms: Vec<u64>,
+    /// Konteynerin sabit IPv4 adresi (`10.0.3.50/24`). OCI imajlarında DHCP istemcisi yoktur.
+    pub ct_address: Option<String>,
+    /// O adresin ağ geçidi.
+    pub ct_gateway: Option<String>,
     /// Ses kartı (Intel HD Audio) takılı mı? Ses, canlı konsoldan dinlenir.
     pub sound: bool,
     /// Bellek balonu aygıtı takılı mı? Takılıysa konuğun belleği çalışırken küçültülüp büyütülebilir.
@@ -367,6 +371,17 @@ impl Hardware {
         }
         if (!self.cpu_type.is_empty() || self.balloon) && kind != GuestKind::Vm {
             return Err("işlemci türü ve bellek balonu yalnızca sanal makinelerde kullanılır".to_string());
+        }
+        if (self.ct_address.is_some() || self.ct_gateway.is_some()) && kind != GuestKind::Ct {
+            return Err("konteyner adresi yalnızca konteynerlerde kullanılır (sanal makinede cloud-init adresini kullanın)".to_string());
+        }
+        if let Some(address) = self.ct_address.as_ref().filter(|a| !valid_ci_address(a)) {
+            return Err(format!("geçersiz konteyner adresi: {address} (örn. 10.0.3.50/24)"));
+        }
+        if let Some(gateway) = &self.ct_gateway {
+            if !valid_ipv4(gateway) || self.ct_address.is_none() {
+                return Err(format!("geçersiz ağ geçidi: {gateway} (yalnızca sabit adresle birlikte verilir)"));
+            }
         }
         if self.sound && kind != GuestKind::Vm {
             return Err("ses aygıtı yalnızca sanal makinelerde kullanılır".to_string());

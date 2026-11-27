@@ -101,6 +101,8 @@ pub struct LxcConfig {
     pub stop_timeout: Duration,
     /// Yetkisiz çalışma için kimlik eşlemesi: (uid başlangıcı, adet, gid başlangıcı, adet).
     pub idmap: Option<(u64, u64, u64, u64)>,
+    /// OCI katmanlarını açan program (`redox`); `None` ise çalışan ikilinin kendisi.
+    pub extractor: Option<PathBuf>,
     /// Konteyner yedeklerinin (tar.gz) durduğu dizin.
     pub backups_dir: PathBuf,
     /// Verilirse yedek arşivleri diske bu parolayla şifreli yazılır.
@@ -111,7 +113,7 @@ impl LxcConfig {
     pub fn new(lxc_path: impl Into<PathBuf>) -> Self {
         let lxc_path = lxc_path.into();
         let backups_dir = lxc_path.parent().map(|p| p.join("backups")).unwrap_or_else(|| lxc_path.join("backups"));
-        LxcConfig { lxc_path, bin_dir: None, stop_timeout: Duration::from_secs(30), idmap: None, backups_dir, backup_passphrase: None }
+        LxcConfig { lxc_path, bin_dir: None, stop_timeout: Duration::from_secs(30), idmap: None, extractor: None, backups_dir, backup_passphrase: None }
     }
 }
 
@@ -147,6 +149,13 @@ pub fn managed_block(g: &Guest) -> String {
             format!("lxc.net.{n}.flags = up"),
             format!("lxc.net.{n}.hwaddr = {}", redox_core::mac_for_nic(g.vmid, n as u8)),
         ]);
+    }
+    // Sabit adres: imajında DHCP istemcisi olmayan konteyner için LXC kartı kendisi ayarlar.
+    if let Some(address) = g.hw.ct_address.as_deref().filter(|a| redox_core::hw::valid_ci_address(a)) {
+        lines.push(format!("lxc.net.0.ipv4.address = {address}"));
+        if let Some(gateway) = g.hw.ct_gateway.as_deref().filter(|gw| redox_core::hw::valid_ipv4(gw)) {
+            lines.push(format!("lxc.net.0.ipv4.gateway = {gateway}"));
+        }
     }
     lines.push(END.to_string());
     lines.push(String::new());
@@ -218,6 +227,8 @@ pub struct LxcDriver {
     /// Son gözlemde okunan adresler.
     ips: Mutex<HashMap<VmId, String>>,
 }
+
+mod image;
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -401,7 +412,14 @@ impl Hypervisor for LxcDriver {
         TEMPLATES.iter().map(|(name, _, _)| name.to_string()).filter(|name| !RETIRED.contains(&name.as_str())).collect()
     }
 
+    fn oci_images(&self) -> bool {
+        cfg!(unix)
+    }
+
     fn create(&self, g: &Guest) -> Result<(), String> {
+        if let Some(image) = redox_core::oci::oci_reference(&g.os) {
+            return self.create_from_image(g, image);
+        }
         let (dist, release) = template(&g.os).ok_or_else(|| format!("bilinmeyen şablon: {}", g.os))?;
         if self.cfg.lxc_path.join(container_name(g.vmid)).exists() {
             return Err(format!("{} adlı konteyner dizini zaten var", container_name(g.vmid)));
