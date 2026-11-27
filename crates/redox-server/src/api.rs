@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
         .route("/guests/{vmid}/disks", post(disk_add))
         .route("/guests/{vmid}/nics", post(nic_add))
         .route("/guests/{vmid}/balloon", post(balloon))
+        .route("/guests/{vmid}/media", post(media_change))
         .route("/guests/{vmid}/cores", post(cores_add))
         .route("/guests/{vmid}/memory", post(memory_add))
         .route("/guests/{vmid}/usage", get(usage).delete(usage_reset))
@@ -895,6 +896,20 @@ struct MemoryBody {
 async fn memory_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<MemoryBody>) -> ApiResult<serde_json::Value> {
     let online = st.memory_add(vmid, body.memory_mb, &me.user)?;
     Ok(Json(json!({ "memory_mb": body.memory_mb, "online": online })))
+}
+
+#[derive(serde::Deserialize)]
+struct MediaBody {
+    /// CD sürücüsü: 1 ya da 2.
+    drive: u8,
+    /// Takılacak kalıp; boşsa sürücü boşaltılır.
+    #[serde(default)]
+    iso: String,
+}
+
+async fn media_change(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(body): Json<MediaBody>) -> Result<StatusCode, ApiError> {
+    st.media_change(vmid, body.drive, &body.iso, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(serde::Deserialize)]

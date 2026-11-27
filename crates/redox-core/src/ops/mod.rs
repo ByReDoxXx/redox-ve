@@ -10,6 +10,7 @@ mod clone;
 mod cpu;
 mod disks;
 mod edit;
+mod media;
 mod memory;
 pub mod migrate;
 mod schedule;

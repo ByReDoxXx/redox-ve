@@ -31,8 +31,11 @@ pub fn migrate_blocker(g: &Guest) -> Option<&'static str> {
     if !g.hw.shares.is_empty() {
         return Some("paylaşılan klasörü olan konuk canlı taşınamaz; kapatıp öyle taşıyın");
     }
-    if g.iso.is_some() {
+    if g.iso.is_some() || g.hw.iso2.is_some() {
         return Some("kurulum kalıbı takılı konuk canlı taşınamaz; önce kalıbı çıkarın (konuk kapalıyken)");
+    }
+    if g.hw.media_changed {
+        return Some("kalıbı çalışırken değiştirildi: konuğu bir kez kapatıp açın, sonra canlı taşıyın");
     }
     if g.hw.cloud_init() {
         return Some("cloud-init sürücüsü takılı konuk canlı taşınamaz; kapatıp öyle taşıyın");
@@ -70,6 +73,7 @@ impl Cluster {
             g.onboot = false;
             g.hw.restart = false;
             g.hw.dimms.clear();
+            g.hw.media_changed = false;
             if !g.tags.iter().any(|t| t == MIGRATED_TAG) && g.tags.len() < MAX_TAGS {
                 g.tags.push(MIGRATED_TAG.to_string());
             }

@@ -18,6 +18,9 @@ pub struct NewGuestForm {
     pub bridge: String,
     pub onboot: Option<String>,
     pub iso: String,
+    pub iso2: String,
+    pub disk_bus: String,
+    pub nic_model: String,
     pub image: String,
     pub ci_user: String,
     pub ci_ssh_key: String,
@@ -145,6 +148,12 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                                     @for i in isos { option value=(i) selected[*i == f.iso] { (i) } }
                                 }
                             }))
+                        (field("iso2", (tx("İkinci kalıp (sürücüler)")), false, (tx("İkinci CD sürücüsü. Windows kurarken virtio sürücü kalıbını buraya takın.")), html! {
+                            select id="iso2" name="iso2" {
+                                option value="" { "(yok)" }
+                                @for i in isos { option value=(i) selected[*i == f.iso2] { (i) } }
+                            }
+                        }))
                     }
                 }
             }
@@ -206,6 +215,7 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                             label class="check" { input type="checkbox" name="tpm" value="1" checked[f.tpm.is_some()]; (tx("Sanal TPM 2.0 ekle")) }
                             span class="hint" tabindex="0" role="note" { (tx("Sanal TPM 2.0. Windows 11 ve disk şifreleme (BitLocker) için gerekir.")) }
                         }
+                        (crate::view_ops::device_selects(None, &f.disk_bus, &f.nic_model, false))
                     }
                 }
             }

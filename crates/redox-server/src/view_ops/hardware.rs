@@ -15,6 +15,9 @@ pub struct EditForm {
     pub cores: String,
     pub memory_mb: String,
     pub iso: String,
+    pub iso2: String,
+    pub disk_bus: String,
+    pub nic_model: String,
     pub forwards: String,
     pub bridge: String,
     pub onboot: Option<String>,
@@ -69,6 +72,9 @@ impl EditForm {
             cores: g.cores.to_string(),
             memory_mb: g.mem_total_mb.to_string(),
             iso: g.iso.clone().unwrap_or_default(),
+            iso2: g.hw.iso2.clone().unwrap_or_default(),
+            disk_bus: g.hw.disk_bus.as_str().to_string(),
+            nic_model: g.hw.nic_model.as_str().to_string(),
             forwards: g.forwards.iter().map(|f| format!("{}:{}", f.host_port, f.guest_port)).collect::<Vec<_>>().join(", "),
             bridge: g.bridge.clone(),
             backup_time: g.backup_time.clone().unwrap_or_default(),
@@ -324,6 +330,9 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         }
                     }
                 }
+                @if p.admin && g.status == GuestStatus::Running && (g.iso.is_some() || g.hw.iso2.is_some() || g.hw.media_changed) {
+                    (media_card(p, g, isos))
+                }
                 @if g.hw.balloon {
                     div class="card" {
                         header { h2 { (tx("Bellek hedefi")) } (tip("Balon aygıtıyla konuğun kullandığı belleği çalışırken küçültür ya da büyütür.")) span class="note" { @if g.hw.balloon_mb == 0 { (tx("tamamı (")) (g.mem_total_mb) " MB)" } @else { (g.hw.balloon_mb) " / " (g.mem_total_mb) " MB" } } }
@@ -410,6 +419,19 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                             }
                             span class="hint" tabindex="0" role="note" { (tx("Takılıysa ilk açılış bu kalıptan yapılır. Kalıpları ")) a class="link" href="/storage" { (tx("Depolama")) } (tx(" sayfasından yüklersiniz.")) }
                         }
+                        div class="field" {
+                            label for="iso2" { (tx("İkinci kalıp (sürücüler)")) }
+                            @if p.real {
+                                select id="iso2" form="hw" name="iso2" disabled[off] {
+                                    option value="" { "(yok)" }
+                                    @for i in isos { option value=(i) selected[*i == f.iso2] { (i) } }
+                                }
+                            } @else {
+                                input id="iso2" form="hw" name="iso2" type="text" value=(f.iso2) placeholder="virtio-win.iso" disabled[off];
+                            }
+                            span class="hint" tabindex="0" role="note" { (tx("İkinci CD sürücüsü. Windows kurarken virtio sürücü kalıbını buraya takın.")) }
+                        }
+                        (device_selects(Some("hw"), &f.disk_bus, &f.nic_model, off))
                         div class="field" {
                             label for="usb" { (tx("USB aygıtları")) }
                             input id="usb" form="hw" name="usb" type="text" value=(f.usb) placeholder="046d:c52b" autocomplete="off" spellcheck="false" disabled[off];

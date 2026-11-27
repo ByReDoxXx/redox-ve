@@ -269,6 +269,11 @@ pub trait Hypervisor: Send + Sync {
         Err("bu sürücü çalışan konuğa ağ kartı takamaz".to_string())
     }
 
+    /// Çalışan konuğun CD sürücüsündeki kalıbı değiştirir (`drive`: 1 ya da 2); `None` sürücüyü boşaltır.
+    fn change_media(&self, _guest: &Guest, _drive: u8, _iso: Option<&str>) -> Result<(), String> {
+        Err("bu sürücü çalışan konukta kalıp değiştiremez".to_string())
+    }
+
     /// Çalışan konuğa bir çekirdek ekler (konuk boş çekirdek yuvalarıyla açılmış olmalıdır).
     fn hot_add_core(&self, _guest: &Guest) -> Result<(), String> {
         Err("bu sürücü çalışan konuğa çekirdek ekleyemez".to_string())
@@ -671,6 +676,10 @@ impl SimDriver {
 }
 
 impl Hypervisor for SimDriver {
+    fn change_media(&self, _guest: &Guest, _drive: u8, _iso: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+
     fn name(&self) -> &'static str {
         "sim"
     }

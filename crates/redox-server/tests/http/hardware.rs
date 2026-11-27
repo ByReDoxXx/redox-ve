@@ -449,3 +449,42 @@ pub(super) async fn balance_advice_is_shown_only_when_the_server_is_busy() {
     let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, "/cluster/send"), "peer=yok&vmid=103")).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// ---------- Uyumluluk aygıtları ve CD sürücüleri ----------
+
+#[tokio::test]
+pub(super) async fn windows_friendly_devices_are_chosen_at_creation_and_images_change_while_running() {
+    let (app, state) = setup();
+    // Yeni konuk formu: denetleyici ve kart modeli kaydedilir.
+    let to = post_ok(&app, "/guests", &format!("{VALID_FORM}&disk_bus=sata&nic_model=e1000e&iso2=virtio-win.iso")).await;
+    let vmid: u32 = to.split("/guests/").nth(1).and_then(|s| s.split('?').next()).unwrap().parse().unwrap_or_else(|_| panic!("{to}"));
+    let g = state.snapshot().guest(vmid).unwrap().clone();
+    assert_eq!((g.hw.disk_bus.as_str(), g.hw.nic_model.as_str(), g.hw.iso2.as_deref()), ("sata", "e1000e", Some("virtio-win.iso")));
+    let tab = page(&app, &format!("/guests/{vmid}?tab=donanim")).await;
+    assert!(tab.contains(r#"<option value="sata" selected>"#) && tab.contains(r#"<option value="e1000e" selected>"#), "{tab}");
+
+    // API: kapalı konukta değişir; bilinmeyen değer reddedilir.
+    let patch = |id: u32, body: Value| request(Method::PATCH, &format!("/api/v1/guests/{id}")).header(CONTENT_TYPE, "application/json").body(Body::from(body.to_string())).unwrap();
+    assert!(api(&app, patch(vmid, json!({ "disk_bus": "virtio-scsi", "iso": "win.iso" }))).await.0.is_success());
+    assert_eq!(state.snapshot().guest(vmid).unwrap().hw.disk_bus.as_str(), "virtio-scsi");
+    assert!(!send(&app, patch(vmid, json!({ "disk_bus": "ide" }))).await.0.is_success());
+    // Çalışan konukta aygıt tipi değişmez, kalıp ise kendi ucundan değişir.
+    let (status, v) = api(&app, patch(102, json!({ "disk_bus": "sata" }))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{v}");
+    let media = |id: u32, body: Value| post_json(&format!("/api/v1/guests/{id}/media"), &body);
+    assert!(api(&app, media(102, json!({ "drive": 1, "iso": "virtio-win.iso" }))).await.0.is_success());
+    let g = state.snapshot().guest(102).unwrap().clone();
+    assert_eq!((g.iso.as_deref(), g.hw.media_changed), (Some("virtio-win.iso"), true));
+    let (status, v) = api(&app, media(102, json!({ "drive": 3, "iso": "a.iso" }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(!api(&app, media(vmid, json!({ "drive": 1, "iso": "a.iso" }))).await.0.is_success(), "kapalı konukta bu uç kullanılmaz");
+    // Arayüz: kart yalnızca çalışan konukta; sürücü boşaltılır.
+    let tab = page(&app, "/guests/102?tab=donanim").await;
+    assert!(tab.contains(r#"action="/guests/102/media""#), "{tab}");
+    assert!(!page(&app, &format!("/guests/{vmid}?tab=donanim")).await.contains("/media\""));
+    assert!(post_ok(&app, "/guests/102/media", "drive=1&iso=").await.contains("notice="));
+    assert_eq!(state.snapshot().guest(102).unwrap().iso, None);
+    // İzleyici kalıp değiştiremez.
+    let denied = send(&app, as_viewer(Method::POST, "/api/v1/guests/102/media").header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "drive": 1 }).to_string())).unwrap()).await.0;
+    assert_eq!(denied, StatusCode::FORBIDDEN);
+}

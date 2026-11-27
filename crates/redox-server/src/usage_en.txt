@@ -50,6 +50,7 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox vm disk add <id> <GB> | disk remove <id> <number> | vm nic add <id> <nat|bridge>   (also on a running VM)
   redox vm resize <id> <GB>
   redox vm move <id> <storage>           (moves a VM's disks to another storage; also while it runs)
+  redox vm media <id> <1|2> [image]      (changes the image in a running guest's CD drive; without an image, ejects it)
   redox vm balloon <id> <MB>             (memory target; also while running, 0: all memory)
   redox vm cores <id> <count>            (raises a running guest to <count> cores; set max-cores=<most> while stopped first)
   redox vm memory <id> <MB>              (raises a running guest's memory to <MB>; set max-memory=<most> while stopped first)

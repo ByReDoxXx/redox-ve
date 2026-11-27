@@ -108,6 +108,31 @@ pub async fn balloon_set(State(st): State<AppState>, Extension(me): Extension<Id
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
+pub struct MediaForm {
+    drive: String,
+    iso: String,
+}
+
+/// Çalışan konuğun CD sürücüsündeki kalıbı değiştirir.
+pub async fn media_change(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(raw): Path<String>, Form(f): Form<MediaForm>) -> Redirect {
+    let vmid = match vmid_of(&raw) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let back = format!("/guests/{vmid}?tab=donanim");
+    let Ok(drive) = f.drive.trim().parse::<u8>() else {
+        return flash(&back, "error", (tx("CD sürücüsü seçilmedi.")));
+    };
+    let iso = f.iso.trim();
+    match st.media_change(vmid, drive, iso, &me.user) {
+        Ok(()) if iso.is_empty() => flash(&back, "notice", &tfmt(format!("{drive}. CD sürücüsü boşaltıldı."))),
+        Ok(()) => flash(&back, "notice", &tfmt(format!("{drive}. CD sürücüsüne {iso} takıldı."))),
+        Err(e) => failed(&back, &e),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 pub struct ResizeForm {
     disk_gb: String,
 }

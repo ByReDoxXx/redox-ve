@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{GuestKind, VmId};
 
+mod compat;
 mod cpu;
 mod devices;
 mod firewall;
@@ -14,6 +15,7 @@ mod memory;
 mod network;
 mod schedule;
 
+pub use compat::*;
 pub use cpu::*;
 pub use devices::*;
 pub use firewall::*;
@@ -135,6 +137,15 @@ pub struct Hardware {
     pub restart: bool,
     /// Sunucuyla paylaşılan klasörler (yalnızca sanal makinelerde; konukta 9p ile bağlanır).
     pub shares: Vec<Share>,
+    /// Asıl diskin denetleyicisi (Windows kurulumu ve aktarılan diskler için SATA).
+    pub disk_bus: DiskBus,
+    /// Ağ kartlarının modeli.
+    pub nic_model: NicModel,
+    /// İkinci CD sürücüsündeki kalıp (örn. kurulum kalıbının yanında virtio sürücüleri).
+    pub iso2: Option<String>,
+    /// Kalıp konuk çalışırken değiştirildi: çalışan süreç artık kayıttan aynı donanımla kurulamaz, bu yüzden
+    /// bir sonraki açılışa kadar canlı taşınmaz.
+    pub media_changed: bool,
     /// Hata toleransına uygun açılış: disk, çalışırken ikizin diskine bağlanabilsin diye sarılır. Yalnızca
     /// korumayı açıp kapatan işlemler değiştirir.
     #[serde(default)]
@@ -224,6 +235,12 @@ impl Hardware {
         }
         if let Some(bad) = self.fw_rules.iter().find(|r| !r.valid()) {
             return Err(format!("geçersiz güvenlik duvarı kuralı: {bad}"));
+        }
+        if (self.uses_compat()) && kind != GuestKind::Vm {
+            return Err("disk denetleyicisi, ağ kartı modeli ve ikinci kalıp yalnızca sanal makinelerde kullanılır".to_string());
+        }
+        if let Some(bad) = self.iso2.as_deref().filter(|name| !crate::model::valid_iso_name(name)) {
+            return Err(format!("geçersiz ISO adı: {bad}"));
         }
         if !self.disks.is_empty() && kind != GuestKind::Vm {
             return Err("ek disk yalnızca sanal makinelere eklenebilir".to_string());

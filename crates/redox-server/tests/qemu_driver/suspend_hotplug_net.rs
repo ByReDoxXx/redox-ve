@@ -125,7 +125,7 @@ pub(super) fn disks_and_nics_are_hot_added_to_a_running_guest() {
     d.apply(&g, Action::Start).unwrap();
     d.hot_add_disk(&g, 1).unwrap();
     let disk = cfg.extra_disk_path(g.vmid, 1).display().to_string();
-    assert!(log().contains(&format!("drive_add xd1 file={disk},if=none,id=xd1,format=qcow2\ndevice_add virtio-blk-pci xdev1 hp0 xd1\n")), "{}", log());
+    assert!(log().contains(&format!("drive_add xd1 file={disk},if=none,id=xd1,format=qcow2,discard=unmap\ndevice_add virtio-blk-pci xdev1 hp0 xd1\n")), "{}", log());
     assert!(d.hot_add_disk(&g, 1).unwrap_err().contains("tanıtılamadı"), "aynı disk ikinci kez takılmaz");
     assert!(!log().contains("drive_del xd1"), "takılı diskin sürücüsüne dokunulmaz");
 
@@ -157,7 +157,7 @@ pub(super) fn disks_and_nics_are_hot_added_to_a_running_guest() {
     // Yeniden açılışta aynı disk aynı bağlantı noktasında, komut satırından gelir.
     d.apply(&g, Action::Start).unwrap();
     let args = std::fs::read_to_string(format!("{}.args", cfg.qmp_path(g.vmid).display())).unwrap();
-    assert!(args.contains(&format!("file={disk},if=none,id=xd1,format=qcow2\n-device\nvirtio-blk-pci,drive=xd1,id=xdev1,bus=hp0")), "{args}");
+    assert!(args.contains(&format!("file={disk},if=none,id=xd1,format=qcow2,discard=unmap\n-device\nvirtio-blk-pci,drive=xd1,id=xdev1,bus=hp0")), "{args}");
     d.apply(&g, Action::Stop).unwrap();
     let _ = std::fs::remove_dir_all(dir);
 }

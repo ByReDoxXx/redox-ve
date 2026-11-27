@@ -1,6 +1,7 @@
 //! QEMU komut satırı: aygıt yerleşimi, ağ arka uçları, disk sınırları, cloud-init ve UEFI hazırlığı.
 
 use super::*;
+use redox_core::hw::DiskBus;
 
 /// QEMU seçenek değerlerinde virgül ayırıcıdır; yol içindeki virgül ikilenerek kaçırılır.
 pub(super) fn opt(path: &Path) -> String {
@@ -147,7 +148,20 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     if g.hw.ft {
         push(&["-drive", &super::ft_args::primary_drive(&cfg.disk_of(g))]);
     } else {
-        push(&["-drive", &format!("file={},if=virtio,format=qcow2{throttle}", opt(&cfg.disk_of(g)))]);
+        // `discard=unmap`: konukta silinen alan (TRIM) disk dosyasından geri verilir.
+        let file = opt(&cfg.disk_of(g));
+        match g.hw.disk_bus {
+            DiskBus::Virtio => push(&["-drive", &format!("file={file},if=virtio,format=qcow2,discard=unmap{throttle}")]),
+            DiskBus::VirtioScsi => {
+                push(&["-drive", &format!("file={file},if=none,id=sys0,format=qcow2,discard=unmap{throttle}")]);
+                push(&["-device", "virtio-scsi-pci,id=scsi0", "-device", "scsi-hd,drive=sys0,bus=scsi0.0"]);
+            }
+            // q35'in kendi AHCI denetleyicisi; ilk kapılar CD sürücülerine kalır.
+            DiskBus::Sata => {
+                push(&["-drive", &format!("file={file},if=none,id=sys0,format=qcow2,discard=unmap{throttle}")]);
+                push(&["-device", "ide-hd,drive=sys0,bus=ide.4"]);
+            }
+        }
     }
     // Hata toleranslı konuğa çalışırken aygıt takılmaz (ve "pc" makinesinde PCIe kök portu yoktur).
     if ports && !g.hw.ft {
@@ -158,15 +172,22 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     for disk in &g.hw.disks {
         let path = opt(&cfg.extra_disk_of(g, disk.id));
         if ports && (disk.id as usize) <= redox_core::hw::MAX_EXTRA_DISKS && disk.id > 0 {
-            push(&["-drive", &format!("file={path},if=none,id=xd{},format=qcow2{throttle}", disk.id)]);
+            push(&["-drive", &format!("file={path},if=none,id=xd{},format=qcow2,discard=unmap{throttle}", disk.id)]);
             push(&["-device", &format!("virtio-blk-pci,drive=xd{0},id=xdev{0},bus={1}", disk.id, disk_port(disk.id))]);
         } else {
-            push(&["-drive", &format!("file={path},if=virtio,format=qcow2{throttle}")]);
+            push(&["-drive", &format!("file={path},if=virtio,format=qcow2,discard=unmap{throttle}")]);
         }
     }
     // Geçersiz ad buraya ulaşmamalı (çekirdek doğrular); yine de yol kaçışına karşı yoksayılır.
-    if let Some(iso) = g.iso.as_deref().filter(|n| valid_iso_name(n)) {
-        push(&["-drive", &format!("file={},media=cdrom,readonly=on", opt(&cfg.iso_dir().join(iso)))]);
+    // İki CD sürücüsü; adları (`cd0`, `cd1`) çalışırken kalıp değiştirmek içindir.
+    let cds = [g.iso.as_deref(), g.hw.iso2.as_deref()];
+    let mut bootable_cd = false;
+    for (i, iso) in cds.iter().enumerate() {
+        let Some(iso) = iso.filter(|n| valid_iso_name(n)) else { continue };
+        push(&["-drive", &format!("file={},media=cdrom,readonly=on,id=cd{i}", opt(&cfg.iso_dir().join(iso)))]);
+        bootable_cd = true;
+    }
+    if bootable_cd {
         // İlk açılışta kalıptan, sonraki yeniden başlatmalarda diskten.
         push(&["-boot", "order=c,once=d"]);
     }
@@ -176,7 +197,8 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         push(&["-drive", &format!("file.driver=vvfat,file.dir={},file.label=cidata,file.rw=off,format=raw,if=virtio,readonly=on", opt(&cfg.seed_dir(g.vmid)))]);
     }
     // Kullanıcı kipinde ağ (NAT): köprü ve kök yetkisi gerektirmez.
-    let nic = format!("virtio-net-pci,netdev=net0,mac={}", mac_for(g.vmid));
+    let model = g.hw.nic_model.device();
+    let nic = format!("{model},netdev=net0,mac={}", mac_for(g.vmid));
     if is_bridged(g) {
         // Köprü: konuk sunucunun ağına doğrudan bağlanır. QEMU'nun setuid yardımcısı
         // (qemu-bridge-helper) TAP arayüzünü açar; köprü /etc/qemu/bridge.conf içinde izinli olmalıdır.
@@ -230,7 +252,7 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
             format!("bridge,id=net{n},br={network}")
         };
         let place = if ports && (n as usize) <= redox_core::hw::MAX_EXTRA_NICS { format!(",id=xnic{n},bus={}", nic_port(n)) } else { String::new() };
-        push(&["-netdev", &backend, "-device", &format!("virtio-net-pci,netdev=net{n},mac={}{place}", redox_core::mac_for_nic(g.vmid, n))]);
+        push(&["-netdev", &backend, "-device", &format!("{model},netdev=net{n},mac={}{place}", redox_core::mac_for_nic(g.vmid, n))]);
     }
     // Paylaşılan klasörler: konukta `mount -t 9p -o trans=virtio <ad> <dizin>` ile bağlanır. Dosyalar sunucuda
     // hizmet kullanıcısının olur (security_model=none); adlar çekirdekte doğrulanır, yine de burada süzülür.

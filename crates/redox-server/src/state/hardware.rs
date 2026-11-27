@@ -32,6 +32,28 @@ impl AppState {
         outcome.map(|()| id).map_err(Error::Driver)
     }
 
+    /// Çalışan sanal makinenin CD sürücüsündeki kalıbı değiştirir; boş ad sürücüyü boşaltır.
+    pub fn media_change(&self, vmid: VmId, drive: u8, iso: &str, user: &str) -> Result<(), Error> {
+        let driver = self.driver();
+        if !iso.is_empty() && driver.is_real() && !driver.isos().iter().any(|i| i == iso) {
+            return Err(Error::InvalidSpec(format!("ISO bulunamadı: {iso}")));
+        }
+        let guest = {
+            let c = self.lock();
+            c.check_media_change(vmid, drive, iso)?;
+            c.guest(vmid)?.clone()
+        };
+        let outcome = driver.change_media(&guest, drive, Some(iso).filter(|i| !i.is_empty()));
+        self.mutate(|c| {
+            if outcome.is_ok() {
+                c.note_media_changed(vmid, drive, iso);
+            }
+            let what = if iso.is_empty() { "-" } else { iso };
+            c.log(&guest.node, user, format!("vm media {vmid} {drive} {what}"), &outcome, now(), Some(vmid));
+        });
+        outcome.map_err(Error::Driver)
+    }
+
     /// Konuğa ek ağ kartı ekler; konuk çalışıyorsa (ve sürücü yapabiliyorsa) kart hemen takılır.
     /// Kartın sırasını döndürür (1 ilk ek kart).
     pub fn nic_add(&self, vmid: VmId, network: &str, user: &str) -> Result<u8, Error> {

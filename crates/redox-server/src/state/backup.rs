@@ -388,6 +388,8 @@ impl AppState {
             }
         };
         (spec.vmid, spec.name, spec.onboot, spec.iso) = (None, name.trim().to_string(), false, None);
+        spec.hw.iso2 = None;
+        spec.hw.media_changed = false;
         if backup.disk_gb > 0 {
             spec.disk_gb = backup.disk_gb;
         }

@@ -430,6 +430,10 @@ pub struct GuestPatch {
     pub nic_guard: Option<bool>,
     pub fw_rules: Option<Vec<crate::hw::FwRule>>,
     pub firmware: Option<crate::hw::Firmware>,
+    pub disk_bus: Option<crate::hw::DiskBus>,
+    pub nic_model: Option<crate::hw::NicModel>,
+    /// İkinci CD sürücüsü; boş dizge kalıbı çıkarır.
+    pub iso2: Option<String>,
     pub secure_boot: Option<bool>,
     pub tpm: Option<bool>,
     /// Ek ağ kartlarının ağları (`nat` ya da köprü adı).

@@ -17,7 +17,7 @@ impl AppState {
         if !driver.storage_supports(&spec.storage, spec.kind) {
             return Err(Error::InvalidSpec(format!("{} depolama alanı yalnızca sanal makine diski tutar; konteyner için {} seçin", spec.storage, crate::host::LOCAL_STORAGE)));
         }
-        if let Some(iso) = &spec.iso {
+        for iso in spec.iso.iter().chain(spec.hw.iso2.iter()) {
             if driver.is_real() && !driver.isos().iter().any(|i| i == iso) {
                 return Err(Error::InvalidSpec(format!("ISO bulunamadı: {iso}")));
             }
@@ -140,7 +140,7 @@ impl AppState {
     /// Ayarları değiştirir. Gerçek sürücüde takılacak ISO'nun var olduğu da denetlenir.
     pub fn update_guest(&self, vmid: VmId, patch: &GuestPatch, user: &str) -> Result<(), Error> {
         let driver = self.driver();
-        if let Some(iso) = patch.iso.as_deref().filter(|i| !i.is_empty()) {
+        for iso in patch.iso.iter().chain(patch.iso2.iter()).filter(|i| !i.is_empty()) {
             if driver.is_real() && !driver.isos().iter().any(|i| i == iso) {
                 return Err(Error::InvalidSpec(format!("ISO bulunamadı: {iso}")));
             }

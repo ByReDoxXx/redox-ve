@@ -465,6 +465,9 @@ pub async fn create(State(st): State<AppState>,
                 firmware,
                 secure_boot,
                 tpm: form.tpm.is_some(),
+                iso2: filled(&form.iso2),
+                disk_bus: redox_core::hw::DiskBus::parse(form.disk_bus.trim()).unwrap_or_default(),
+                nic_model: redox_core::hw::NicModel::parse(form.nic_model.trim()).unwrap_or_default(),
                 ..Default::default()
             },
         };

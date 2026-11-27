@@ -123,6 +123,9 @@ pub fn ft_blocker(g: &Guest) -> Option<&'static str> {
     if g.iso.is_some() || g.hw.cloud_init() || g.hw.base.is_some() || g.hw.instant.is_some() || g.hw.disk_mbps > 0 || g.hw.disk_iops > 0 {
         return Some("hata toleransında kurulum kalıbı, cloud-init, bağlı disk ve disk hız sınırı kullanılamaz");
     }
+    if g.hw.uses_compat() || g.hw.media_changed {
+        return Some("hata toleransında disk ve ağ kartı virtio olmalı, ikinci kalıp takılı olmamalı");
+    }
     None
 }
 

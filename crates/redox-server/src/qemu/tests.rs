@@ -36,7 +36,7 @@ fn args_for_kvm_guest() {
     let a = args(&cfg(), &guest(None));
     let joined = a.join(" ");
     assert!(joined.starts_with("-name deneme-vm -machine q35,accel=kvm -cpu host -smp 2 -m 2048M"), "{joined}");
-    assert!(a.contains(&"file=/var/lib/redox/images/vm-150-disk-0.qcow2,if=virtio,format=qcow2".to_string()));
+    assert!(a.contains(&"file=/var/lib/redox/images/vm-150-disk-0.qcow2,if=virtio,format=qcow2,discard=unmap".to_string()));
     assert!(a.contains(&"unix:/var/lib/redox/run/150.qmp,server=on,wait=off".to_string()));
     assert!(joined.ends_with("-pidfile /var/lib/redox/run/150.pid -daemonize"));
     assert!(joined.contains("-display none") && joined.contains("-netdev user,id=net0"));
@@ -52,17 +52,17 @@ fn extra_devices_sit_on_fixed_hotplug_ports() {
     g.hw.disks = vec![redox_core::hw::ExtraDisk { id: 1, size_gb: 5, serial: 1 }, redox_core::hw::ExtraDisk { id: 8, size_gb: 5, serial: 2 }];
     g.hw.nics = vec!["vmbr1".into(), "nat".into(), "vmbr2".into()];
     let a = args(&cfg(), &g).join(" ");
-    assert!(a.contains("-drive file=/var/lib/redox/images/vm-150-disk-1.qcow2,if=none,id=xd1,format=qcow2 -device virtio-blk-pci,drive=xd1,id=xdev1,bus=hp0"), "{a}");
+    assert!(a.contains("-drive file=/var/lib/redox/images/vm-150-disk-1.qcow2,if=none,id=xd1,format=qcow2,discard=unmap -device virtio-blk-pci,drive=xd1,id=xdev1,bus=hp0"), "{a}");
     assert!(a.contains("-device virtio-blk-pci,drive=xd8,id=xdev8,bus=hp7"), "{a}");
     assert!(a.contains("netdev=net1,mac=52:54:01:00:00:96,id=xnic1,bus=hp8") && a.contains("netdev=net3,mac=52:54:03:00:00:96,id=xnic3,bus=hp10"), "{a}");
     assert!(a.find("id=hp10").unwrap() < a.find("id=xd1").unwrap(), "bağlantı noktaları aygıtlardan önce tanımlanır");
-    assert!(a.contains("vm-150-disk-0.qcow2,if=virtio,format=qcow2"), "asıl diskin yeri değişmez");
+    assert!(a.contains("vm-150-disk-0.qcow2,if=virtio,format=qcow2,discard=unmap"), "asıl diskin yeri değişmez");
     assert_eq!((disk_port(1), disk_port(8), nic_port(1), nic_port(3)), ("hp0".to_string(), "hp7".to_string(), "hp8".to_string(), "hp10".to_string()));
 
     // Eski yerleşim (bu düzenden önce askıya alınmış konukları döndürmek için): bağlantı noktası yok.
     let old = build_args_layout(&cfg(), &g, LAYOUT_LEGACY).join(" ").replace('\\', "/");
     assert!(!old.contains("pcie-root-port") && !old.contains("bus=hp") && !old.contains("if=none"), "{old}");
-    assert!(old.contains("-drive file=/var/lib/redox/images/vm-150-disk-1.qcow2,if=virtio,format=qcow2"), "{old}");
+    assert!(old.contains("-drive file=/var/lib/redox/images/vm-150-disk-1.qcow2,if=virtio,format=qcow2,discard=unmap"), "{old}");
     assert!(old.contains("-netdev bridge,id=net1,br=vmbr1 -device virtio-net-pci,netdev=net1,mac=52:54:01:00:00:96 "), "{old}");
 }
 
@@ -128,8 +128,8 @@ fn disk_limits_are_applied_to_every_disk() {
     assert!(!a.contains("iops-total"));
     g.hw.disk_iops = 2000;
     let a = args(&cfg(), &g);
-    assert!(a.contains(&"file=/var/lib/redox/images/vm-150-disk-0.qcow2,if=virtio,format=qcow2,throttling.bps-total=52428800,throttling.iops-total=2000".to_string()), "{a:?}");
-    assert!(a.contains(&"file=/var/lib/redox/images/vm-150-disk-1.qcow2,if=none,id=xd1,format=qcow2,throttling.bps-total=52428800,throttling.iops-total=2000".to_string()), "{a:?}");
+    assert!(a.contains(&"file=/var/lib/redox/images/vm-150-disk-0.qcow2,if=virtio,format=qcow2,discard=unmap,throttling.bps-total=52428800,throttling.iops-total=2000".to_string()), "{a:?}");
+    assert!(a.contains(&"file=/var/lib/redox/images/vm-150-disk-1.qcow2,if=none,id=xd1,format=qcow2,discard=unmap,throttling.bps-total=52428800,throttling.iops-total=2000".to_string()), "{a:?}");
     assert_eq!(a.join(" ").matches("throttling.iops-total=2000").count(), 2);
     g.hw.net_mbps = 100;
     assert_eq!(args(&cfg(), &g), a, "ağ sınırı QEMU satırını değiştirmez; TAP arayüzünde uygulanır");
@@ -139,7 +139,30 @@ fn disk_limits_are_applied_to_every_disk() {
 fn args_fall_back_to_tcg_and_attach_iso() {
     let a = args(&QemuConfig { kvm: false, ..cfg() }, &guest(Some("debian-12.iso"))).join(" ");
     assert!(a.contains("-machine q35,accel=tcg -cpu max"), "{a}");
-    assert!(a.contains("-drive file=/var/lib/redox/iso/debian-12.iso,media=cdrom,readonly=on -boot order=c,once=d"), "{a}");
+    assert!(a.contains("-drive file=/var/lib/redox/iso/debian-12.iso,media=cdrom,readonly=on,id=cd0 -boot order=c,once=d"), "{a}");
+}
+
+#[test]
+fn compatibility_devices_replace_virtio_only_where_asked() {
+    use redox_core::hw::{DiskBus, NicModel};
+    let mut g = guest(Some("win.iso"));
+    g.hw.iso2 = Some("virtio-win.iso".into());
+    g.hw.disk_bus = DiskBus::Sata;
+    g.hw.nic_model = NicModel::E1000e;
+    g.hw.nics = vec!["nat".into()];
+    g.hw.disks = vec![redox_core::hw::ExtraDisk { id: 1, size_gb: 5, serial: 1 }];
+    let a = args(&cfg(), &g).join(" ");
+    assert!(a.contains("vm-150-disk-0.qcow2,if=none,id=sys0,format=qcow2,discard=unmap -device ide-hd,drive=sys0,bus=ide.4"), "{a}");
+    assert!(a.contains("iso/win.iso,media=cdrom,readonly=on,id=cd0 -drive file=/var/lib/redox/iso/virtio-win.iso,media=cdrom,readonly=on,id=cd1 -boot order=c,once=d"), "{a}");
+    assert_eq!(a.matches("-boot").count(), 1);
+    assert!(a.contains("-device e1000e,netdev=net0,mac=") && a.contains("-device e1000e,netdev=net1,mac=") && !a.contains("virtio-net"), "{a}");
+    assert!(a.contains("virtio-blk-pci,drive=xd1"), "ek diskler virtio kalır");
+    g.hw.disk_bus = DiskBus::VirtioScsi;
+    g.hw.nic_model = NicModel::E1000;
+    g.iso = None;
+    let a = args(&cfg(), &g).join(" ");
+    assert!(a.contains("-device virtio-scsi-pci,id=scsi0 -device scsi-hd,drive=sys0,bus=scsi0.0"), "{a}");
+    assert!(a.contains("-device e1000,netdev=net0") && a.contains("id=cd1 -boot order=c,once=d") && !a.contains("id=cd0"), "ikinci sürücü adını korur: {a}");
 }
 
 #[test]
@@ -150,10 +173,13 @@ fn hostile_values_cannot_inject_options() {
     assert!(!args(&cfg(), &g).join(" ").contains("shadow"));
     g.iso = Some("x.iso,readonly=off".into());
     assert!(!args(&cfg(), &g).join(" ").contains("readonly=off"));
+    g.iso = None;
+    g.hw.iso2 = Some("../../etc/shadow".into());
+    assert!(!args(&cfg(), &g).join(" ").contains("shadow"));
 
     // Veri dizinindeki virgül QEMU seçenek ayırıcısı olarak yorumlanmamalı.
     let a = args(&QemuConfig::new("/srv/a,b"), &guest(None));
-    assert!(a.contains(&"file=/srv/a,,b/images/vm-150-disk-0.qcow2,if=virtio,format=qcow2".to_string()), "{a:?}");
+    assert!(a.contains(&"file=/srv/a,,b/images/vm-150-disk-0.qcow2,if=virtio,format=qcow2,discard=unmap".to_string()), "{a:?}");
     // Her değer ayrı bir argümandır; ad içinde boşluk olsa bile bölünmez.
     g.name = "a -snapshot".into();
     assert_eq!(args(&cfg(), &g)[1], "a -snapshot");
@@ -299,7 +325,7 @@ fn uefi_secure_boot_and_tpm_arguments() {
     assert!(a.contains("-global driver=cfi.pflash01,property=secure,value=on"));
     assert!(a.contains("-chardev socket,id=chrtpm,path=/var/lib/redox/run/150.tpm -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-crb,tpmdev=tpm0"), "{a}");
     // Değişken deposu ayrı pflash sürücüsüdür; asıl disk ilk virtio sürücüsü kalır.
-    assert!(a.contains("vm-150-disk-0.qcow2,if=virtio,format=qcow2"));
+    assert!(a.contains("vm-150-disk-0.qcow2,if=virtio,format=qcow2,discard=unmap"));
 }
 
 #[test]
@@ -309,7 +335,7 @@ fn extra_disks_and_nics_become_devices() {
     g.hw.nics = vec!["vmbr1".into(), "nat".into(), "kötü,script=/x".into()];
     let a = args(&cfg(), &g).join(" ");
     let at = |needle: &str| a.find(needle).unwrap_or_else(|| panic!("{needle} yok: {a}"));
-    assert!(at("vm-150-disk-0.qcow2") < at("vm-150-disk-1.qcow2,if=none,id=xd1,format=qcow2") && at("vm-150-disk-1.qcow2") < at("vm-150-disk-4.qcow2"), "asıl disk önce");
+    assert!(at("vm-150-disk-0.qcow2") < at("vm-150-disk-1.qcow2,if=none,id=xd1,format=qcow2,discard=unmap") && at("vm-150-disk-1.qcow2") < at("vm-150-disk-4.qcow2"), "asıl disk önce");
     assert!(a.contains("-netdev bridge,id=net1,br=vmbr1 -device virtio-net-pci,netdev=net1,mac=52:54:01:00:00:96,id=xnic1,bus=hp8"), "{a}");
     assert!(a.contains("-netdev user,id=net2 -device virtio-net-pci,netdev=net2,mac=52:54:02:00:00:96,id=xnic2,bus=hp9"), "{a}");
     assert!(!a.contains("script=") && !a.contains("net3"), "geçersiz ağ adı argümana girmez");

@@ -65,7 +65,7 @@ pub fn target(st: &AppState, name: &str) -> Result<(PathBuf, bool), Error> {
 
 pub fn list(st: &AppState) -> Vec<Media> {
     let (driver, cluster) = (st.driver(), st.snapshot());
-    let users = |name: &str| -> Vec<VmId> { cluster.guests.iter().filter(|g| g.iso.as_deref() == Some(name) || g.hw.image.as_deref() == Some(name)).map(|g| g.vmid).collect() };
+    let users = |name: &str| -> Vec<VmId> { cluster.guests.iter().filter(|g| g.iso.as_deref() == Some(name) || g.hw.iso2.as_deref() == Some(name) || g.hw.image.as_deref() == Some(name)).map(|g| g.vmid).collect() };
     let entry = |name: String, iso: bool, path: Option<PathBuf>| Media {
         ova: path.as_ref().filter(|_| name.to_ascii_lowercase().ends_with(".ova")).and_then(|p| crate::ova::inspect(p).ok()),
         bytes: path.and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len()).unwrap_or(0),

@@ -103,6 +103,7 @@ pub fn app(state: AppState) -> Router {
         .route("/backups/{id}/files", get(ui_ops::backup_files))
         .route("/backups/{id}/file", get(ui_ops::backup_file).post(ui_ops::backup_put))
         .route("/guests/{vmid}/balloon", post(ui_ops::balloon_set))
+        .route("/guests/{vmid}/media", post(ui_ops::media_change))
         .route("/guests/{vmid}/cores", post(ui_ops::cores_add))
         .route("/guests/{vmid}/memory", post(ui_ops::memory_add))
         .route("/approvals/{id}/{op}", post(ui_ops::approval_action))

@@ -10,6 +10,8 @@ use crate::view::{tip, datetime, guest_label, guest_name, guest_state, icon, lay
 
 mod backups;
 mod clone;
+mod compat;
+pub(crate) use compat::*;
 mod console;
 mod hardware;
 mod options;

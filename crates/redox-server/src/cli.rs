@@ -58,12 +58,14 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
                     cpu=Haswell   (işlemci modeli; cpu=host sunucunun kendi işlemcisi)   balloon=true   (bellek balonu aygıtı)
                     ci-user=ali ci-key='ssh-ed25519 AAAA…' ci-ip=10.0.0.5/24 ci-gw=10.0.0.1 ci-dns=1.1.1.1,9.9.9.9
                                            (cloud-init; ci-key= boş verilirse kapanır, ci-ip= boşsa DHCP)
+                    disk-bus=virtio|virtio-scsi|sata nic-model=virtio|e1000e|e1000 iso2=virtio-win.iso   (Windows ve aktarılan diskler için)
                     nics=vmbr1,nat usb=046d:c52b pci=0000:01:00.0 firmware=bios|uefi|uefi-secure tpm firewall fw-rules   (örn. firewall=true fw-rules='tcp/22,tcp/443 from 10.0.0.0/8')
         örnek: redox vm set 103 cores=4 memory=8192 tags=prod,web backup-time=03:30
   redox vm|ct clone <kimlik> <yeni-ad>
   redox vm disk add <kimlik> <GB> | vm nic add <kimlik> <nat|köprü>   (çalışan sanal makineye de takılır)
   redox vm resize <kimlik> <GB>
   redox vm move <kimlik> <depolama>      (sanal makinenin disklerini başka depolama alanına taşır; çalışırken de olur)
+  redox vm media <kimlik> <1|2> [kalıp]  (çalışan konuğun CD sürücüsündeki kalıbı değiştirir; kalıp verilmezse boşaltır)
   redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
   redox vm cores <kimlik> <sayı>         (çalışan konuğu <sayı> çekirdeğe çıkarır; önce kapalıyken max-cores=<en fazla> verin)
   redox vm memory <kimlik> <MB>          (çalışan konuğun belleğini <MB> değerine çıkarır; önce kapalıyken max-memory=<en fazla> verin)
@@ -215,7 +217,9 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
         let (key, value) = pair.split_once('=').ok_or_else(|| format!("\"{pair}\" anahtar=değer biçiminde değil"))?;
         let number = || value.parse::<u64>().map(Value::from).map_err(|_| format!("{key} bir sayı olmalı: {value}"));
         let (field, parsed) = match key {
-            "name" | "os" | "iso" | "bridge" | "pool" => (key, Value::from(value)),
+            "name" | "os" | "iso" | "iso2" | "bridge" | "pool" => (key, Value::from(value)),
+            "disk-bus" => ("disk_bus", Value::from(redox_core::hw::DiskBus::parse(value).ok_or_else(|| format!("disk-bus virtio, virtio-scsi ya da sata olmalı: {value}"))?.as_str())),
+            "nic-model" => ("nic_model", Value::from(redox_core::hw::NicModel::parse(value).ok_or_else(|| format!("nic-model virtio, e1000e ya da e1000 olmalı: {value}"))?.as_str())),
             "cpu" => ("cpu_type", Value::from(if value == "host" { "" } else { value })),
             "ci-user" => ("ci_user", Value::from(value)),
             "ci-key" => ("ci_ssh_key", Value::from(value)),
@@ -276,7 +280,7 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             }
             _ => {
                 return Err(format!(
-                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores max-cores cpu-shares memory max-memory mem-reserve os iso bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
+                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores max-cores cpu-shares memory max-memory mem-reserve os iso iso2 disk-bus nic-model bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
                 ))
             }
         };
@@ -460,6 +464,12 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             format!("/guests/{}/memory", vmid(id)?),
             Some(json!({ "memory_mb": mb.parse::<u64>().map_err(|_| format!("bellek bir sayı olmalı (MB): {mb}"))? })),
             View::Done("bellek eklendi"),
+        ),
+        ["vm", "media", id, drive, rest @ ..] if rest.len() <= 1 => req(
+            "POST",
+            format!("/guests/{}/media", vmid(id)?),
+            Some(json!({ "drive": drive.parse::<u8>().map_err(|_| format!("CD sürücüsü 1 ya da 2 olmalı: {drive}"))?, "iso": rest.first().copied().unwrap_or("") })),
+            View::Done("kalıp değiştirildi"),
         ),
         ["vm", "balloon", id, "auto", min] => req(
             "POST",
@@ -1044,6 +1054,11 @@ mod tests {
         assert_eq!(patch_body(&["nic-guard=true"]).unwrap(), json!({"nic_guard": true}));
         assert_eq!(patch_body(&["nested=true"]).unwrap(), json!({"nested": true}));
         assert_eq!(patch_body(&["cores=2", "max-cores=8"]).unwrap(), json!({"cores": 2, "max_cores": 8}));
+        let media = parse(&args("vm media 103 2 virtio-win.iso")).unwrap();
+        assert_eq!((media.path.as_str(), media.body.unwrap()), ("/guests/103/media", json!({"drive": 2, "iso": "virtio-win.iso"})));
+        assert!(parse(&args("vm media 103 ikinci")).unwrap_err().contains("1 ya da 2"));
+        assert_eq!(patch_body(&["disk-bus=sata", "nic-model=e1000e", "iso2=a.iso"]).unwrap(), json!({"disk_bus": "sata", "nic_model": "e1000e", "iso2": "a.iso"}));
+        assert!(patch_body(&["disk-bus=ide"]).unwrap_err().contains("virtio-scsi ya da sata"));
         let cores = parse(&args("vm cores 103 6")).unwrap();
         assert_eq!((cores.method, cores.path.as_str(), cores.body.unwrap()), ("POST", "/guests/103/cores", json!({"cores": 6})));
         assert!(parse(&args("vm cores 103 cok")).unwrap_err().contains("bir sayı olmalı"));

@@ -540,6 +540,18 @@ impl Hypervisor for QemuDriver {
         }
     }
 
+    fn change_media(&self, guest: &Guest, drive: u8, iso: Option<&str>) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::change_media(self, guest, drive, iso)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, drive, iso);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
     fn hot_add_core(&self, guest: &Guest) -> Result<(), String> {
         #[cfg(unix)]
         {

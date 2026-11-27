@@ -30,7 +30,7 @@ pub fn hot_add_disk(d: &QemuDriver, g: &Guest, id: u8) -> Result<(), String> {
     }
     let sock = d.cfg.qmp_path(g.vmid);
     let drive = format!("xd{id}");
-    let added = hmp_text(d, g, &format!("drive_add 0 file={},if=none,id={drive},format=qcow2{}", crate::qemu::opt(&d.cfg.extra_disk_of(g, id)), crate::qemu::disk_throttle(g)))?;
+    let added = hmp_text(d, g, &format!("drive_add 0 file={},if=none,id={drive},format=qcow2,discard=unmap{}", crate::qemu::opt(&d.cfg.extra_disk_of(g, id)), crate::qemu::disk_throttle(g)))?;
     if added != "OK" {
         return Err(format!("disk konuğa tanıtılamadı: {}", added.lines().last().unwrap_or("bilinmeyen hata")));
     }
@@ -39,6 +39,30 @@ pub fn hot_add_disk(d: &QemuDriver, g: &Guest, id: u8) -> Result<(), String> {
         let _ = hmp_text(d, g, &format!("drive_del {drive}"));
         format!("disk konuğa takılamadı: {e}")
     })
+}
+
+/// Çalışan konuğun CD sürücüsündeki kalıbı değiştirir. Sürücü, konuk açılırken `cd0` / `cd1` adıyla kurulur;
+/// o açılışta kalıbı olmayan konukta bu adda sürücü yoktur.
+pub fn change_media(d: &QemuDriver, g: &Guest, drive: u8, iso: Option<&str>) -> Result<(), String> {
+    if live_pid(d, g.vmid).is_none() {
+        return Err("konuk çalışmıyor (QEMU süreci yok)".to_string());
+    }
+    let sock = d.cfg.qmp_path(g.vmid);
+    let id = format!("cd{}", drive.saturating_sub(1));
+    let blocks = qmp(&sock, &["query-block"])?;
+    if !blocks.first().and_then(Value::as_array).is_some_and(|list| list.iter().any(|b| b["device"] == id.as_str())) {
+        return Err(format!("konuk bu açılışta {drive}. CD sürücüsü olmadan başlamış; kapatın, kalıbı ayarlardan takıp yeniden açın"));
+    }
+    // Konuk tepsiyi kilitlemiş olabilir; değiştirme bilerek zorlanır.
+    let command = match iso {
+        Some(name) if redox_core::valid_iso_name(name) => {
+            let path = d.cfg.iso_dir().join(name).display().to_string();
+            serde_json::json!({ "execute": "blockdev-change-medium", "arguments": { "device": id, "filename": path, "format": "raw", "read-only-mode": "read-only", "force": true } })
+        }
+        Some(name) => return Err(format!("geçersiz ISO adı: {name}")),
+        None => serde_json::json!({ "execute": "eject", "arguments": { "device": id, "force": true } }),
+    };
+    qmp_values(&sock, &[command]).map(|_| ()).map_err(|e| format!("kalıp değiştirilemedi: {e}"))
 }
 
 pub fn hot_add_nic(d: &QemuDriver, g: &Guest, index: u8, network: &str) -> Result<(), String> {
@@ -78,7 +102,7 @@ pub fn hot_add_nic(d: &QemuDriver, g: &Guest, index: u8, network: &str) -> Resul
         drop_tap();
     };
     let device = serde_json::json!({ "execute": "device_add", "arguments": {
-        "driver": "virtio-net-pci", "netdev": netdev, "id": format!("xnic{index}"), "mac": redox_core::mac_for_nic(g.vmid, index), "bus": crate::qemu::nic_port(index) } });
+        "driver": g.hw.nic_model.device(), "netdev": netdev, "id": format!("xnic{index}"), "mac": redox_core::mac_for_nic(g.vmid, index), "bus": crate::qemu::nic_port(index) } });
     if let Err(e) = qmp_values(&sock, &[device]) {
         remove();
         return Err(format!("ağ kartı konuğa takılamadı: {e}"));

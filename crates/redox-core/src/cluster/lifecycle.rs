@@ -194,8 +194,13 @@ impl Cluster {
         // Sıfırdan açılış (askıdan dönüş değil): çalışırken eklenmiş bellek artık açılış belleğinin parçasıdır,
         // bellek yuvaları boşalır. Askıdaki konuk, askıya alındığı parçalarla dönmelidir.
         let fold = action == Action::Start && !guest.hw.suspended && !guest.hw.dimms.is_empty();
+        // Yeni süreç kayıttaki kalıplarla kurulur.
+        let remount = action == Action::Start && !guest.hw.suspended && guest.hw.media_changed;
         if fold {
             self.guest_mut(vmid)?.hw.dimms.clear();
+        }
+        if remount {
+            self.guest_mut(vmid)?.hw.media_changed = false;
         }
         // Başka sunucuya taşınmış konuğun burada kalan kopyası elle başlatılıyorsa artık asıl konuk odur:
         // "geride kalan kopya" işareti kalkar (geri taşıma onu bayat sayıp yerine geçmesin).

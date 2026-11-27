@@ -38,6 +38,11 @@ pub(super) fn real_net(tap: &str) -> Option<Real> {
     Some(r)
 }
 
+/// Intel ağ sürücüleri eklenmiş konukla yapılandırma.
+pub(super) fn real_compat() -> Option<Real> {
+    real_from("REDOX_REAL_INITRD_COMPAT")
+}
+
 /// İçinde konuk ajanı bulunan konukla yapılandırma.
 pub(super) fn real_agent() -> Option<Real> {
     real_from("REDOX_REAL_INITRD_AGENT")

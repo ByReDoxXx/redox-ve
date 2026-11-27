@@ -200,6 +200,10 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.hot_add_nic(guest, index, network)
     }
 
+    fn change_media(&self, guest: &Guest, drive: u8, iso: Option<&str>) -> Result<(), String> {
+        self.of(guest)?.change_media(guest, drive, iso)
+    }
+
     fn hot_add_core(&self, guest: &Guest) -> Result<(), String> {
         self.of(guest)?.hot_add_core(guest)
     }
