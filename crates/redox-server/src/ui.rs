@@ -552,8 +552,10 @@ pub struct ThemeQuery {
 }
 
 /// Yalnızca site içi yollara izin verir (açık yönlendirme olmasın).
+/// Yönlendirme hedefi yalnızca bu sitedeki bir yol olabilir. Denetim karakterleri reddedilir: tarayıcılar
+/// adresteki sekme ve satır sonunu siler, `/<sekme>/baska.site` böylece `//baska.site` olurdu.
 pub(crate) fn safe_back(back: &str) -> &str {
-    if back.starts_with('/') && !back.starts_with("//") && !back.contains('\\') {
+    if back.starts_with('/') && !back.starts_with("//") && !back.contains('\\') && !back.chars().any(char::is_control) {
         back
     } else {
         "/"

@@ -308,7 +308,7 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
     // Salt okunur hesap yalnızca çıkış yapabilir ve kendi hesabını yönetebilir.
     // Operatör yalnızca kapsamındaki konuklarda güç, konsol, anlık görüntü ve yedek işlemi yapabilir.
     let operated = me.role == auth::Role::Operator && operator_target(&path).and_then(|vmid| st.guest_tags(vmid)).is_some_and(|tags| me.can_operate(&tags));
-    if !safe && !me.can_write() && !operated && path != "/logout" && !path.starts_with("/account") {
+    if !safe && !me.can_write() && !operated && path != "/logout" && !path.starts_with("/account/") {
         let message = if me.role == auth::Role::Operator {
             "Bu işlem operatör yetkisini aşıyor ya da konuk yetki kapsamınızda değil."
         } else {
