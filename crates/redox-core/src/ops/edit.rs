@@ -125,7 +125,7 @@ impl Cluster {
         if [patch.backup_weekly, patch.backup_monthly, patch.backup_yearly].iter().flatten().any(|n| *n > crate::retention::MAX_GFS) {
             return Err(Error::InvalidSpec(format!("haftalık, aylık ve yıllık yedek sayıları en fazla {} olabilir", crate::retention::MAX_GFS)));
         }
-        if patch.disk_bus.is_some() || patch.nic_model.is_some() || patch.iso2.is_some() || patch.test_port.is_some() || patch.test_cmd.is_some() || patch.nested.is_some() || patch.nic_guard.is_some() || patch.firewall.is_some() || patch.fw_rules.is_some() || patch.firmware.is_some() || patch.secure_boot.is_some() || patch.tpm.is_some() || patch.nics.is_some() || patch.usb.is_some() || patch.pci.is_some() || patch.boot_order.is_some() || patch.boot_delay.is_some() || patch.schedules.is_some() || patch.disk_mbps.is_some() || patch.disk_iops.is_some() || patch.net_mbps.is_some() || patch.vlan.is_some() || patch.shares.is_some() || patch.bridge.is_some() || patch.apply_cloud_init(&mut guest.hw.clone()) || patch.cpu_type.is_some() || patch.balloon.is_some() || patch.backup_pre.is_some() || patch.backup_post.is_some() {
+        if patch.disk_bus.is_some() || patch.nic_model.is_some() || patch.iso2.is_some() || patch.test_port.is_some() || patch.test_cmd.is_some() || patch.nested.is_some() || patch.nic_guard.is_some() || patch.firewall.is_some() || patch.fw_rules.is_some() || patch.fw_out.is_some() || patch.fw_out_restrict.is_some() || patch.fw_groups.is_some() || patch.firmware.is_some() || patch.secure_boot.is_some() || patch.tpm.is_some() || patch.nics.is_some() || patch.usb.is_some() || patch.pci.is_some() || patch.boot_order.is_some() || patch.boot_delay.is_some() || patch.schedules.is_some() || patch.disk_mbps.is_some() || patch.disk_iops.is_some() || patch.net_mbps.is_some() || patch.vlan.is_some() || patch.shares.is_some() || patch.bridge.is_some() || patch.apply_cloud_init(&mut guest.hw.clone()) || patch.cpu_type.is_some() || patch.balloon.is_some() || patch.backup_pre.is_some() || patch.backup_post.is_some() {
             let mut hw = guest.hw.clone();
             hw.backup_pre = patch.backup_pre.clone().map(|c| c.trim().to_string()).unwrap_or(hw.backup_pre);
             hw.backup_post = patch.backup_post.clone().map(|c| c.trim().to_string()).unwrap_or(hw.backup_post);
@@ -147,6 +147,9 @@ impl Cluster {
             hw.tpm = patch.tpm.unwrap_or(hw.tpm);
             hw.firewall = patch.firewall.unwrap_or(hw.firewall);
             hw.fw_rules = patch.fw_rules.clone().unwrap_or(hw.fw_rules);
+            hw.fw_out = patch.fw_out.clone().unwrap_or(hw.fw_out);
+            hw.fw_groups = patch.fw_groups.clone().unwrap_or(hw.fw_groups);
+            self.check_fw_refs(patch.fw_rules.as_deref().unwrap_or_default(), patch.fw_out.as_deref().unwrap_or_default(), patch.fw_groups.as_deref().unwrap_or_default())?;
             hw.boot_order = patch.boot_order.unwrap_or(hw.boot_order);
             hw.boot_delay = patch.boot_delay.unwrap_or(hw.boot_delay);
             hw.schedules = patch.schedules.clone().unwrap_or(hw.schedules);
@@ -274,6 +277,17 @@ impl Cluster {
         }
         if let Some(rules) = &patch.fw_rules {
             g.hw.fw_rules = rules.clone();
+        }
+        if let Some(restrict) = patch.fw_out_restrict {
+            g.hw.fw_out_restrict = restrict;
+        }
+        if let Some(rules) = &patch.fw_out {
+            g.hw.fw_out = rules.clone();
+        }
+        if let Some(groups) = &patch.fw_groups {
+            let mut groups = groups.clone();
+            groups.dedup();
+            g.hw.fw_groups = groups;
         }
         if let Some(firmware) = patch.firmware {
             g.hw.firmware = firmware;

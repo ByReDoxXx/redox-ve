@@ -57,6 +57,11 @@ pub struct Cluster {
     /// Eşzamanlı disk yansıtmaları: buradan eşlere (kaynak taraf) ve eşlerden buraya tutulan kopyalar.
     #[serde(default)]
     pub mirrors: Vec<crate::mirrors::Mirror>,
+    /// Güvenlik duvarının yeniden kullanılan tanımları (ada göre sıralı).
+    #[serde(default)]
+    pub ip_sets: Vec<crate::fwsets::IpSet>,
+    #[serde(default)]
+    pub fw_groups: Vec<crate::fwsets::FwGroup>,
     #[serde(default)]
     pub mirror_stores: Vec<crate::mirrors::MirrorStore>,
     /// Hata toleransı: buradaki korunan konuklar, eşler için burada çalışan ikizler ve (hakem olarak) verilen kararlar.
@@ -111,6 +116,8 @@ impl Cluster {
             lockdown: false,
             vswitches: Vec::new(),
             mirrors: Vec::new(),
+            ip_sets: Vec::new(),
+            fw_groups: Vec::new(),
             mirror_stores: Vec::new(),
             protections: Vec::new(),
             standbys: Vec::new(),

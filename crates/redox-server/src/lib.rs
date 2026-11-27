@@ -134,6 +134,7 @@ pub fn app(state: AppState) -> Router {
         .route("/cluster/migrate", post(ui::peer_migrate))
         .route("/cluster/send", post(ui::peer_send))
         .route("/cluster/switch", post(ui_ops::switch_action))
+        .route("/cluster/firewall", post(ui_ops::firewall_action))
         .route("/cluster/mirror", post(ui_ops::mirror_action))
         .route("/cluster/ft", post(ui_ops::ft_action))
         .route("/cluster/replica", post(ui::replica_action))

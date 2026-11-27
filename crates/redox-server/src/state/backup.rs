@@ -414,6 +414,7 @@ impl AppState {
             (hw.vlan, hw.net_mbps, hw.firewall, hw.balloon_mb) = (0, 0, false, 0);
             hw.shares.clear();
             hw.fw_rules.clear();
+            (hw.fw_out_restrict, hw.fw_out, hw.fw_groups) = (false, Vec::new(), Vec::new());
             spec.bridge = redox_core::NAT.to_string();
         }
         if instant {

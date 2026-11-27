@@ -71,7 +71,10 @@ pub fn ruleset_with(guests: &[Guest], taps: &[(redox_core::VmId, Vec<String>)]) 
     let mut jumps = String::new();
     let mut chains = String::new();
     for g in guests.iter().filter(|g| enforced(g) && g.hw.fw_rules.iter().all(|r| r.valid())) {
-        jumps.push_str(&format!("        ether daddr {} jump g{}\n", mac_for(g.vmid), g.vmid));
+        // Konuğun bütün kartları süzülür (yalnızca birincisi değil).
+        for mac in macs(g) {
+            jumps.push_str(&format!("        ether daddr {mac} jump g{}\n", g.vmid));
+        }
         chains.push_str(&format!("    chain g{} {{\n", g.vmid));
         // Kurulu bağlantıların yanıtları, adres çözümleme ve DHCP yanıtı her zaman geçer.
         chains.push_str("        ct state established,related accept\n");
@@ -79,21 +82,53 @@ pub fn ruleset_with(guests: &[Guest], taps: &[(redox_core::VmId, Vec<String>)]) 
         chains.push_str("        udp sport 67 udp dport 68 accept\n");
         chains.push_str("        icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } accept\n");
         for rule in &g.hw.fw_rules {
-            let source = rule.source.as_ref().map(|s| format!("ip saddr {s} ")).unwrap_or_default();
-            let line = match (rule.proto, rule.ports) {
-                (FwProto::Icmp, _) => format!("{source}ip protocol icmp accept"),
-                (proto, Some((a, b))) if a == b => format!("{source}{} dport {a} accept", proto.as_str()),
-                (proto, Some((a, b))) => format!("{source}{} dport {a}-{b} accept", proto.as_str()),
-                (proto, None) => format!("{source}meta l4proto {} accept", proto.as_str()),
-            };
-            chains.push_str(&format!("        {line}\n"));
+            chains.push_str(&format!("        {}\n", allow(rule, "ip saddr")));
         }
         chains.push_str("        drop\n    }\n");
     }
+    let outbound = outbound(guests);
     // Önce tabloyu (boş da olsa) tanımla ki silme komutu ilk çalıştırmada hata vermesin.
     format!(
-        "table bridge {TABLE}\ndelete table bridge {TABLE}\ntable bridge {TABLE} {{\n    chain forward {{\n        type filter hook forward priority 0; policy accept;\n{jumps}    }}\n    chain output {{\n        type filter hook output priority 0; policy accept;\n{jumps}    }}\n{chains}{guards}}}\n"
+        "table bridge {TABLE}\ndelete table bridge {TABLE}\ntable bridge {TABLE} {{\n    chain forward {{\n        type filter hook forward priority 0; policy accept;\n{jumps}    }}\n    chain output {{\n        type filter hook output priority 0; policy accept;\n{jumps}    }}\n{chains}{outbound}{guards}}}\n"
     )
+}
+
+/// İzin kuralının nftables satırı; `address`: `ip saddr` (gelen) ya da `ip daddr` (giden).
+fn allow(rule: &redox_core::hw::FwRule, address: &str) -> String {
+    let peer = rule.source.as_ref().map(|s| format!("{address} {s} ")).unwrap_or_default();
+    match (rule.proto, rule.ports) {
+        (FwProto::Icmp, _) => format!("{peer}ip protocol icmp accept"),
+        (proto, Some((a, b))) if a == b => format!("{peer}{} dport {a} accept", proto.as_str()),
+        (proto, Some((a, b))) => format!("{peer}{} dport {a}-{b} accept", proto.as_str()),
+        (proto, None) => format!("{peer}meta l4proto {} accept", proto.as_str()),
+    }
+}
+
+/// Giden trafiği kısıtlanan konukların zincirleri. Bunlar ayrı ve daha sonra çalışan kancalardır: gelen
+/// zincirindeki "accept" burayı atlatamaz, buradaki "drop" ise kesindir. Hem köprüden geçen hem sunucunun
+/// kendisine giden trafik süzülür.
+fn outbound(guests: &[Guest]) -> String {
+    let mut jumps = String::new();
+    let mut chains = String::new();
+    for g in guests.iter().filter(|g| enforced(g) && g.hw.fw_out_restrict && g.hw.fw_out.iter().all(|r| r.valid() && !r.source.as_deref().is_some_and(|s| s.starts_with('@')))) {
+        for mac in macs(g) {
+            jumps.push_str(&format!("        ether saddr {mac} jump o{}\n", g.vmid));
+        }
+        chains.push_str(&format!("    chain o{} {{\n", g.vmid));
+        // Dışarıdan açılmış bağlantıların yanıtları, adres çözümleme ve DHCP isteği her zaman geçer.
+        chains.push_str("        ct state established,related accept\n");
+        chains.push_str("        ether type arp accept\n");
+        chains.push_str("        udp sport 68 udp dport 67 accept\n");
+        chains.push_str("        icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, mld-listener-report, mld2-listener-report } accept\n");
+        for rule in &g.hw.fw_out {
+            chains.push_str(&format!("        {}\n", allow(rule, "ip daddr")));
+        }
+        chains.push_str("        drop\n    }\n");
+    }
+    if jumps.is_empty() {
+        return String::new();
+    }
+    format!("    chain egress {{\n        type filter hook forward priority 10; policy accept;\n{jumps}    }}\n    chain egress_host {{\n        type filter hook input priority 10; policy accept;\n{jumps}    }}\n{chains}")
 }
 
 /// Betiği `nft -f -` ile yükler.

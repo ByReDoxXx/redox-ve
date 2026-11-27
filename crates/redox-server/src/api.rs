@@ -105,6 +105,10 @@ pub fn routes() -> Router<AppState> {
         .route("/mirror-stores/{origin}/{vmid}/report", post(mirror_report))
         .route("/mirror-stores/{origin}/{vmid}/promote", post(mirror_promote))
         .route("/vswitches", get(vswitches).post(vswitch_put))
+        .route("/firewall/sets", get(ip_sets).post(ip_set_put))
+        .route("/firewall/sets/{name}", delete_route(ip_set_delete))
+        .route("/firewall/groups", get(fw_groups).post(fw_group_put))
+        .route("/firewall/groups/{name}", delete_route(fw_group_delete))
         .route("/vswitches/{name}", delete_route(vswitch_delete))
         .route("/vswitches/{name}/push", post(vswitch_push))
         .route("/guests/{vmid}/migrate/prepare", post(migrate_prepare))
@@ -204,6 +208,34 @@ async fn balance(State(st): State<AppState>) -> Json<crate::state::balance::Bala
 }
 
 /// Dağıtık anahtarlar: tanım, bu sunucudaki durum, kullanan konuklar ve eşlerdeki tanımla karşılaştırma.
+async fn ip_sets(State(st): State<AppState>) -> Json<Vec<redox_core::fwsets::IpSet>> {
+    Json(st.snapshot().ip_sets)
+}
+
+async fn ip_set_put(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(set): Json<redox_core::fwsets::IpSet>) -> Result<StatusCode, ApiError> {
+    st.fw_definition(format!("firewall set {}", set.name), &me.user, |c| c.put_ip_set(set))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn ip_set_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
+    st.fw_definition(format!("firewall set remove {name}"), &me.user, |c| c.remove_ip_set(&name))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn fw_groups(State(st): State<AppState>) -> Json<Vec<redox_core::fwsets::FwGroup>> {
+    Json(st.snapshot().fw_groups)
+}
+
+async fn fw_group_put(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(group): Json<redox_core::fwsets::FwGroup>) -> Result<StatusCode, ApiError> {
+    st.fw_definition(format!("firewall group {}", group.name), &me.user, |c| c.put_fw_group(group))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn fw_group_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
+    st.fw_definition(format!("firewall group remove {name}"), &me.user, |c| c.remove_fw_group(&name))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn vswitches(State(st): State<AppState>) -> Json<Vec<crate::state::vswitch::SwitchReport>> {
     Json(st.vswitch_report())
 }

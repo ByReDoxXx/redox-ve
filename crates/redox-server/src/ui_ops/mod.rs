@@ -24,6 +24,8 @@ mod screen;
 mod switches;
 mod edit;
 mod files;
+mod firewall;
+pub use firewall::*;
 mod ft;
 mod hardware;
 mod lifecycle;

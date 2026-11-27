@@ -43,6 +43,11 @@ pub(super) fn real_compat() -> Option<Real> {
     real_from("REDOX_REAL_INITRD_COMPAT")
 }
 
+/// nftables araçları ve modülleri eklenmiş konukla yapılandırma.
+pub(super) fn real_firewall() -> Option<Real> {
+    real_from("REDOX_REAL_INITRD_FW")
+}
+
 /// İçinde konuk ajanı bulunan konukla yapılandırma.
 pub(super) fn real_agent() -> Option<Real> {
     real_from("REDOX_REAL_INITRD_AGENT")

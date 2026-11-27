@@ -11,6 +11,17 @@ impl AppState {
         Ok(())
     }
 
+    /// Adres kümesi ya da güvenlik grubu değişikliği: kaydeder, günlüğe yazar ve kuralları yeniden yükler.
+    pub fn fw_definition(&self, what: String, user: &str, change: impl FnOnce(&mut Cluster) -> Result<(), Error>) -> Result<(), Error> {
+        self.mutate(|c| {
+            change(c)?;
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, what, &Ok(()), now(), None);
+            Ok::<_, Error>(())
+        })?;
+        self.sync_firewall().map_err(Error::Driver)
+    }
+
     /// Ağ kartı korumalarını konukların o anki arayüzleriyle eşitler (konuk açılıp kapandıkça arayüz adları
     /// değişir). Düzenli aralıkla çağrılır; kurallar değişmediyse hiçbir şey yüklenmez.
     pub fn guards_tick(&self) -> Result<(), String> {
@@ -26,7 +37,11 @@ impl AppState {
         if !self.driver().firewall() {
             return Ok(());
         }
-        let guests = self.lock().guests.clone();
+        // Gruplar ve adres kümeleri sürücüye verilmeden önce düz kurallara açılır.
+        let guests: Vec<redox_core::Guest> = {
+            let c = self.lock();
+            c.guests.iter().map(|g| c.effective_firewall(g)).collect()
+        };
         let outcome = self.driver().apply_firewall(&guests);
         if outcome.is_err() {
             self.mutate(|c| {

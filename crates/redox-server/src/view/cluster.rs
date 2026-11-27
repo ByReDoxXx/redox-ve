@@ -428,6 +428,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state:
             (super::mirrors::mirror_cards(p, peers))
             (super::ft::ft_card(p, peers))
             (super::switches::switch_card(p, switches, !peers.is_empty()))
+            (super::fwsets::fw_card(p))
             @if p.admin {
                 div class="card" {
                     header { h2 { (tx("Destek paketi")) } (tip("Sorun bildirirken gönderilecek durum dökümü.")) a class="btn sm end" href="/support" download { (icon("disk")) (tx("İndir")) } }

@@ -139,6 +139,21 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                         textarea id="fw_rules" name="fw_rules" rows="4" spellcheck="false" autocomplete="off" placeholder="tcp/22 from 10.0.0.0/8" { (f.fw_rules) }
                         span class="hint" tabindex="0" role="note" { (tx("Satır başına bir kural: tcp/22, tcp/80-443, udp/53 from 192.168.1.0/24, icmp. En fazla ")) (redox_core::hw::MAX_FW_RULES) "." }
                     }
+                    div class="field" {
+                        span class="label" { (tx("Giden trafik")) }
+                        label class="check" { input type="checkbox" name="fw_out_restrict" value="1" checked[f.fw_out_restrict.is_some()]; (tx("Giden trafiği kısıtla")) }
+                        span class="hint" tabindex="0" role="note" { (tx("Açıkken konuk yalnızca aşağıdaki giden kurallara uyan bağlantıları başlatabilir; kendisine izin verilen gelen bağlantıların yanıtları geçer. Ad çözümleme (udp/53) için de kural gerekir.")) }
+                    }
+                    div class="field full" {
+                        label for="fw_out" { (tx("İzin verilen giden trafik")) }
+                        textarea id="fw_out" name="fw_out" rows="3" spellcheck="false" autocomplete="off" placeholder="udp/53 to 10.0.0.1" { (f.fw_out) }
+                        span class="hint" tabindex="0" role="note" { (tx("Satır başına bir kural: tcp/443, udp/53 to 10.0.0.1, tcp/25 to @posta, icmp.")) }
+                    }
+                    div class="field full" {
+                        label for="fw_groups" { (tx("Güvenlik grupları")) }
+                        input id="fw_groups" name="fw_groups" type="text" spellcheck="false" autocomplete="off" value=(f.fw_groups) placeholder=(p.cluster.fw_groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>().join(", "));
+                        span class="hint" tabindex="0" role="note" { (tx("Virgülle ayırın. Gruplar ve adres kümeleri Küme sayfasında tanımlanır.")) }
+                    }
                 }
             }
     };

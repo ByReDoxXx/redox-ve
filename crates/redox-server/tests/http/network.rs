@@ -78,3 +78,34 @@ pub(super) async fn container_console_runs_commands() {
 }
 
 // ---------- Zamanlanmış yedek, canlı işlemler, uyarılar ve yeni API uçları ----------
+
+#[tokio::test]
+pub(super) async fn security_groups_and_address_sets_are_managed_and_used_by_guests() {
+    let (app, state) = setup();
+    assert!(post_ok(&app, "/cluster/firewall", "op=save-set&name=ofis&entries=10.0.0.0%2F24%2C+192.168.1.5").await.contains("notice="));
+    assert!(post_ok(&app, "/cluster/firewall", "op=save-group&name=web&rules=tcp%2F443%2C+tcp%2F22+from+%40ofis&out=udp%2F53").await.contains("notice="));
+    assert!(post_ok(&app, "/cluster/firewall", "op=save-group&name=db&rules=tcp%2F5432+from+%40yok&out=").await.contains("error="));
+    let cluster = page(&app, "/cluster").await;
+    assert!(cluster.contains("@ofis") && cluster.contains("tcp/22 from @ofis") && cluster.contains("udp/53"), "{cluster}");
+
+    // Konuğa verilir; Seçenekler sekmesi alanları gösterir ve kaydeder.
+    let form = "part=secenekler&name=db-ana&os=debian-12&tags=&backup_time=&backup_keep=7&boot_order=0&boot_delay=0&firewall=1&fw_rules=&fw_out_restrict=1&fw_out=tcp%2F443+to+%40ofis&fw_groups=web";
+    assert!(post_ok(&app, "/guests/101/edit", form).await.contains("notice="));
+    let hw = state.snapshot().guest(101).unwrap().hw.clone();
+    assert_eq!((hw.fw_out_restrict, hw.fw_groups.clone(), hw.fw_out[0].outbound()), (true, vec!["web".to_string()], "tcp/443 to @ofis".to_string()));
+    let tab = page(&app, "/guests/101?tab=secenekler").await;
+    assert!(tab.contains(r#"name="fw_out_restrict" value="1" checked"#) && tab.contains("tcp/443 to @ofis") && tab.contains(r#"value="web""#), "{tab}");
+    assert!(post_ok(&app, "/guests/101/edit", &form.replace("fw_groups=web", "fw_groups=yok")).await.contains("error="));
+
+    // Kullanılan tanım silinmez; API aynı kuralları uygular.
+    assert!(post_ok(&app, "/cluster/firewall", "op=remove-group&name=web").await.contains("error="));
+    let delete = |uri: &str| request(Method::DELETE, uri).body(Body::empty()).unwrap();
+    assert_eq!(api(&app, delete("/api/v1/firewall/sets/ofis")).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, sets) = api(&app, get("/api/v1/firewall/sets")).await;
+    assert_eq!((status, sets[0]["name"].as_str()), (StatusCode::OK, Some("ofis")));
+    let denied = send(&app, as_viewer(Method::POST, "/api/v1/firewall/sets").header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "name": "x", "entries": ["10.0.0.1"] }).to_string())).unwrap()).await.0;
+    assert_eq!(denied, StatusCode::FORBIDDEN);
+    assert!(post_ok(&app, "/guests/101/edit", &form.replace("fw_groups=web", "fw_groups=").replace("%40ofis", "10.0.0.1")).await.contains("notice="));
+    assert!(post_ok(&app, "/cluster/firewall", "op=remove-group&name=web").await.contains("notice="));
+    assert!(api(&app, delete("/api/v1/firewall/sets/ofis")).await.0.is_success());
+}

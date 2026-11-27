@@ -12,6 +12,7 @@ mod backups;
 mod cluster;
 mod forms;
 mod ft;
+mod fwsets;
 mod guests;
 mod mirrors;
 mod switches;

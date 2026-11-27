@@ -387,6 +387,7 @@ details.set[open]>summary{background:var(--hover)}
 .addrow{display:grid;grid-template-columns:minmax(140px,1fr) minmax(120px,160px) minmax(120px,160px) auto;gap:var(--s3);align-items:end;padding:var(--s4)}
 .addrow .field input,.addrow .field select{width:100%}
 .addrow.vds{grid-template-columns:minmax(130px,1fr) 100px 100px minmax(220px,2fr) auto}
+.addrow.vds .field.wide{grid-column:span 3}
 .card>header .end .pill{height:24px}
 /* Birleşik alan + düğme ve ince ayraç (canlı konsol). */
 .joined{display:inline-flex;align-items:stretch}

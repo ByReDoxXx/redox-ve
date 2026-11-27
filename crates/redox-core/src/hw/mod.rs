@@ -98,6 +98,12 @@ pub struct Hardware {
     /// gibi davranamaz ve yönlendirici duyurusu (RA) gönderemez. Köprüye bağlı kartlarda etkilidir.
     pub nic_guard: bool,
     pub fw_rules: Vec<FwRule>,
+    /// Güvenlik duvarı açıkken konuğun başlattığı trafik de kısıtlansın: yalnızca `fw_out` (ve grupların giden
+    /// kuralları) geçer.
+    pub fw_out_restrict: bool,
+    pub fw_out: Vec<FwRule>,
+    /// Konuğa verilen güvenlik gruplarının adları.
+    pub fw_groups: Vec<String>,
     /// Sanal makinenin açılış donanım yazılımı.
     pub firmware: Firmware,
     /// Güvenli önyükleme (yalnızca UEFI ile).
@@ -233,7 +239,13 @@ impl Hardware {
         if self.fw_rules.len() > MAX_FW_RULES {
             return Err(format!("en fazla {MAX_FW_RULES} güvenlik duvarı kuralı eklenebilir"));
         }
-        if let Some(bad) = self.fw_rules.iter().find(|r| !r.valid()) {
+        if self.fw_out.len() > MAX_FW_RULES {
+            return Err(format!("en fazla {MAX_FW_RULES} güvenlik duvarı kuralı eklenebilir"));
+        }
+        if self.fw_groups.len() > crate::fwsets::MAX_GUEST_GROUPS || self.fw_groups.iter().any(|n| !crate::fwsets::valid_fw_name(n)) {
+            return Err(format!("en fazla {} güvenlik grubu verilebilir; adlar küçük harf, rakam ve tire", crate::fwsets::MAX_GUEST_GROUPS));
+        }
+        if let Some(bad) = self.fw_rules.iter().chain(&self.fw_out).find(|r| !r.valid()) {
             return Err(format!("geçersiz güvenlik duvarı kuralı: {bad}"));
         }
         if (self.uses_compat()) && kind != GuestKind::Vm {

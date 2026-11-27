@@ -131,6 +131,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox ft list | on <kimlik> <ikiz-eş> <hakem-eş> | off <kimlik> | twins   (hata toleransı)
   redox mirror list | add <kimlik> <eş> | off <kimlik> [--delete-copy]   (eşzamanlı disk yansıtma)
   redox mirror copies | promote <kaynak> <kimlik> | delete-copy <kaynak> <kimlik>   (burada tutulan kopyalar)
+  redox firewall set list | save <ad> <adres,adres> | remove <ad>             (kurallarda @ad olarak kullanılan adres kümeleri)
+  redox firewall group list | save <ad> in='<kurallar>' out='<kurallar>' | remove <ad>   (güvenlik grupları; konuğa: vm set <kimlik> fw-groups=ad)
   redox switch list | set <vds-ad> <vni> <adres,adres> [--mtu <n>] | push <ad> | remove <ad> [--everywhere]   (dağıtık anahtar)
   redox task list
 ";
@@ -271,6 +273,13 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
                 ("firmware", serde_json::to_value(firmware).map_err(|e| e.to_string())?)
             }
             "fw-rules" => ("fw_rules", serde_json::to_value(redox_core::hw::parse_fw_rules(value)?).map_err(|e| e.to_string())?),
+            "fw-out" => ("fw_out", serde_json::to_value(redox_core::hw::parse_fw_out_rules(value)?).map_err(|e| e.to_string())?),
+            "fw-out-restrict" => ("fw_out_restrict", Value::from(match value {
+                "true" | "1" | "evet" => true,
+                "false" | "0" | "hayır" | "hayir" => false,
+                _ => return Err(format!("{key} true ya da false olmalı: {value}")),
+            })),
+            "fw-groups" => ("fw_groups", Value::from(value.split(',').map(str::trim).filter(|n| !n.is_empty()).collect::<Vec<_>>())),
             "tags" => ("tags", Value::from(redox_core::parse_tags(value))),
             "nics" | "usb" | "pci" => (key, Value::from(value.split(',').map(str::trim).filter(|n| !n.is_empty()).collect::<Vec<_>>())),
             "forwards" => {
@@ -280,7 +289,7 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             }
             _ => {
                 return Err(format!(
-                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores max-cores cpu-shares memory max-memory mem-reserve os iso iso2 disk-bus nic-model bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
+                    "bilinmeyen anahtar \"{key}\"; geçerli olanlar: name cores max-cores cpu-shares memory max-memory mem-reserve os iso iso2 disk-bus nic-model bridge onboot restart boot-order boot-delay schedules disk-mbps disk-iops net-mbps vlan shares tags forwards backup-time backup-keep firewall fw-rules fw-out fw-out-restrict fw-groups firmware tpm nics usb pci ci-user ci-key ci-ip ci-gw ci-dns cpu balloon pool backup-weekly backup-monthly backup-yearly backup-pre backup-post"
                 ))
             }
         };
@@ -504,6 +513,12 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["mirror", "copies"] => get("/mirror-stores", View::MirrorStores),
         ["mirror", "promote", origin, id] => req("POST", format!("/mirror-stores/{origin}/{}/promote", vmid(id)?), None, View::Promoted),
         ["mirror", "delete-copy", origin, id] => req("DELETE", format!("/mirror-stores/{origin}/{}", vmid(id)?), None, View::Done("kopya silindi")),
+        ["firewall", "set", "list"] => get("/firewall/sets", View::Json),
+        ["firewall", "set", "save", name, entries] => req("POST", "/firewall/sets".to_string(), Some(json!({ "name": name, "entries": entries.split(',').map(str::trim).filter(|e| !e.is_empty()).collect::<Vec<_>>() })), View::Done("adres kümesi kaydedildi")),
+        ["firewall", "set", "remove", name] => req("DELETE", format!("/firewall/sets/{name}"), None, View::Done("adres kümesi silindi")),
+        ["firewall", "group", "list"] => get("/firewall/groups", View::Json),
+        ["firewall", "group", "save", name, pairs @ ..] => req("POST", "/firewall/groups".to_string(), Some(fw_group_body(name, pairs)?), View::Done("güvenlik grubu kaydedildi")),
+        ["firewall", "group", "remove", name] => req("DELETE", format!("/firewall/groups/{name}"), None, View::Done("güvenlik grubu silindi")),
         ["switch", "list"] => get("/vswitches", View::Switches),
         ["switch", "set", name, vni, members, rest @ ..] => req("POST", "/vswitches".to_string(), Some(switch_body(name, vni, members, rest)?), View::Done("anahtar kaydedildi; eşlere göndermek için: redox switch push <ad>")),
         ["switch", "push", name] => req("POST", format!("/vswitches/{name}/push"), None, View::SwitchPeers),
@@ -537,6 +552,22 @@ fn switch_local(state: Option<&str>) -> &'static str {
 fn switch_peer_state(state: &str) -> &'static str {
     use crate::state::vswitch::PeerState;
     [PeerState::Same, PeerState::Different, PeerState::Missing].into_iter().find(|p| serde_json::to_value(p).is_ok_and(|v| v == state)).unwrap_or(PeerState::Unknown).label()
+}
+
+/// `redox firewall group save` değerlerini API gövdesine çevirir: `in=…` ve `out=…`.
+fn fw_group_body(name: &str, pairs: &[&str]) -> Result<Value, String> {
+    let (mut rules, mut out) = (Vec::new(), Vec::new());
+    for pair in pairs {
+        match pair.split_once('=') {
+            Some(("in", value)) => rules = redox_core::hw::parse_fw_rules(value)?,
+            Some(("out", value)) => out = redox_core::hw::parse_fw_out_rules(value)?,
+            _ => return Err(format!("\"{pair}\" anlaşılmadı; in='tcp/443' ya da out='udp/53' yazın")),
+        }
+    }
+    if rules.is_empty() && out.is_empty() {
+        return Err("en az bir kural verin: in='tcp/443' ya da out='udp/53'".to_string());
+    }
+    serde_json::to_value(redox_core::fwsets::FwGroup { name: name.to_string(), rules, out }).map_err(|e| e.to_string())
 }
 
 /// `redox switch set` değerlerini API gövdesine çevirir.
@@ -1054,6 +1085,12 @@ mod tests {
         assert_eq!(patch_body(&["nic-guard=true"]).unwrap(), json!({"nic_guard": true}));
         assert_eq!(patch_body(&["nested=true"]).unwrap(), json!({"nested": true}));
         assert_eq!(patch_body(&["cores=2", "max-cores=8"]).unwrap(), json!({"cores": 2, "max_cores": 8}));
+        let set = parse(&args("firewall set save ofis 10.0.0.0/24,192.168.1.5")).unwrap();
+        assert_eq!((set.path.as_str(), set.body.unwrap()), ("/firewall/sets", json!({"name": "ofis", "entries": ["10.0.0.0/24", "192.168.1.5"]})));
+        let group = parse(&["firewall", "group", "save", "web", "in=tcp/443", "out=udp/53 to @ofis"].map(String::from)).unwrap();
+        assert_eq!(group.body.unwrap()["out"][0]["source"], json!("@ofis"));
+        assert!(parse(&args("firewall group save web")).unwrap_err().contains("en az bir kural"));
+        assert_eq!(patch_body(&["fw-out-restrict=true", "fw-groups=web,db"]).unwrap(), json!({"fw_out_restrict": true, "fw_groups": ["web", "db"]}));
         let media = parse(&args("vm media 103 2 virtio-win.iso")).unwrap();
         assert_eq!((media.path.as_str(), media.body.unwrap()), ("/guests/103/media", json!({"drive": 2, "iso": "virtio-win.iso"})));
         assert!(parse(&args("vm media 103 ikinci")).unwrap_err().contains("1 ya da 2"));

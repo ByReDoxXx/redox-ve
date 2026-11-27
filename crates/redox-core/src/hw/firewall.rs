@@ -29,7 +29,8 @@ pub struct FwRule {
     /// Kapı aralığı (dahil); `None` ise bütün kapılar. ICMP'de kullanılmaz.
     #[serde(default)]
     pub ports: Option<(u16, u16)>,
-    /// Yalnızca bu IPv4 adresinden ya da ağından (`10.0.0.0/8`); `None` ise her yerden.
+    /// Karşı uç: gelen kuralda kaynağın, giden kuralda hedefin IPv4 adresi, ağı (`10.0.0.0/8`) ya da adres
+    /// kümesi (`@ofis`); `None` ise her yer.
     #[serde(default)]
     pub source: Option<String>,
 }
@@ -70,18 +71,32 @@ impl FwRule {
             (_, Some((a, b))) => a >= 1 && a <= b,
             (_, None) => true,
         };
-        ports_ok && self.source.as_deref().is_none_or(valid_cidr)
+        ports_ok && self.source.as_deref().is_none_or(|s| s.strip_prefix('@').map_or_else(|| valid_cidr(s), crate::fwsets::valid_fw_name))
+    }
+
+    /// Giden kuralın yazımı: `tcp/443 to 10.0.0.0/8`.
+    pub fn outbound(&self) -> String {
+        self.to_string().replacen(" from ", " to ", 1)
     }
 }
 
 /// "tcp/22, tcp/80-443 from 10.0.0.0/8, icmp" → kural listesi. Kurallar virgül ya da satırla ayrılır.
 pub fn parse_fw_rules(text: &str) -> Result<Vec<FwRule>, String> {
+    parse_directed(text, " from ", "tcp/22, udp/53, tcp/8000-8100 from 10.0.0.0/8, tcp/22 from @ofis, icmp")
+}
+
+/// Giden kurallar: "tcp/443, udp/53 to 10.0.0.1, tcp/25 to @posta".
+pub fn parse_fw_out_rules(text: &str) -> Result<Vec<FwRule>, String> {
+    parse_directed(text, " to ", "tcp/443, udp/53 to 10.0.0.1, tcp/25 to @posta, icmp")
+}
+
+fn parse_directed(text: &str, word: &str, examples: &str) -> Result<Vec<FwRule>, String> {
     text.split([',', '\n'])
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .map(|item| {
-            let bad = || format!("geçersiz güvenlik duvarı kuralı \"{item}\"; örnekler: tcp/22, udp/53, tcp/8000-8100 from 10.0.0.0/8, icmp");
-            let (what, source) = match item.split_once(" from ") {
+            let bad = || format!("geçersiz güvenlik duvarı kuralı \"{item}\"; örnekler: {examples}");
+            let (what, source) = match item.split_once(word) {
                 Some((what, source)) => (what.trim(), Some(source.trim().to_string())),
                 None => (item, None),
             };

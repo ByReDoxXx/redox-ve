@@ -10,6 +10,7 @@ pub mod driver;
 pub mod error;
 pub mod fmt;
 pub mod ft;
+pub mod fwsets;
 pub mod hw;
 pub mod jobs;
 pub mod metrics;

@@ -429,6 +429,9 @@ pub struct GuestPatch {
     /// Ağ kartı koruması (MAC sahteciliği, DHCP sunucusu ve yönlendirici duyurusu engeli).
     pub nic_guard: Option<bool>,
     pub fw_rules: Option<Vec<crate::hw::FwRule>>,
+    pub fw_out_restrict: Option<bool>,
+    pub fw_out: Option<Vec<crate::hw::FwRule>>,
+    pub fw_groups: Option<Vec<String>>,
     pub firmware: Option<crate::hw::Firmware>,
     pub disk_bus: Option<crate::hw::DiskBus>,
     pub nic_model: Option<crate::hw::NicModel>,

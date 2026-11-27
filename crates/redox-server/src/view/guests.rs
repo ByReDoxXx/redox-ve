@@ -170,12 +170,18 @@ pub(super) fn guest_head(p: &Page, g: &Guest, tab: &str) -> Markup {
 
 pub(super) fn firewall_text(g: &Guest) -> String {
     if !g.hw.firewall {
-        (tx("kapalı")).to_string()
-    } else if g.hw.fw_rules.is_empty() {
+        return (tx("kapalı")).to_string();
+    }
+    let mut text = if g.hw.fw_rules.is_empty() && g.hw.fw_groups.is_empty() {
         (tx("açık · gelen trafik kapalı")).to_string()
     } else {
-        tfmt(format!("açık · {}", g.hw.fw_rules.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")))
+        let groups = g.hw.fw_groups.iter().map(|n| format!("[{n}]"));
+        tfmt(format!("açık · {}", g.hw.fw_rules.iter().map(ToString::to_string).chain(groups).collect::<Vec<_>>().join(", ")))
+    };
+    if g.hw.fw_out_restrict {
+        text.push_str(tx(" · giden kısıtlı"));
     }
+    text
 }
 
 pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
