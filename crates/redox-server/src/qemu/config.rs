@@ -31,6 +31,8 @@ pub struct QemuConfig {
     pub storages: Vec<(String, PathBuf)>,
     /// `storages` içinden ortak depo olanların adları.
     pub shared: Vec<String>,
+    /// Disk şifreleme anahtarının dosyası; yoksa şifreli konuk oluşturulamaz ve başlatılamaz.
+    pub disk_key: Option<PathBuf>,
     /// Bu sunucunun ortak depodaki kalıcı kimliği.
     pub server_id: String,
     /// Yeni yedekler parça deposuna mı yazılsın? (Yalnızca değişen kısım yer kaplar.)
@@ -63,6 +65,7 @@ impl QemuConfig {
             sys_module: PathBuf::from("/sys/module"),
             storages: Vec::new(),
             shared: Vec::new(),
+            disk_key: None,
             server_id: String::new(),
             incremental_backups: false,
             backup_passphrase: None,

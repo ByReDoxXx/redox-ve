@@ -30,7 +30,7 @@ pub fn hot_add_disk(d: &QemuDriver, g: &Guest, id: u8) -> Result<(), String> {
     }
     let sock = d.cfg.qmp_path(g.vmid);
     let drive = format!("xd{id}");
-    let added = hmp_text(d, g, &format!("drive_add 0 file={},if=none,id={drive},format=qcow2,discard=unmap{}", crate::qemu::opt(&d.cfg.extra_disk_of(g, id)), crate::qemu::disk_throttle(g)))?;
+    let added = hmp_text(d, g, &format!("drive_add 0 file={},if=none,id={drive},format=qcow2,discard=unmap{}{}", crate::qemu::opt(&d.cfg.extra_disk_of(g, id)), if g.hw.encrypted { ",encrypt.key-secret=diskkey" } else { "" }, crate::qemu::disk_throttle(g)))?;
     if added != "OK" {
         return Err(format!("disk konuğa tanıtılamadı: {}", added.lines().last().unwrap_or("bilinmeyen hata")));
     }

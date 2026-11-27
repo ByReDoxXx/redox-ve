@@ -269,6 +269,11 @@ pub trait Hypervisor: Send + Sync {
         Err("bu sürücü çalışan konuğa ağ kartı takamaz".to_string())
     }
 
+    /// Konuk diskleri şifrelenebiliyor mu (sunucunun disk anahtarı var mı)?
+    fn disk_encryption(&self) -> bool {
+        false
+    }
+
     /// Ortak depo olarak işaretli depolama alanları: `(ad, dizin)`.
     fn shared_storages(&self) -> Vec<(String, std::path::PathBuf)> {
         Vec::new()

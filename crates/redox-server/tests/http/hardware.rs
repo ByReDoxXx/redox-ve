@@ -516,3 +516,22 @@ pub(super) async fn pinning_numa_and_huge_pages_are_set_with_their_limits() {
     let (status, host) = api(&app, get("/api/v1/host/performance")).await;
     assert_eq!((status, host["numa"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "benzetimde sunucu bilgisi yok");
 }
+
+// ---------- Disk şifreleme ----------
+
+#[tokio::test]
+pub(super) async fn encryption_is_chosen_only_at_creation() {
+    let (app, state) = setup();
+    let to = post_ok(&app, "/guests", &format!("{VALID_FORM}&encrypted=1")).await;
+    let vmid: u32 = to.split("/guests/").nth(1).and_then(|s| s.split('?').next()).unwrap().parse().unwrap_or_else(|_| panic!("{to}"));
+    assert!(state.snapshot().guest(vmid).unwrap().hw.encrypted);
+    assert!(page(&app, &format!("/guests/{vmid}")).await.contains("şifreli disk"));
+    // Sonradan değiştiren bir alan yoktur: düzenleme isteğindeki bilinmeyen alan yok sayılır.
+    let patch = request(Method::PATCH, &format!("/api/v1/guests/{vmid}")).header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "encrypted": false, "name": "yine-sifreli" }).to_string())).unwrap();
+    let _ = send(&app, patch).await;
+    assert!(state.snapshot().guest(vmid).unwrap().hw.encrypted);
+    // Konteynerde yoktur.
+    let ct = json!({ "kind": "ct", "node": "pve-ist-01", "name": "k1", "cores": 1, "memory_mb": 256, "disk_gb": 2, "storage": "local-zfs", "os": "debian-12", "encrypted": true });
+    let (status, v) = api(&app, post_json("/api/v1/guests", &ct)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+}

@@ -23,10 +23,12 @@ pub mod perf;
 mod args;
 pub mod ft_args;
 mod config;
+mod crypt;
 mod qmp;
 
 pub use args::*;
 pub use config::*;
+pub use crypt::{check_key_file, SECRET_ID};
 pub use qmp::*;
 
 /// Değişen blokları kaydeden kalıcı haritanın (dirty bitmap) adı.
@@ -295,11 +297,13 @@ impl Hypervisor for QemuDriver {
             if !path.is_file() {
                 return Err(format!("yedek dosyası bulunamadı: {}", path.display()));
             }
-            let out = std::process::Command::new(&self.cfg.qemu_img_bin)
-                .args(["check", "-f", "qcow2"])
-                .arg(&path)
-                .output()
-                .map_err(|e| format!("{} çalıştırılamadı: {e}", self.cfg.qemu_img_bin))?;
+            let mut check = std::process::Command::new(&self.cfg.qemu_img_bin);
+            if self.is_encrypted_image(&path).unwrap_or(false) {
+                check.arg("check").arg("--object").arg(self.key_object()?).arg("--image-opts").arg(format!("driver=qcow2,encrypt.key-secret={},file.filename={}", crypt::SECRET_ID, opt(&path)));
+            } else {
+                check.args(["check", "-f", "qcow2"]).arg(&path);
+            }
+            let out = check.output().map_err(|e| format!("{} çalıştırılamadı: {e}", self.cfg.qemu_img_bin))?;
             // 0: temiz; 3: yalnızca kullanılmayan alan sızıntısı (veri sağlam).
             if !matches!(out.status.code(), Some(0) | Some(3)) {
                 return Err(format!("yedek bozuk: {}", last_line(if out.stderr.is_empty() { &out.stdout } else { &out.stderr })));
@@ -310,6 +314,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn export_disks(&self, guest: &Guest) -> Result<Option<(PathBuf, Vec<(String, PathBuf, u64)>)>, String> {
+        Self::plain_only(guest, "dışa aktarma")?;
         const GB: u64 = 1024 * 1024 * 1024;
         #[cfg(unix)]
         if self.alive(guest.vmid) {
@@ -388,6 +393,9 @@ impl Hypervisor for QemuDriver {
     }
 
     fn create(&self, guest: &Guest) -> Result<(), String> {
+        if guest.hw.encrypted {
+            self.key_object()?;
+        }
         // Başkasının konuğuysa daha baştan, o sunucunun adıyla reddedilir.
         if let Some(dir) = self.cfg.shared_dir(&guest.storage) {
             if let Some(owner) = crate::shared::read_owner(&dir, guest.vmid)?.filter(|o| o.server != self.cfg.server_id) {
@@ -416,20 +424,29 @@ impl Hypervisor for QemuDriver {
                 })?;
                 source = temp.clone();
             }
-            let converted = self.convert(&source, &disk, false, "bulut imajı kopyalanamadı");
+            let converted = if guest.hw.encrypted {
+                self.convert_encrypted(&source, &disk, "bulut imajı kopyalanamadı")
+            } else {
+                self.convert(&source, &disk, false, "bulut imajı kopyalanamadı")
+            };
             if let Some(temp) = &unpacked {
                 let _ = std::fs::remove_file(temp);
             }
             let built = converted.and_then(|()| {
                 let size = format!("{}G", guest.disk_gb);
-                self.img(&["resize".as_ref(), disk.as_os_str(), size.as_ref()], "disk istenen boyuta getirilemedi (boyut imajdan küçük olamaz)")
+                let failed = "disk istenen boyuta getirilemedi (boyut imajdan küçük olamaz)";
+                if guest.hw.encrypted {
+                    self.img_encrypted(&["resize"], &disk, &[&size], failed)
+                } else {
+                    self.img(&["resize".as_ref(), disk.as_os_str(), size.as_ref()], failed)
+                }
             });
             if built.is_err() {
                 let _ = std::fs::remove_file(&disk);
             }
             return built;
         }
-        self.create_image(&disk, guest.disk_gb)
+        self.create_disk_image(guest, &disk, guest.disk_gb)
     }
 
     fn add_disk(&self, guest: &Guest, id: u8, size_gb: u64) -> Result<(), String> {
@@ -439,7 +456,7 @@ impl Hypervisor for QemuDriver {
         if disk.exists() {
             return Err(format!("{} zaten var; dosyayı kaldırın ya da yeniden deneyin", disk.display()));
         }
-        self.create_image(&disk, size_gb)
+        self.create_disk_image(guest, &disk, size_gb)
     }
 
     fn remove_disk(&self, guest: &Guest, id: u8) -> Result<(), String> {
@@ -491,6 +508,9 @@ impl Hypervisor for QemuDriver {
     }
 
     fn apply(&self, guest: &Guest, action: Action) -> Result<(), String> {
+        if guest.hw.encrypted && matches!(action, Action::Start | Action::Resume | Action::Reboot) {
+            self.key_object()?;
+        }
         if action != Action::Stop {
             self.owned(guest)?;
         }
@@ -614,6 +634,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn ft_protect(&self, guest: &Guest, link: &redox_core::FtLink, key: &str) -> Result<(), String> {
+        Self::plain_only(guest, "hata toleransı")?;
         #[cfg(unix)]
         return imp::ft_protect(self, guest, link, key);
         #[cfg(not(unix))]
@@ -695,6 +716,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn mirror_start(&self, guest: &Guest, host: &str, port: u16, key: &str) -> Result<(), String> {
+        Self::plain_only(guest, "disk yansıtma")?;
         #[cfg(unix)]
         return imp::mirror_start(self, guest, host, port, key);
         #[cfg(not(unix))]
@@ -806,6 +828,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn migrate_send(&self, guest: &Guest, host: &str, nbd_port: u16, ram_port: u16, key: &str) -> Result<u64, String> {
+        Self::plain_only(guest, "disk kopyalayarak canlı taşıma (ortak depoda taşıyın)")?;
         #[cfg(unix)]
         {
             imp::migrate_send(self, guest, host, nbd_port, ram_port, key)
@@ -827,6 +850,10 @@ impl Hypervisor for QemuDriver {
             let _ = guest;
             Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
         }
+    }
+
+    fn disk_encryption(&self) -> bool {
+        self.cfg.disk_key.as_deref().is_some_and(|key| crypt::check_key_file(key).is_ok())
     }
 
     fn shared_storages(&self) -> Vec<(String, std::path::PathBuf)> {
@@ -908,6 +935,12 @@ impl Hypervisor for QemuDriver {
     }
 
     fn snapshot(&self, guest: &Guest, op: SnapshotOp<'_>) -> Result<(), String> {
+        // QEMU 10.2.1'de `savevm`, LUKS'lu qcow2'de bellek durumunu yazarken bir doğrulamada çöker
+        // (qcow2_co_encdec) ve konuk ölür: bu istek QEMU'ya hiç gönderilmez.
+        #[cfg(unix)]
+        if guest.hw.encrypted && matches!(op, SnapshotOp::Create(_)) && self.alive(guest.vmid) {
+            return Err("şifreli diskli konukta çalışırken bellekli anlık görüntü alınamaz (QEMU konuğu çökertiyor): belleksiz görüntü alın ya da konuğu kapatın".to_string());
+        }
         self.owned(guest)?;
         if matches!(op, SnapshotOp::Rollback(_)) {
             // Geri dönüş diskin içeriğini haritaya işlenmeden değiştirir: harita artık güvenilmez.
@@ -945,14 +978,24 @@ impl Hypervisor for QemuDriver {
             return Err(format!("geçersiz anlık görüntü adı: {name}"));
         }
         let disk = self.cfg.disk_of(guest);
-        self.img(&["snapshot".as_ref(), flag.as_ref(), name.as_ref(), disk.as_os_str()], "anlık görüntü işlemi başarısız")?;
+        if guest.hw.encrypted {
+            self.img_encrypted(&["snapshot", flag, name], &disk, &[], "anlık görüntü işlemi başarısız")?;
+        } else {
+            self.img(&["snapshot".as_ref(), flag.as_ref(), name.as_ref(), disk.as_os_str()], "anlık görüntü işlemi başarısız")?;
+        }
         // UEFI değişken deposu da aynı adla işlenir: çalışırken alınan görüntüler onu da kapsar ve
         // QEMU geri dönerken görüntüyü bütün yazılabilir imajlarda arar.
         let mut others = vec![self.cfg.efivars_path(guest.vmid, false), self.cfg.efivars_path(guest.vmid, true)];
         others.extend(guest.hw.disks.iter().map(|d| self.cfg.extra_disk_of(guest, d.id)));
         for vars in others {
             if vars.is_file() {
-                let done = self.img(&["snapshot".as_ref(), flag.as_ref(), name.as_ref(), vars.as_os_str()], "ek imajda anlık görüntü işlemi başarısız");
+                let failed = "ek imajda anlık görüntü işlemi başarısız";
+                // Şifreli konukta ek diskler şifrelidir; UEFI değişken deposu değildir.
+                let done = if guest.hw.encrypted && self.is_encrypted_image(&vars)? {
+                    self.img_encrypted(&["snapshot", flag, name], &vars, &[], failed)
+                } else {
+                    self.img(&["snapshot".as_ref(), flag.as_ref(), name.as_ref(), vars.as_os_str()], failed)
+                };
                 // Depo sonradan oluşmuşsa eski görüntü onda yoktur; yalnızca oluşturma hatası önemlidir.
                 if matches!(op, SnapshotOp::Create(_)) {
                     done?;
@@ -982,10 +1025,14 @@ impl Hypervisor for QemuDriver {
         self.cbt_invalidate(guest.vmid);
         let disk = self.cfg.disk_of(guest);
         let size = format!("{new_gb}G");
+        if guest.hw.encrypted {
+            return self.img_encrypted(&["resize"], &disk, &[&size], "disk büyütülemedi");
+        }
         self.img(&["resize".as_ref(), disk.as_os_str(), size.as_ref()], "disk büyütülemedi")
     }
 
     fn clone_disk(&self, source: &Guest, target: &Guest) -> Result<(), String> {
+        Self::plain_only(source, "klonlama")?;
         self.claim(target)?;
         let (from, to) = (self.cfg.disk_of(source), self.cfg.disk_of(target));
         if to.exists() {
@@ -999,6 +1046,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn suspend(&self, guest: &Guest) -> Result<(), String> {
+        Self::plain_only(guest, "diske askıya alma (bellek durumu şifresiz yazılırdı)")?;
         self.owned(guest)?;
         #[cfg(unix)]
         {
@@ -1055,6 +1103,7 @@ impl Hypervisor for QemuDriver {
 
     /// Bağlı klon: her disk, şablonun aynı numaralı diskini arkalık alan boş bir qcow2'dir.
     fn link_disk(&self, source: &Guest, target: &Guest) -> Result<(), String> {
+        Self::plain_only(source, "bağlı klon")?;
         self.claim(target)?;
         let mut made: Vec<PathBuf> = Vec::new();
         for n in disk_ids(source) {
@@ -1122,10 +1171,21 @@ impl Hypervisor for QemuDriver {
                         // Dosya dış hedeften gelmiş olabilir: biçimi tahmine bırakılmaz ve başka bir
                         // dosyaya bağlanan (arkalıklı) imaj kabul edilmez.
                         self.check_standalone(&source)?;
-                        self.img(
-                            &["convert".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-O".as_ref(), "qcow2".as_ref(), source.as_os_str(), staging.as_os_str()],
-                            "yedek geri yüklenemedi",
-                        )
+                        if guest.hw.encrypted {
+                            // Şifreli yedek bayt bayt kopyalanır; şifresiz bir dosya gelirse şifrelenerek çevrilir.
+                            if self.is_encrypted_image(&source)? {
+                                std::fs::copy(&source, &staging).map(|_| ()).map_err(|e| format!("yedek geri yüklenemedi: {e}"))
+                            } else {
+                                self.convert_encrypted(&source, &staging, "yedek geri yüklenemedi")
+                            }
+                        } else if self.is_encrypted_image(&source)? {
+                            Err("yedek şifreli ama konuk şifreli değil: şifreli bir konuk olarak geri yükleyin".to_string())
+                        } else {
+                            self.img(
+                                &["convert".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-O".as_ref(), "qcow2".as_ref(), source.as_os_str(), staging.as_os_str()],
+                                "yedek geri yüklenemedi",
+                            )
+                        }
                     } else {
                         Err(format!("yedek dosyası bulunamadı: {}", source.display()))
                     }
@@ -1173,6 +1233,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn instant_from_backup(&self, guest: &Guest, backup: &str, disks: &[u8]) -> Result<(), String> {
+        Self::plain_only(guest, "anında kurtarma")?;
         self.claim(guest)?;
         if self.store.has(backup) {
             return Err("artımlı yedek parça parça durur, bir diskin arkalığı olamaz; yeni konuk olarak geri yükleyin".to_string());
@@ -1238,6 +1299,7 @@ impl Hypervisor for QemuDriver {
         outcome
     }
     fn move_storage_live(&self, guest: &Guest, target: &str) -> Result<(), String> {
+        Self::plain_only(guest, "çalışırken depolama taşıma (kapalıyken taşıyın)")?;
         self.owned(guest)?;
         let mut moved = guest.clone();
         moved.storage = target.to_string();
@@ -1258,6 +1320,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn import_disk(&self, guest: &Guest, id: u8, source: &Path) -> Result<(), String> {
+        Self::plain_only(guest, "disk içe aktarma")?;
         self.owned(guest)?;
         self.cbt_invalidate(guest.vmid);
         let disk = self.cfg.extra_disk_of(guest, id);
@@ -1359,6 +1422,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn disk_raw(&self, guest: &Guest, disk: u8, dest: &Path) -> Result<(), String> {
+        Self::plain_only(guest, "diskin ham içeriğini çıkarma (çoğaltma ve aktarma)")?;
         let source = self.guest_disk(guest, disk);
         self.img(&["convert".as_ref(), "-f".as_ref(), "qcow2".as_ref(), "-O".as_ref(), "raw".as_ref(), source.as_os_str(), dest.as_os_str()], "diskin ham içeriği çıkarılamadı")
     }
@@ -1469,6 +1533,15 @@ impl QemuDriver {
             let _ = std::fs::remove_file(source);
         }
         Ok(())
+    }
+
+    /// Konuğun yeni diski: konuk şifreliyse şifreli.
+    fn create_disk_image(&self, guest: &Guest, path: &Path, size_gb: u64) -> Result<(), String> {
+        if guest.hw.encrypted {
+            self.create_encrypted(path, size_gb)
+        } else {
+            self.create_image(path, size_gb)
+        }
     }
 
     /// Diske yazmadan önce: ortak depodaki konuk bu sunucunun mu?
@@ -1586,8 +1659,7 @@ impl QemuDriver {
     }
 
     /// `qemu-img` alt komutunu çalıştırıp JSON çıktısını döndürür.
-    #[cfg(unix)]
-    fn img_json(&self, args: &[&std::ffi::OsStr], what: &str) -> Result<Value, String> {
+    fn img_json(&self, args: &[&std::ffi::OsStr], what: &str) -> Result<serde_json::Value, String> {
         let out = std::process::Command::new(&self.cfg.qemu_img_bin).args(args).output().map_err(|e| format!("{} çalıştırılamadı: {e}", self.cfg.qemu_img_bin))?;
         if !out.status.success() {
             return Err(format!("{what}: {}", last_line(&out.stderr)));

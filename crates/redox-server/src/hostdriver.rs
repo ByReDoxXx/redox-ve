@@ -200,6 +200,10 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.hot_add_nic(guest, index, network)
     }
 
+    fn disk_encryption(&self) -> bool {
+        self.vm.disk_encryption()
+    }
+
     fn shared_storages(&self) -> Vec<(String, std::path::PathBuf)> {
         self.vm.shared_storages()
     }

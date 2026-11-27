@@ -27,6 +27,9 @@ impl AppState {
                 return Err(Error::InvalidSpec(format!("bulut imajı bulunamadı: {image}")));
             }
         }
+        if spec.hw.encrypted && driver.is_real() && !driver.disk_encryption() {
+            return Err(Error::InvalidSpec("disk şifreleme kapalı: sunucuyu --disk-key-file ile başlatın".to_string()));
+        }
         self.check_firewall(spec.hw.firewall)?;
         self.check_machine(spec.hw.firmware == redox_core::hw::Firmware::Uefi, spec.hw.tpm)?;
         if driver.is_real() {

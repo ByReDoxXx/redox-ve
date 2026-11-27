@@ -121,7 +121,7 @@ pub fn recommend(local: &Cluster, peers: &[PeerView]) -> Balance {
     // Taşınabilecek konuklar: çalışan, kilitsiz, canlı taşınabilen sanal makineler. Darboğaz bellekse en çok
     // bellek kullanan, işlemciyse en çok işlemci kullanan önce denenir.
     let memory_bound = mem >= cpu;
-    let mut guests: Vec<&Guest> = local.guests.iter().filter(|g| g.status == redox_core::GuestStatus::Running && g.lock.is_none() && redox_core::migrate_blocker(g).is_none() && local.mirror(g.vmid).is_none()).collect();
+    let mut guests: Vec<&Guest> = local.guests.iter().filter(|g| g.status == redox_core::GuestStatus::Running && g.lock.is_none() && redox_core::migrate_blocker(g).is_none() && local.mirror(g.vmid).is_none() && !g.hw.encrypted).collect();
     guests.sort_by_key(|g| std::cmp::Reverse(if memory_bound { g.mem_used_mb } else { u64::from(g.cpu_pct) * u64::from(g.cores) }));
     let mut blocked = 0;
     guests.retain(|g| !affinity::pinned(g) && affinity::bound_here(g, &local.guests).is_none());

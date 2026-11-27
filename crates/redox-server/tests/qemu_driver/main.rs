@@ -24,6 +24,7 @@ mod offsite_machine;
 mod peers;
 mod platform;
 mod real_compat;
+mod real_crypt;
 mod real_firewall;
 mod real_ft;
 mod real_mirror;

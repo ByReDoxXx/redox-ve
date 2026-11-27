@@ -148,6 +148,7 @@ pub(super) fn guest_head(p: &Page, g: &Guest, tab: &str) -> Markup {
                 span class="id" { (g.vmid) } (g.name)
                 @if g.hw.template { span class=(tx("tag gold")) { (tx("şablon")) } }
                 @if g.hw.base.is_some() { span class=(tx("tag gold")) { (tx("bağlı klon")) } }
+                @if g.hw.encrypted { span class="tag" { (tx("şifreli disk")) } }
             },
             sub(facts),
             guest_actions(p, g),

@@ -148,6 +148,13 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
             push(&["-device", &format!("pc-dimm,id={},memdev={},slot={i}", dimm_device(i), dimm_backend(i))]);
         }
     }
+    // Şifreli konuğun anahtarı dosyadan okunur; komut satırında yalnızca yolu görünür.
+    if g.hw.encrypted {
+        if let Some(key) = &cfg.disk_key {
+            push(&["-object", &format!("secret,id={},file={}", super::crypt::SECRET_ID, opt(key))]);
+        }
+    }
+    let key = super::crypt::drive_key(g);
     // Disk hız sınırı her diske ayrı uygulanır (okuma ve yazma toplamı).
     let throttle = disk_throttle(g);
     if g.hw.ft {
@@ -156,14 +163,14 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         // `discard=unmap`: konukta silinen alan (TRIM) disk dosyasından geri verilir.
         let file = opt(&cfg.disk_of(g));
         match g.hw.disk_bus {
-            DiskBus::Virtio => push(&["-drive", &format!("file={file},if=virtio,format=qcow2,discard=unmap{throttle}")]),
+            DiskBus::Virtio => push(&["-drive", &format!("file={file},if=virtio,format=qcow2,discard=unmap{key}{throttle}")]),
             DiskBus::VirtioScsi => {
-                push(&["-drive", &format!("file={file},if=none,id=sys0,format=qcow2,discard=unmap{throttle}")]);
+                push(&["-drive", &format!("file={file},if=none,id=sys0,format=qcow2,discard=unmap{key}{throttle}")]);
                 push(&["-device", "virtio-scsi-pci,id=scsi0", "-device", "scsi-hd,drive=sys0,bus=scsi0.0"]);
             }
             // q35'in kendi AHCI denetleyicisi; ilk kapılar CD sürücülerine kalır.
             DiskBus::Sata => {
-                push(&["-drive", &format!("file={file},if=none,id=sys0,format=qcow2,discard=unmap{throttle}")]);
+                push(&["-drive", &format!("file={file},if=none,id=sys0,format=qcow2,discard=unmap{key}{throttle}")]);
                 push(&["-device", "ide-hd,drive=sys0,bus=ide.4"]);
             }
         }
@@ -177,10 +184,10 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     for disk in &g.hw.disks {
         let path = opt(&cfg.extra_disk_of(g, disk.id));
         if ports && (disk.id as usize) <= redox_core::hw::MAX_EXTRA_DISKS && disk.id > 0 {
-            push(&["-drive", &format!("file={path},if=none,id=xd{},format=qcow2,discard=unmap{throttle}", disk.id)]);
+            push(&["-drive", &format!("file={path},if=none,id=xd{},format=qcow2,discard=unmap{key}{throttle}", disk.id)]);
             push(&["-device", &format!("virtio-blk-pci,drive=xd{0},id=xdev{0},bus={1}", disk.id, disk_port(disk.id))]);
         } else {
-            push(&["-drive", &format!("file={path},if=virtio,format=qcow2,discard=unmap{throttle}")]);
+            push(&["-drive", &format!("file={path},if=virtio,format=qcow2,discard=unmap{key}{throttle}")]);
         }
     }
     // Geçersiz ad buraya ulaşmamalı (çekirdek doğrular); yine de yol kaçışına karşı yoksayılır.

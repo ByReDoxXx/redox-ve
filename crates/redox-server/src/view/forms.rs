@@ -21,6 +21,7 @@ pub struct NewGuestForm {
     pub iso2: String,
     pub disk_bus: String,
     pub nic_model: String,
+    pub encrypted: Option<String>,
     pub image: String,
     pub ci_user: String,
     pub ci_ssh_key: String,
@@ -216,6 +217,11 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                             span class="hint" tabindex="0" role="note" { (tx("Sanal TPM 2.0. Windows 11 ve disk şifreleme (BitLocker) için gerekir.")) }
                         }
                         (crate::view_ops::device_selects(None, &f.disk_bus, &f.nic_model, false))
+                        div class="field" {
+                            span class="label" { (tx("Disk şifreleme")) }
+                            label class="check" { input type="checkbox" name="encrypted" value="1" checked[f.encrypted.is_some()]; (tx("Diskleri şifrele (LUKS)")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Sunucuda disk anahtarı gerekir ve sonradan değiştirilemez. Şifreli konukta klonlama, askıya alma, dışa aktarma, yansıtma ve disk kopyalayarak taşıma yapılamaz.")) }
+                        }
                     }
                 }
             }

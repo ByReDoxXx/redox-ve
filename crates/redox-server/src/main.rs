@@ -35,6 +35,7 @@ struct ServeOptions {
     health_dir: Option<PathBuf>,
     ldap: Option<PathBuf>,
     shared_storages: Vec<String>,
+    disk_key_file: Option<PathBuf>,
     auto_balance: bool,
     balance_as: Option<String>,
     allow_plain_http: bool,
@@ -88,6 +89,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         health_dir: None,
         ldap: None,
         shared_storages: Vec::new(),
+        disk_key_file: None,
         auto_balance: false,
         balance_as: None,
         allow_plain_http: false,
@@ -145,6 +147,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--four-eyes" => opts.four_eyes = true,
             "--storage" => opts.storages.push(host::parse_storage(value()?)?),
             "--shared-storage" => opts.shared_storages.push(value()?.clone()),
+            "--disk-key-file" => opts.disk_key_file = Some(PathBuf::from(value()?)),
             "--firewall" => opts.firewall = true,
             "--incremental-backups" => opts.incremental_backups = true,
             "--changed-block-tracking" => opts.cbt = true,
@@ -266,6 +269,11 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
                 cfg.backup_passphrase = Some(text.trim().to_string());
             }
             cfg.storages = opts.storages.clone();
+            if let Some(key) = &opts.disk_key_file {
+                redox_server::qemu::check_key_file(key)?;
+                cfg.disk_key = Some(key.clone());
+                say!("Disk şifreleme açık. Anahtar dosyasını yedekleyin: kaybolursa şifreli diskler ve yedekleri açılamaz.");
+            }
             if let Some(unknown) = opts.shared_storages.iter().find(|id| !opts.storages.iter().any(|(name, _)| name == *id)) {
                 return Err(format!("--shared-storage {unknown}: bu adda bir --storage tanımı yok"));
             }

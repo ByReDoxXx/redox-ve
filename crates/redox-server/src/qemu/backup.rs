@@ -27,6 +27,14 @@ impl QemuDriver {
         // Kapalı konuk: qemu-img kopyalar; hız sınırı varsa `-r` (bayt/sn) ile uygulanır.
         let rate = (self.cfg.backup_mbps > 0).then(|| (self.cfg.backup_mbps * 1024 * 1024).to_string());
         for (disk, target) in parts {
+            if guest.hw.encrypted {
+                if raw {
+                    return Err("şifreli diskli konukta ham döküm alınmaz".to_string());
+                }
+                // Dosyanın kopyası şifreli kalır; `qemu-img convert` ise çözüp şifresiz yazardı.
+                std::fs::copy(disk, target).map_err(|e| format!("yedek alınamadı: {e}"))?;
+                continue;
+            }
             let mut args: Vec<&std::ffi::OsStr> = vec!["convert".as_ref()];
             if let Some(rate) = &rate {
                 args.extend::<[&std::ffi::OsStr; 2]>(["-r".as_ref(), rate.as_ref()]);
@@ -171,7 +179,7 @@ impl QemuDriver {
         #[cfg(not(unix))]
         let live = false;
         let ids = disk_ids(guest);
-        if self.cfg.incremental_backups {
+        if self.cfg.incremental_backups && !guest.hw.encrypted {
             return self.backup_chunks(guest, id, live, &ids);
         }
         // Her disk ayrı dosya: asıl disk `<yedek>.qcow2`, ek diskler `<yedek>.diskN.qcow2`. Önce geçici

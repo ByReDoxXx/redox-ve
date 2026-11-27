@@ -278,6 +278,9 @@ impl AppState {
         if let Some(why) = redox_core::handover_blocker(&remote) {
             return Err(Error::InvalidSpec(why.to_string()));
         }
+        if remote.hw.encrypted && !self.driver().disk_encryption() {
+            return Err(Error::InvalidSpec("konuğun diskleri şifreli: bu sunucu aynı anahtarla --disk-key-file ile başlatılmalı".to_string()));
+        }
         // Burada kurulamayacak konuk için devir istenmez.
         self.shared_slot(vmid)?;
         let node = self.snapshot().nodes.first().map(|n| (n.id.clone(), n.cores, n.mem_total_mb)).ok_or_else(|| Error::InvalidSpec("bu sunucuda düğüm yok".to_string()))?;

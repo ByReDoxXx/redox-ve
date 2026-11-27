@@ -145,6 +145,8 @@ pub struct Hardware {
     pub restart: bool,
     /// Sunucuyla paylaşılan klasörler (yalnızca sanal makinelerde; konukta 9p ile bağlanır).
     pub shares: Vec<Share>,
+    /// Diskler LUKS ile şifreli. Yalnızca oluştururken seçilir, sonradan değişmez.
+    pub encrypted: bool,
     /// Konuğun ortak depodaki diskleri başka sunucuya geçti (o sunucunun adı): burada yalnızca kaydı kaldı.
     /// Yalnızca sahiplik devri bunu değiştirir.
     pub handed_to: Option<String>,
@@ -258,6 +260,9 @@ impl Hardware {
         }
         if let Some(bad) = self.fw_rules.iter().chain(&self.fw_out).find(|r| !r.valid()) {
             return Err(format!("geçersiz güvenlik duvarı kuralı: {bad}"));
+        }
+        if self.encrypted && kind != GuestKind::Vm {
+            return Err("disk şifreleme yalnızca sanal makinelerde kullanılır".to_string());
         }
         self.check_performance(kind)?;
         if (self.uses_compat()) && kind != GuestKind::Vm {

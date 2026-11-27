@@ -167,6 +167,28 @@ pub(super) fn live_copy(
     mode: crate::qemu::Cbt,
     started: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
+    let mut added = Vec::new();
+    let outcome = copy_disks(d, g, parts, raw, mode, started, &mut added);
+    let sock = d.cfg.qmp_path(g.vmid);
+    for node in added {
+        // İş bittikten hemen sonra düğüm kısa süre meşgul olabilir.
+        let removed = wait_until(Duration::from_secs(10), || qmp_values(&sock, &[serde_json::json!({ "execute": "blockdev-del", "arguments": { "node-name": node } })]).is_ok() || live_pid(d, g.vmid).is_none());
+        if !removed {
+            eprintln!("uyarı: {} konuğunda yedek hedefi ({node}) kaldırılamadı", g.vmid);
+        }
+    }
+    outcome
+}
+
+fn copy_disks(
+    d: &QemuDriver,
+    g: &Guest,
+    parts: &[(std::path::PathBuf, std::path::PathBuf)],
+    raw: bool,
+    mode: crate::qemu::Cbt,
+    started: &mut dyn FnMut() -> Result<(), String>,
+    added: &mut Vec<String>,
+) -> Result<(), String> {
     use crate::qemu::{Cbt, CBT_BITMAP};
     let sock = d.cfg.qmp_path(g.vmid);
     // Sürücü adı QEMU sürümüne göre değişebilir: diskler dosya yollarından bulunur.
@@ -208,6 +230,24 @@ pub(super) fn live_copy(
             (Cbt::Delta, _) => return Err("değişen blok haritası yok ya da tutarsız (konuk düzgün kapanmamış olabilir)".to_string()),
         }
         let delta = mode == Cbt::Delta;
+        // Şifreli konuk: QEMU'nun kendisinin oluşturacağı hedef şifresiz olurdu. Hedef önceden şifreli kurulur,
+        // anahtarla eklenir ve yedek onun içine yazılır.
+        let sealed = if g.hw.encrypted {
+            if raw || delta {
+                return Err("şifreli diskli konukta ham ya da değişen blok yedeği alınmaz".to_string());
+            }
+            let size = block.and_then(|b| b["inserted"]["image"]["virtual-size"].as_u64()).ok_or("diskin boyutu okunamadı")?;
+            d.create_encrypted_bytes(target, size)?;
+            let node = format!("yedek-{attempt}-{i}");
+            let add = serde_json::json!({ "execute": "blockdev-add", "arguments": {
+                "driver": "qcow2", "node-name": node, "encrypt": { "format": "luks", "key-secret": crate::qemu::SECRET_ID },
+                "file": { "driver": "file", "filename": target.display().to_string() } } });
+            qmp_values(&sock, &[add]).map_err(|e| format!("yedekleme başlatılamadı: {e}"))?;
+            added.push(node.clone());
+            Some(node)
+        } else {
+            None
+        };
         // İş adı her denemede farklıdır: önceki bir denemeden kalmış işin olayları bizimkilerle karışamaz.
         let job = format!("redox-backup-{}-{i}-{attempt}", g.vmid);
         let mut data = serde_json::json!({
@@ -224,7 +264,16 @@ pub(super) fn live_copy(
         } else if !raw {
             data["compress"] = true.into();
         }
-        actions.push(serde_json::json!({ "type": "drive-backup", "data": data }));
+        match &sealed {
+            None => actions.push(serde_json::json!({ "type": "drive-backup", "data": data })),
+            Some(node) => {
+                let mut sealed_data = serde_json::json!({ "job-id": job, "device": device, "target": node, "sync": "full" });
+                if let Some(speed) = data.get("speed") {
+                    sealed_data["speed"] = speed.clone();
+                }
+                actions.push(serde_json::json!({ "type": "blockdev-backup", "data": sealed_data }));
+            }
+        }
         pending.push(job);
     }
     let actions: Vec<Value> = bitmaps.into_iter().chain(actions).collect();

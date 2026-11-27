@@ -469,6 +469,7 @@ pub async fn create(State(st): State<AppState>,
                 iso2: filled(&form.iso2),
                 disk_bus: redox_core::hw::DiskBus::parse(form.disk_bus.trim()).unwrap_or_default(),
                 nic_model: redox_core::hw::NicModel::parse(form.nic_model.trim()).unwrap_or_default(),
+                encrypted: form.encrypted.is_some(),
                 ..Default::default()
             },
         };
