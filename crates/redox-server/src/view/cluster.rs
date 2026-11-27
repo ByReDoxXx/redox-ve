@@ -37,11 +37,19 @@ pub fn datacenter(p: &Page) -> String {
                         @for a in &alerts {
                             li { (icon_c("alert", if a.severity == crate::alerts::Severity::Critical { "err" } else { "warn" })) span { (crate::i18n::message(&a.message)) } span {} }
                         }
-                        @for g in &unprotected {
+                        // Uzun liste özeti aşağı itmesin: ilk beş konuk, kalanı tek satırda.
+                        @for g in unprotected.iter().take(5) {
                             li {
                                 (icon_c("alert", "warn"))
                                 span { b { (g.vmid) " " (g.name) } " " span class="why" { (tx("· hiç yedeği yok")) } }
                                 a class="btn sm" href={ "/guests/" (g.vmid) "?tab=yedekler" } { (tx("Yedeklere Git")) }
+                            }
+                        }
+                        @if unprotected.len() > 5 {
+                            li {
+                                (icon_c("alert", "warn"))
+                                span class="why" { (unprotected.len() - 5) (tx(" konuğun daha hiç yedeği yok")) }
+                                a class="btn sm" href="/backups" { (tx("Yedekler")) }
                             }
                         }
                     }
