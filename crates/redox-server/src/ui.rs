@@ -23,7 +23,7 @@ pub struct PageQuery {
     pub(crate) q: String,
     notice: Option<String>,
     error: Option<String>,
-    tab: String,
+    pub(crate) tab: String,
     kind: String,
     /// Grafik aralığı: boş (10 dakika), `24s`, `30g`.
     range: String,

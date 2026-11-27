@@ -464,6 +464,9 @@ details.set[open]>summary{background:var(--hover)}
 .me .who .id b,.me .who .id small{white-space:nowrap}
 
 /* ---- Dar ekran: ray üst çubuğa, menü tek düğmeye ---- */
+/* Satır menüsü olan tablo: açılan menü kırpılmaz; dar ekranda menü satırın içinde açılır. */
+.tw.free{overflow:visible}
+@media (max-width:820px){.tw.free{overflow-x:auto}.tw.free .menu-list{position:static;margin-top:6px}}
 .navt,.navb{display:none}
 @media (max-width:1100px){.facts{grid-template-columns:repeat(3,minmax(0,1fr))}.facts>div:nth-child(4){border-left:0}.facts>div:nth-child(n+4){border-top:1px solid var(--line)}.sect{grid-template-columns:1fr;gap:var(--s3)}}
 @media (max-width:820px){

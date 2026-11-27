@@ -164,6 +164,7 @@ pub fn app(state: AppState) -> Router {
         .route("/metrics", get(ui_admin::metrics))
         .route("/audit", get(ui_admin::audit))
         .route("/users", get(ui_admin::users).post(ui_admin::user_add))
+        .route("/users/{name}", get(ui_admin::user_show))
         .route("/users/{name}/role", post(ui_admin::user_role))
         .route("/users/{name}/scope", post(ui_admin::user_scope))
         .route("/users/{name}/permits", post(ui_admin::user_permits))

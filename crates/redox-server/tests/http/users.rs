@@ -12,7 +12,7 @@ pub(super) async fn admin_pages_are_hidden_from_viewers() {
     let viewer = |uri: &str| as_viewer(Method::GET, uri).body(Body::empty()).unwrap();
     let (_, _, home) = send(&app, viewer("/")).await;
     assert!(!home.contains(r#"href="/users""#) && !home.contains(r#"href="/audit""#) && home.contains(r#"href="/account""#));
-    for uri in ["/users", "/audit"] {
+    for uri in ["/users", "/audit", "/users/admin", "/users?tab=ekle"] {
         let (status, _, body) = send(&app, viewer(uri)).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
         assert!(!body.contains("admin"), "{uri}: kullanıcı adları sızmamalı");
@@ -23,6 +23,26 @@ pub(super) async fn admin_pages_are_hidden_from_viewers() {
         let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, uri), "name=x&password=cok-uzun-bir-parola&role=admin&confirm=1&label=t")).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
     }
+}
+
+/// Liste yalnızca özet ve "Yönet" menüsü taşır; formlar kullanıcının kendi sayfasında ve ekleme sayfasındadır.
+#[tokio::test]
+async fn each_user_has_a_manage_menu_and_a_page_of_their_own() {
+    let (app, _) = setup();
+    let list = page(&app, "/users").await;
+    assert!(list.contains(r#"href="/users?tab=ekle""#) && list.contains(r#"href="/users/izleyici#parola""#));
+    assert!(list.contains(r#"formaction="/users/izleyici/sessions/close""#) && list.contains(r#"href="/users/izleyici#sil""#));
+    // Kendi satırında silme yoktur; listede parola alanı da yoktur.
+    assert!(!list.contains(r#"href="/users/admin#sil""#) && !list.contains(r#"type="password""#));
+
+    let one = page(&app, "/users/izleyici").await;
+    for action in ["role", "password", "tokens", "sessions/close", "delete"] {
+        assert!(one.contains(&format!(r#"action="/users/izleyici/{action}""#)), "{action}");
+    }
+    // İzleyicide operatör ayarları, kendi sayfasında silme görünmez.
+    assert!(!one.contains("/users/izleyici/permits") && !page(&app, "/users/admin").await.contains(r#"action="/users/admin/delete""#));
+    assert!(page(&app, "/users?tab=ekle").await.contains(r#"<form class="card" method="post" action="/users">"#));
+    assert_eq!(send(&app, get("/users/yok")).await.0, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

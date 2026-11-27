@@ -25,7 +25,7 @@ async fn an_expired_token_is_refused_like_a_wrong_one() {
 #[tokio::test]
 async fn the_forms_offer_a_lifetime_and_refuse_nonsense() {
     let (app, state) = setup();
-    let users = page(&app, "/users").await;
+    let users = page(&app, "/users/izleyici").await;
     assert!(users.contains(r#"<select id="tk-days" name="days">"#) && users.contains(r#"<option value="90">90 gün</option>"#));
     let (status, _, body) = send(&app, post_form("/users/-/tokens", "name=izleyici&label=ci&days=90")).await;
     assert!(status == StatusCode::OK && body.contains("redox_"));

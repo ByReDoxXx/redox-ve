@@ -52,8 +52,24 @@ pub async fn users(State(st): State<AppState>, Extension(me): Extension<Identity
     if !me.can_write() {
         return forbidden();
     }
+    let adding = q.tab == "ekle";
     let ctx = Ctx::new(&st, &headers, q, &me);
+    if adding {
+        return Html(view_admin::user_new_page(&ctx.page(Current::Other, "/users"))).into_response();
+    }
     Html(view_admin::users_page(&ctx.page(Current::Other, "/users"), &st.auth().list())).into_response()
+}
+
+/// Tek kullanıcının yönetim sayfası.
+pub async fn user_show(State(st): State<AppState>, Extension(me): Extension<Identity>, headers: HeaderMap, Path(name): Path<String>, Query(q): Query<PageQuery>) -> Response {
+    if !me.can_write() {
+        return forbidden();
+    }
+    let ctx = Ctx::new(&st, &headers, q, &me);
+    match st.auth().list().into_iter().find(|u| u.name == name) {
+        Some(user) => Html(view_admin::user_page(&ctx.page(Current::Other, "/users"), &user)).into_response(),
+        None => ctx.not_found(&tfmt(format!("“{name}” adında bir kullanıcı yok."))),
+    }
 }
 
 pub async fn user_add(State(st): State<AppState>, Form(f): Form<AdminForm>) -> Redirect {

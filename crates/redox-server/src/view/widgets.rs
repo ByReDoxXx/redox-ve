@@ -119,7 +119,7 @@ pub(super) fn stat(label: &str, value: &str, unit: &str, detail: &str, p: Option
 }
 
 /// Noktayla ayrılmış alt başlık satırı.
-pub(super) fn sub(items: Vec<Markup>) -> Markup {
+pub(crate) fn sub(items: Vec<Markup>) -> Markup {
     html! {
         @for (i, item) in items.iter().enumerate() {
             @if i > 0 { span class="sep" aria-hidden="true" { "·" } }

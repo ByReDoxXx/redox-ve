@@ -526,7 +526,9 @@ pub(super) async fn operators_act_only_within_their_scope() {
 
     // Kapsam boşaltılınca bütün konuklarda yetkili olur; yönetici bunu kullanıcı sayfasından yapar.
     let users = page(&app, "/users").await;
-    assert!(users.contains("Operatör") && users.contains(r#"action="/users/nobet/scope""#) && users.contains(r#"value="web""#));
+    assert!(users.contains("Operatör") && users.contains("(web)") && users.contains(r#"href="/users/nobet""#));
+    let one = page(&app, "/users/nobet").await;
+    assert!(one.contains(r#"action="/users/nobet/scope""#) && one.contains(r#"value="web""#));
     assert!(post_ok(&app, "/users/nobet/scope", "scope=").await.contains("notice="));
     assert_eq!(send(&app, post(&format!("/api/v1/guests/{outside}/stop"))).await.0, StatusCode::ACCEPTED);
     assert!(post_ok(&app, "/users/nobet/scope", "scope=Geçersiz+Etiket!").await.contains("error="));

@@ -69,7 +69,7 @@ async fn without_a_restriction_an_operator_keeps_all_four_and_scope_still_applie
 async fn the_users_page_saves_permits_and_refuses_an_empty_set() {
     let (app, state) = world().await;
     let permits = || state.auth().list().into_iter().find(|u| u.name == "nobet").unwrap().permits;
-    let page_before = page(&app, "/users").await;
+    let page_before = page(&app, "/users/nobet").await;
     assert!(page_before.contains(r#"action="/users/nobet/permits""#));
     assert!(post_ok(&app, "/users/nobet/permits", "backup=1").await.contains("notice="));
     assert_eq!(permits(), Some(vec![Permit::Backup]));
