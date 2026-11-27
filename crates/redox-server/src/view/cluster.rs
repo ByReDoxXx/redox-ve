@@ -25,17 +25,35 @@ pub fn datacenter(p: &Page) -> String {
     ]);
     let body = html! {
         (page_head(html! { (tx("Genel Bakış")) }, health, html! {}, "cluster status", &[]))
-        @for a in &crate::alerts::evaluate(c) {
-            div class={ "notice" @if a.severity == crate::alerts::Severity::Critical { " err" } } role="status" { (icon("alert")) span { (crate::i18n::message(&a.message)) } }
-        }
         div class="stack" {
+            // Dikkat gerektirenler: uyarılar ve hiç yedeği olmayan konuklar, her biri gidilecek yerle.
+            @let alerts = crate::alerts::evaluate(c);
+            div class="card" {
+                header { h2 { (tx("Dikkat gerektirenler")) } @if alerts.len() + unprotected.len() > 0 { span class="note mono" { (alerts.len() + unprotected.len()) } } }
+                @if alerts.is_empty() && unprotected.is_empty() {
+                    p class="allclear" { (icon("check")) (tx("Şu an dikkat gerektiren bir şey yok.")) }
+                } @else {
+                    ul class="attn" role="status" {
+                        @for a in &alerts {
+                            li { (icon_c("alert", if a.severity == crate::alerts::Severity::Critical { "err" } else { "warn" })) span { (crate::i18n::message(&a.message)) } span {} }
+                        }
+                        @for g in &unprotected {
+                            li {
+                                (icon_c("alert", "warn"))
+                                span { b { (g.vmid) " " (g.name) } " " span class="why" { (tx("· hiç yedeği yok")) } }
+                                a class="btn sm" href={ "/guests/" (g.vmid) "?tab=yedekler" } { (tx("Yedeklere Git")) }
+                            }
+                        }
+                    }
+                }
+            }
             div class="stats" {
                 (stat((tx("Konuklar")), &s.guests_running.to_string(), &tfmt(format!(" / {} çalışıyor", s.guests_total)), &tfmt(format!("{stopped} kapalı · {templates} şablon")), None))
                 (stat((tx("İşlemci")), &s.cpu_pct.to_string(), "%", &tfmt(format!("{} çekirdek", s.cores)), Some(s.cpu_pct)))
                 (stat((tx("Bellek")), &s.mem_pct.to_string(), "%", &format!("{} / {} GB", mb_as_gb(s.mem_used_mb), mb_as_gb(s.mem_total_mb)), Some(s.mem_pct)))
                 (stat((tx("Depolama")), &s.storage_pct.to_string(), "%", &format!("{} / {}", gb(s.storage_used_gb), gb(s.storage_total_gb)), Some(s.storage_pct)))
             }
-            div class="cols" {
+            div class="cols even" {
                 div class="stack" {
                     div class="card" {
                         header { h2 { (tx("En çok kaynak kullananlar")) } (tip("İşlemciyi en çok kullanan çalışan konuklar.")) span class="note" { (tx("çalışan konuklar")) } div class="end" { a class="btn sm quiet" href="/guests" { (tx("Tüm konuklar")) } } }
@@ -52,19 +70,6 @@ pub fn datacenter(p: &Page) -> String {
                                 } } }
                             } }
                         }
-                    }
-                    div class="card" {
-                        header { h2 { (tx("Düğümler")) } (tip("Kümedeki sunucular ve anlık yükleri.")) span class="note" { (s.nodes_online) " / " (s.nodes_total) (tx(" çevrimiçi")) } }
-                        div class="tw" { table {
-                            thead { tr { th { (tx("Düğüm")) } th { (tx("Durum")) } th { "CPU" } th { (tx("Bellek")) } th class="num" { (tx("Konuk")) } } }
-                            tbody { @for n in &c.nodes { tr {
-                                td class="name mono" { a href={ "/nodes/" (n.id) } { (n.id) } }
-                                td { (node_state(n)) }
-                                td class="mono" { (bar(n.cpu_pct, "CPU", false)) " " (n.cpu_pct) "%" }
-                                td class="mono" { (bar(pct(n.mem_used_mb, n.mem_total_mb), (tx("Bellek")), false)) " " (pct(n.mem_used_mb, n.mem_total_mb)) "%" }
-                                td class="num mono" { (c.guests_on(&n.id).count()) }
-                            } } }
-                        } }
                     }
                     div class="card" {
                         header { h2 { (tx("Yedek durumu")) } (tip("Otomatik yedeği açık konuk sayısı ve son alınan yedekler.")) div class="end" { a class="btn sm quiet" href="/backups" { (tx("Tüm yedekler")) } } }
@@ -89,9 +94,24 @@ pub fn datacenter(p: &Page) -> String {
                         }
                     }
                 }
-                div class="card" {
-                    header { h2 { (tx("Etkinlik")) } (tip("Son görevler: kim, ne zaman, ne yaptı ve sonucu.")) div class="end" { a class="btn sm quiet" href="/tasks" { (tx("Tümü")) } } }
-                    (feed(&recent, (tx("Henüz görev yok. Bir konuğu başlattığınızda ya da oluşturduğunuzda burada görünür."))))
+                div class="stack" {
+                    div class="card" {
+                        header { h2 { (tx("Düğümler")) } (tip("Kümedeki sunucular ve anlık yükleri.")) span class="note" { (s.nodes_online) " / " (s.nodes_total) (tx(" çevrimiçi")) } }
+                        div class="tw" { table {
+                            thead { tr { th { (tx("Düğüm")) } th { (tx("Durum")) } th { "CPU" } th { (tx("Bellek")) } th class="num" { (tx("Konuk")) } } }
+                            tbody { @for n in &c.nodes { tr {
+                                td class="name mono" { a href={ "/nodes/" (n.id) } { (n.id) } }
+                                td { (node_state(n)) }
+                                td class="mono" { (bar(n.cpu_pct, "CPU", false)) " " (n.cpu_pct) "%" }
+                                td class="mono" { (bar(pct(n.mem_used_mb, n.mem_total_mb), (tx("Bellek")), false)) " " (pct(n.mem_used_mb, n.mem_total_mb)) "%" }
+                                td class="num mono" { (c.guests_on(&n.id).count()) }
+                            } } }
+                        } }
+                    }
+                    div class="card" {
+                        header { h2 { (tx("Etkinlik")) } (tip("Son görevler: kim, ne zaman, ne yaptı ve sonucu.")) div class="end" { a class="btn sm quiet" href="/tasks" { (tx("Tümü")) } } }
+                        (feed(&recent, (tx("Henüz görev yok. Bir konuğu başlattığınızda ya da oluşturduğunuzda burada görünür."))))
+                    }
                 }
             }
         }

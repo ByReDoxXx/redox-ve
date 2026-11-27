@@ -63,7 +63,7 @@ pub(super) async fn live_snapshot_and_backup_follow_driver_capability() {
 pub(super) async fn dashboard_lists_active_alerts() {
     let (app, state) = setup();
     let home = page(&app, "/").await;
-    assert!(home.contains(r#"<div class="notice"#) && home.contains("nfs-yedek deposu %93 dolu"), "dolan depolama ana sayfada görünür");
+    assert!(home.contains(r#"<ul class="attn""#) && home.contains("nfs-yedek deposu %93 dolu"), "dolan depolama ana sayfada görünür");
     state.mutate(|c| {
         c.observe_storage("nfs-yedek", "pve-ist-01", 100, 8000);
         c.nodes[2].status = redox_core::NodeStatus::Offline;
