@@ -43,6 +43,7 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
                     rpo=24   (backup age target in hours: the guest counts as unprotected if its last backup is older; 0 is the general setting)
                     nested=true   (nested virtualization: VT-x / AMD-V is exposed to the guest)
                     sound=true    (sound card; listen in the live console)
+                    tun=true      (tunnel device for a container: Tailscale or WireGuard can run inside)
                     cpu-affinity=0-3,8 numa-node=0 hugepages=true   (CPU pinning, NUMA binding, huge pages; an empty value removes it)
                     cpu=Haswell   (CPU model; cpu=host is the server's own CPU)   balloon=true   (memory balloon device)
                     ci-user=ali ci-key='ssh-ed25519 AAAA…' ci-ip=10.0.0.5/24 ci-gw=10.0.0.1 ci-dns=1.1.1.1,9.9.9.9

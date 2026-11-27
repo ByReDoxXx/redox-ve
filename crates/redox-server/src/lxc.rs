@@ -136,8 +136,13 @@ pub fn template(os: &str) -> Option<(&'static str, &'static str)> {
     TEMPLATES.iter().find(|(name, _, _)| *name == os).map(|(_, dist, release)| (*dist, *release))
 }
 
-/// Konteynerin sınırlarını ve ağını tanımlayan yönetilen yapılandırma bloğu.
+/// Konteynerin sınırlarını ve ağını tanımlayan yönetilen yapılandırma bloğu (yetkisiz konteyner için).
 pub fn managed_block(g: &Guest) -> String {
+    managed_block_for(g, false)
+}
+
+/// `privileged`: konteyner kimlik eşlemesi olmadan çalışıyor; o zaman aygıt izinleri de uygulanır.
+pub fn managed_block_for(g: &Guest, privileged: bool) -> String {
     let bridge = if g.bridge == NAT || !valid_bridge(&g.bridge) { LXC_NAT_BRIDGE } else { g.bridge.as_str() };
     let mut lines = vec![
         BEGIN.to_string(),
@@ -166,6 +171,15 @@ pub fn managed_block(g: &Guest) -> String {
         lines.push(format!("lxc.net.0.ipv4.address = {address}"));
         if let Some(gateway) = g.hw.ct_gateway.as_deref().filter(|gw| redox_core::hw::valid_ipv4(gw)) {
             lines.push(format!("lxc.net.0.ipv4.gateway = {gateway}"));
+        }
+    }
+    // Tünel aygıtı sunucudakinin kendisi bağlanır; konteyner onunla yalnızca kendi ağ ad alanında arayüz açar.
+    if g.hw.tun {
+        lines.push("lxc.mount.entry = /dev/net/tun dev/net/tun none bind,create=file 0 0".to_string());
+        // Yetkisiz konteynerde aygıt denetim grubu kuralı uygulanamaz (ve konteyner açılmayabilir); yetkili
+        // konteynerde ise aygıt bu izin olmadan açılamaz. 10:200 tünel aygıtının numarasıdır.
+        if privileged {
+            lines.push("lxc.cgroup2.devices.allow = c 10:200 rwm".to_string());
         }
     }
     lines.push(END.to_string());
@@ -389,7 +403,7 @@ impl LxcDriver {
     fn write_managed(&self, g: &Guest) -> Result<(), String> {
         let path = self.config_path(g.vmid);
         let existing = std::fs::read_to_string(&path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
-        std::fs::write(&path, merge_config(&existing, &managed_block(g))).map_err(|e| format!("{} yazılamadı: {e}", path.display()))
+        std::fs::write(&path, merge_config(&existing, &managed_block_for(g, self.cfg.idmap.is_none()))).map_err(|e| format!("{} yazılamadı: {e}", path.display()))
     }
 }
 
@@ -967,6 +981,26 @@ pub fn detect_idmap() -> Result<Option<(u64, u64, u64, u64)>, String> {
 mod tests {
     use super::*;
     use redox_core::{Cluster, GuestSpec};
+
+    #[test]
+    fn the_tunnel_device_lines_appear_only_when_asked_for() {
+        let mut g = redox_core::Cluster::demo(0).guests.into_iter().find(|g| g.kind == GuestKind::Ct).unwrap();
+        for privileged in [false, true] {
+            assert!(!managed_block_for(&g, privileged).contains("tun"), "istenmeden aygıt verilmez");
+            assert!(!managed_block_for(&g, privileged).contains("devices.allow"));
+        }
+        g.hw.tun = true;
+        let mount = "lxc.mount.entry = /dev/net/tun dev/net/tun none bind,create=file 0 0";
+        let unprivileged = managed_block(&g);
+        assert!(unprivileged.contains(mount) && !unprivileged.contains("devices.allow"), "{unprivileged}");
+        let privileged = managed_block_for(&g, true);
+        assert!(privileged.contains(mount) && privileged.contains("lxc.cgroup2.devices.allow = c 10:200 rwm"), "{privileged}");
+        // Satırlar yönetilen bloğun içindedir: seçenek kapatılınca ayar dosyasından da kalkar, elle eklenen satır kalır.
+        let written = merge_config("lxc.arch = linux64\n", &unprivileged);
+        g.hw.tun = false;
+        let after = merge_config(&format!("{written}lxc.mount.entry = /srv srv none bind 0 0\n"), &managed_block(&g));
+        assert!(!after.contains("/dev/net/tun") && after.contains("lxc.mount.entry = /srv") && after.contains("lxc.arch = linux64"), "{after}");
+    }
 
     /// Dizin başkalarına yazılabilirken biri `config` adını önceden tutmuş olabilir: dosya yeniden oluşturulur,
     /// bağın gösterdiği dosyaya dokunulmaz.

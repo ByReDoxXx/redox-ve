@@ -488,6 +488,8 @@ pub struct GuestPatch {
     pub balloon: Option<bool>,
     /// Ses kartı.
     pub sound: Option<bool>,
+    /// Konteynere tünel aygıtı (`/dev/net/tun`).
+    pub tun: Option<bool>,
     /// İç içe sanallaştırma.
     pub nested: Option<bool>,
     /// Kaynak havuzu; boş metin konuğu havuzdan çıkarır.

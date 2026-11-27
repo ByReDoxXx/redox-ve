@@ -365,7 +365,7 @@ impl AppState {
         let node = local.nodes.first().ok_or("bu sunucuda düğüm yok")?;
         let storage = local.storages.iter().find(|s| s.available_on(&node.id)).ok_or("bu sunucuda depolama yok")?;
         let known = self.driver().bridges();
-        let mut hw = redox_core::Hardware { nics: remote.hw.nics.clone(), firewall: remote.hw.firewall && self.driver().firewall(), fw_rules: remote.hw.fw_rules.clone(), fw_out_restrict: remote.hw.fw_out_restrict, fw_out: remote.hw.fw_out.clone(), fw_groups: remote.hw.fw_groups.clone(), ..Default::default() };
+        let mut hw = redox_core::Hardware { nics: remote.hw.nics.clone(), firewall: remote.hw.firewall && self.driver().firewall(), fw_rules: remote.hw.fw_rules.clone(), fw_out_restrict: remote.hw.fw_out_restrict, fw_out: remote.hw.fw_out.clone(), fw_groups: remote.hw.fw_groups.clone(), tun: remote.hw.tun, ..Default::default() };
         // Burada tanımı olmayan grup alınmaz; tanımsız adres kümesi ise kurallar uygulanırken hiçbir şeye izin vermez.
         hw.fw_groups.retain(|name| local.fw_group(name).is_some());
         hw.nics = hw.nics.iter().map(|spec| match redox_core::hw::parse_nic(spec) {

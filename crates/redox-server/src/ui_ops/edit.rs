@@ -44,6 +44,8 @@ pub async fn edit(
         let hardware_sent = hardware && (!f.cores.trim().is_empty() || !f.memory_mb.trim().is_empty());
         let machine = (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| redox_core::hw::parse_firmware_choice(f.firmware.trim())).flatten();
         Ok::<_, String>(GuestPatch {
+            // Panelde henüz kutusu yok: boş bırakılır, kaydetmek seçeneği değiştirmez.
+            tun: None,
             name: general.then(|| f.name.trim().to_string()),
             os: general.then(|| f.os.trim().to_string()),
             tags: general.then(|| parse_tags(&f.tags)),

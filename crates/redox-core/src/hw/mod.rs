@@ -81,6 +81,9 @@ pub struct Hardware {
     pub ct_address: Option<String>,
     /// O adresin ağ geçidi.
     pub ct_gateway: Option<String>,
+    /// Konteynere tünel aygıtı (`/dev/net/tun`) verilir: içinde Tailscale ya da WireGuard çalışabilir. Aygıtla
+    /// konteyner yalnızca kendi ağ ad alanında tünel arayüzü açar.
+    pub tun: bool,
     /// Ses kartı (Intel HD Audio) takılı mı? Ses, canlı konsoldan dinlenir.
     pub sound: bool,
     /// Bellek balonu aygıtı takılı mı? Takılıysa konuğun belleği çalışırken küçültülüp büyütülebilir.
@@ -382,6 +385,9 @@ impl Hardware {
             if !valid_ipv4(gateway) || self.ct_address.is_none() {
                 return Err(format!("geçersiz ağ geçidi: {gateway} (yalnızca sabit adresle birlikte verilir)"));
             }
+        }
+        if self.tun && kind != GuestKind::Ct {
+            return Err("tünel aygıtı seçeneği yalnızca konteynerlerde kullanılır (sanal makinenin kendi çekirdeğinde zaten vardır)".to_string());
         }
         if self.sound && kind != GuestKind::Vm {
             return Err("ses aygıtı yalnızca sanal makinelerde kullanılır".to_string());

@@ -58,6 +58,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
                     rpo=24   (yedek yaşı hedefi, saat: son yedek bundan eskiyse konuk korumasız sayılır; 0 genel ayar)
                     nested=true   (iç içe sanallaştırma: konuğa VT-x / AMD-V gösterilir)
                     sound=true    (ses kartı; ses canlı konsoldan dinlenir)
+                    tun=true      (konteynere tünel aygıtı: içinde Tailscale ya da WireGuard çalışır)
                     cpu=Haswell   (işlemci modeli; cpu=host sunucunun kendi işlemcisi)   balloon=true   (bellek balonu aygıtı)
                     ci-user=ali ci-key='ssh-ed25519 AAAA…' ci-ip=10.0.0.5/24 ci-gw=10.0.0.1 ci-dns=1.1.1.1,9.9.9.9
                                            (cloud-init; ci-key= boş verilirse kapanır, ci-ip= boşsa DHCP)
@@ -284,7 +285,7 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             "test-port" => ("test_port", number()?),
             "test-cmd" => ("test_cmd", Value::from(value)),
             "backup-post" => ("backup_post", Value::from(value)),
-            "onboot" | "firewall" | "tpm" | "restart" | "balloon" | "sound" | "nic-guard" | "nested" => (
+            "onboot" | "firewall" | "tpm" | "restart" | "balloon" | "sound" | "tun" | "nic-guard" | "nested" => (
                 if key == "nic-guard" { "nic_guard" } else { key },
                 Value::from(match value {
                     "true" | "1" | "evet" => true,
@@ -1164,6 +1165,7 @@ mod tests {
         let args = |text: &str| text.split(' ').map(str::to_string).collect::<Vec<_>>();
         assert_eq!(patch_body(&["cpu=Haswell", "balloon=true"]).unwrap(), json!({"cpu_type": "Haswell", "balloon": true}));
         assert_eq!(patch_body(&["nic-guard=true"]).unwrap(), json!({"nic_guard": true}));
+        assert_eq!(patch_body(&["tun=true"]).unwrap(), json!({"tun": true}));
         assert_eq!(patch_body(&["nested=true"]).unwrap(), json!({"nested": true}));
         assert_eq!(patch_body(&["cores=2", "max-cores=8"]).unwrap(), json!({"cores": 2, "max_cores": 8}));
         assert_eq!(patch_body(&["cpu-affinity=0-3", "numa-node=", "hugepages=true"]).unwrap(), json!({"cpu_affinity": "0-3", "numa_node": "", "hugepages": true}));

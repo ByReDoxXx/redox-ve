@@ -1821,6 +1821,7 @@ pub static EXACT: &[(&str, &str)] = &[
     ("token süresi bir sayı olmalı", "the token lifetime must be a number"),
     ("tutarlı", "consistent"),
     ("tutulan kopya yok", "no copy is held"),
+    ("tünel aygıtı seçeneği yalnızca konteynerlerde kullanılır (sanal makinenin kendi çekirdeğinde zaten vardır)", "the tunnel device option is only used on containers (a virtual machine's own kernel already has it)"),
     ("uyarı", "warnings"),
     ("uyarı kapatıldı", "warning dismissed"),
     ("uyarı: güvenlik anahtarı kayıtlı kullanıcılar var ama --webauthn-origin verilmedi; bu kullanıcılar anahtarla giriş yapamaz", "warning: some users have security keys but --webauthn-origin was not given; they cannot sign in with a key"),

@@ -1236,3 +1236,32 @@ fn a_migrated_copy_that_is_started_again_is_no_longer_a_leftover() {
     assert!(!c.guest(103).unwrap().tags.iter().any(|t| t == crate::MIGRATED_TAG));
     c.complete_task(task, Ok(()), NOW).unwrap();
 }
+
+#[test]
+fn the_tunnel_device_is_a_container_option_changed_while_stopped() {
+    let mut c = Cluster::demo(NOW);
+    let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct && g.status == GuestStatus::Stopped).map(|g| g.vmid);
+    let ct = ct.unwrap_or_else(|| {
+        let id = c.guests.iter().find(|g| g.kind == GuestKind::Ct).unwrap().vmid;
+        c.guest_mut_for_import(id).unwrap().status = GuestStatus::Stopped;
+        id
+    });
+    c.update_guest(ct, &GuestPatch { tun: Some(true), ..patch() }, "u", NOW).unwrap();
+    assert!(c.guest(ct).unwrap().hw.tun);
+    // Aynı değeri yeniden yollamak ve başka bir ayarı değiştirmek seçeneği bozmaz.
+    c.update_guest(ct, &GuestPatch { tun: Some(true), ..patch() }, "u", NOW).unwrap();
+    c.update_guest(ct, &GuestPatch { onboot: Some(true), ..patch() }, "u", NOW).unwrap();
+    assert!(c.guest(ct).unwrap().hw.tun);
+    // Ayar konteyner açılırken uygulanır: çalışırken değiştirilemez.
+    c.guest_mut_for_import(ct).unwrap().status = GuestStatus::Running;
+    assert!(c.update_guest(ct, &GuestPatch { tun: Some(false), ..patch() }, "u", NOW).is_err());
+    assert!(c.guest(ct).unwrap().hw.tun);
+    c.guest_mut_for_import(ct).unwrap().status = GuestStatus::Stopped;
+    c.update_guest(ct, &GuestPatch { tun: Some(false), ..patch() }, "u", NOW).unwrap();
+    assert!(!c.guest(ct).unwrap().hw.tun);
+    // Sanal makinede kullanılmaz.
+    c.guest_mut_for_import(103).unwrap().status = GuestStatus::Stopped;
+    assert!(c.update_guest(103, &GuestPatch { tun: Some(true), ..patch() }, "u", NOW).unwrap_err().to_string().contains("yalnızca konteynerlerde"));
+    // Eski kayıtlarda alan yoktur: kapalı sayılır.
+    assert!(!serde_json::from_str::<crate::Hardware>("{}").unwrap().tun);
+}

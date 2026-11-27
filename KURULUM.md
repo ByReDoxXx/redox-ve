@@ -1000,6 +1000,21 @@ geçidi** verin (LXC'nin NAT köprüsünde ör. `10.0.3.50/24` ve `10.0.3.1`). Y
 İndirilen her parça özetiyle doğrulanır; katmanlar kök dizinin dışına yazamaz. Sahte kayıt sunucusuyla sınandı;
 **gerçek bir kayıt sunucusu ve böyle bir konteyneri gerçek LXC ile başlatma denenmedi.**
 
+### Konteynerde Tailscale (tünel aygıtı)
+
+Konteynerin içinde Tailscale (ya da WireGuard) çalışacaksa ona tünel aygıtını (`/dev/net/tun`) verin. Konteyner
+kapalıyken:
+
+```bash
+redox vm set <kimlik> tun=true
+redox vm start <kimlik>
+```
+
+Sonra konteynerin içinde Tailscale'i [resmi yönergelerle](https://tailscale.com/download/linux) kurup `tailscale up`
+çalıştırın. Aygıtla konteyner yalnızca kendi ağ ad alanında tünel arayüzü açar; sunucunun ağına dokunamaz. Seçenek
+yalnızca konteynerlerde vardır ve yalnızca yönetici değiştirebilir. Aygıtın yetkisiz bir ad alanında kullanılabildiği
+Linux çekirdeğinde denendi; **gerçek LXC konteynerinde Tailscale henüz denenmedi.**
+
 ## 15. Token süresi, oturumlar, operatör yetkileri, syslog, Let's Encrypt, çalışırken çıkarma
 
 ### 15.1 API token'larına süre

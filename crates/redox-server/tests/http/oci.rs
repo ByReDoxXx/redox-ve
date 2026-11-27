@@ -90,6 +90,7 @@ async fn bad_images_and_addresses_are_refused_before_the_driver_is_called() {
         (base("oci:nginx", "ct", json!({ "ct_address": "10.0.0.5/24\nlxc.hook.pre-start = /x" })), "geçersiz konteyner adresi"),
         (base("oci:nginx", "ct", json!({ "ct_gateway": "10.0.0.1" })), "geçersiz ağ geçidi"),
         (base("debian-12", "vm", json!({ "ct_address": "10.0.0.5/24" })), "yalnızca konteynerlerde"),
+        (base("debian-12", "vm", json!({ "tun": true })), "yalnızca konteynerlerde"),
         (base("yok-sablon", "ct", json!({})), "bilinmeyen konteyner şablonu"),
     ] {
         let (status, body) = api(&app, post_json("/api/v1/guests", &spec)).await;

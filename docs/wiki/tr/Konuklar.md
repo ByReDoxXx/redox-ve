@@ -66,5 +66,7 @@ klavyesindeki karakterler yazılır ve konuğun klavye düzeni ABD İngilizcesi 
   Anahtar kaybolursa disk açılamaz; şifreli konukta klon, askıya alma ve dışa aktarma gibi işlemler reddedilir.
 - **OCI imajı:** konteyner oluştururken *OCI imajı* alanına `nginx:1.29` gibi bir ad; ağ için sabit IP ve ağ geçidi
   verin. Yalnızca herkese açık linux/amd64 imajlar. Gerçek kayıt sunucusu ve gerçek LXC ile henüz denenmedi.
+- **Konteynerde Tailscale:** konteyner kapalıyken `redox vm set <kimlik> tun=true` ile tünel aygıtını verin, sonra
+  içinde Tailscale'i kurup `tailscale up` çalıştırın. Gerçek LXC konteynerinde henüz denenmedi.
 
 Ayrıntılar ve sınırlar: depodaki `KURULUM.md`, 14. bölüm.
