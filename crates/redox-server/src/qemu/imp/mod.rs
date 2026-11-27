@@ -11,6 +11,8 @@ use super::{cpu_pct, last_line, lock, parse_qmp_line, parse_stat_ticks, parse_vm
 mod ft;
 mod host;
 mod hotplug;
+mod unplug;
+pub use unplug::*;
 mod limits;
 mod live;
 mod measure;

@@ -84,6 +84,10 @@ impl AppState {
         if !driver.hotplug(redox_core::GuestKind::Vm) {
             return Err(Error::InvalidSpec("bu sürücü çalışan konuğa çekirdek ekleyemez".to_string()));
         }
+        self.reconcile_unplug(vmid);
+        if self.snapshot().guest(vmid).is_ok_and(|g| target < g.cores) {
+            return self.cores_remove(vmid, target, user).map(|()| true);
+        }
         let (from, mut guest) = self.mutate(|c| Ok::<_, Error>((c.check_core_add(vmid, target)?, c.guest(vmid)?.clone())))?;
         let mut outcome = Ok(());
         for _ in from..target {
@@ -106,6 +110,10 @@ impl AppState {
         let driver = self.driver();
         if !driver.hotplug(redox_core::GuestKind::Vm) {
             return Err(Error::InvalidSpec("bu sürücü çalışan konuğa bellek ekleyemez".to_string()));
+        }
+        self.reconcile_unplug(vmid);
+        if self.snapshot().guest(vmid).is_ok_and(|g| target_mb < g.mem_total_mb) {
+            return self.memory_remove(vmid, target_mb, user).map(|()| true);
         }
         let (add, guest) = self.mutate(|c| Ok::<_, Error>((c.check_memory_add(vmid, target_mb)?, c.guest(vmid)?.clone())))?;
         let outcome = driver.hot_add_memory(&guest, add);

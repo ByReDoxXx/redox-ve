@@ -124,6 +124,8 @@ impl AppState {
 
     /// Çalışan sanal makineyi askıya alır: bellek durumu diske yazılır, konuk kapanır; başlatılınca kaldığı yerden sürer.
     pub fn suspend(&self, vmid: VmId, user: &str) -> Result<TaskId, Error> {
+        // Bellek durumu, kayıttaki makineyle aynı olmalıdır.
+        self.reconcile_unplug(vmid);
         let guest = self.lock().guest(vmid)?.clone();
         if guest.kind != redox_core::GuestKind::Vm {
             return Err(Error::InvalidSpec("yalnızca sanal makineler askıya alınır".to_string()));

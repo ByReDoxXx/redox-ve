@@ -316,6 +316,24 @@ pub trait Hypervisor: Send + Sync {
         false
     }
 
+    /// Çalışan konuğun en yüksek numaralı çekirdeğini çıkarır; konuk bırakmazsa hata döner.
+    fn hot_remove_core(&self, _guest: &Guest) -> Result<(), String> {
+        Err("bu sürücü çalışan konuktan çekirdek çıkaramaz".to_string())
+    }
+
+    /// Çalışan konuktan en son eklenen bellek parçasını çıkarır; konuk bırakmazsa hata döner.
+    fn hot_remove_memory(&self, _guest: &Guest) -> Result<(), String> {
+        Err("bu sürücü çalışan konuktan bellek çıkaramaz".to_string())
+    }
+
+    /// Konukta takılı `(çekirdek, sonradan eklenen bellek parçası)` sayısı; okunamıyorsa `None`.
+    fn hotplug_inventory(&self, _guest: &Guest) -> Option<(u32, usize)> {
+        None
+    }
+
+    /// Konuğun sonradan bıraktığı `index` numaralı bellek parçasının sunucudaki kaynağını serbest bırakır.
+    fn release_dimm(&self, _guest: &Guest, _index: usize) {}
+
     /// Çalışan konuğa `mb` MB bellek ekler (konuk boş bellek yuvalarıyla açılmış olmalıdır). Parçanın sırası
     /// konuğun kaydındaki parça sayısıdır.
     fn hot_add_memory(&self, _guest: &Guest, _mb: u64) -> Result<(), String> {

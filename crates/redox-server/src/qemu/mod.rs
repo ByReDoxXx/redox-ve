@@ -910,6 +910,49 @@ impl Hypervisor for QemuDriver {
         let _ = guest;
     }
 
+    fn hot_remove_core(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::hot_remove_core(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn hot_remove_memory(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::hot_remove_memory(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn hotplug_inventory(&self, guest: &Guest) -> Option<(u32, usize)> {
+        #[cfg(unix)]
+        {
+            imp::inventory(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            None
+        }
+    }
+
+    fn release_dimm(&self, guest: &Guest, index: usize) {
+        #[cfg(unix)]
+        imp::release_dimm_backend(self, guest, index);
+        #[cfg(not(unix))]
+        let _ = (guest, index);
+    }
+
     fn hot_add_memory(&self, guest: &Guest, mb: u64) -> Result<(), String> {
         #[cfg(unix)]
         {

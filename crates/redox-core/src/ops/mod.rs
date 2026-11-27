@@ -15,6 +15,7 @@ mod memory;
 pub mod migrate;
 mod schedule;
 mod snapshots;
+mod unplug;
 
 impl Cluster {
     /// Konuğu kilitleyip süren bir görev açar (anlık görüntü, yedek, klon gibi uzun işler için).

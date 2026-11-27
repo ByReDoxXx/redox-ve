@@ -350,6 +350,24 @@ impl Hypervisor for HostDriver {
         }
     }
 
+    fn hot_remove_core(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.hot_remove_core(guest)
+    }
+
+    fn hot_remove_memory(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.hot_remove_memory(guest)
+    }
+
+    fn hotplug_inventory(&self, guest: &Guest) -> Option<(u32, usize)> {
+        self.of(guest).ok().and_then(|d| d.hotplug_inventory(guest))
+    }
+
+    fn release_dimm(&self, guest: &Guest, index: usize) {
+        if let Ok(d) = self.of(guest) {
+            d.release_dimm(guest, index);
+        }
+    }
+
     fn hot_add_memory(&self, guest: &Guest, mb: u64) -> Result<(), String> {
         self.of(guest)?.hot_add_memory(guest, mb)
     }

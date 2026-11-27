@@ -41,7 +41,9 @@ pub async fn cores_add(State(st): State<AppState>, Extension(me): Extension<Iden
     let Ok(cores) = f.cores.trim().parse::<u32>() else {
         return flash(&back, "error", (tx("Çekirdek sayısı bir tam sayı olmalı.")));
     };
+    let lowered = st.snapshot().guest(vmid).is_ok_and(|g| cores < g.cores);
     match st.cores_add(vmid, cores, &me.user) {
+        Ok(_) if lowered => flash(&back, "notice", &tfmt(format!("Konuk {cores} çekirdeğe indirildi."))),
         Ok(true) => flash(&back, "notice", &tfmt(format!("Konuk {cores} çekirdeğe çıkarıldı; yeni çekirdekler konukta etkin."))),
         Ok(false) => flash(&back, "notice", &tfmt(format!("Konuk {cores} çekirdeğe çıkarıldı. Konuk ajanı yanıt vermedi: yeni çekirdekleri konuğun içinde etkinleştirmeniz gerekebilir."))),
         Err(e) => failed(&back, &e),
@@ -64,7 +66,9 @@ pub async fn memory_add(State(st): State<AppState>, Extension(me): Extension<Ide
     let Ok(mb) = f.memory_mb.trim().parse::<u64>() else {
         return flash(&back, "error", (tx("Bellek bir tam sayı olmalı (MB).")));
     };
+    let lowered = st.snapshot().guest(vmid).is_ok_and(|g| mb < g.mem_total_mb);
     match st.memory_add(vmid, mb, &me.user) {
+        Ok(_) if lowered => flash(&back, "notice", &tfmt(format!("Konuğun belleği {mb} MB'a indirildi."))),
         Ok(true) => flash(&back, "notice", &tfmt(format!("Konuğun belleği {mb} MB oldu; konuk yeni belleği kullanıyor."))),
         Ok(false) => flash(&back, "notice", &tfmt(format!("Konuğun belleği {mb} MB oldu. Konuk ajanı yanıt vermedi: konuk yeni belleği kendiliğinden kullanmıyorsa içinde etkinleştirmeniz gerekir."))),
         Err(e) => failed(&back, &e),

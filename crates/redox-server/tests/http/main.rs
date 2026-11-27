@@ -45,6 +45,7 @@ mod session_list;
 mod terminal;
 mod token_expiry;
 mod ui_v3;
+mod unplug;
 mod users;
 
 #[allow(unused_imports)]

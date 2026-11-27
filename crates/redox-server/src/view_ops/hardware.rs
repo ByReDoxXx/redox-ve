@@ -330,12 +330,12 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         @if p.admin {
                             form class="inline" method="post" action={ (base) "/cores" } {
                                 label for="hot_cores" { (tx("Çekirdek")) }
-                                input id="hot_cores" name="cores" type="text" inputmode="numeric" value=((g.cores + 1).min(g.hw.max_cores)) required disabled[!hot || g.cores >= g.hw.max_cores];
-                                button class="btn sm" type="submit" disabled[!hot || g.cores >= g.hw.max_cores] { (icon("check")) (tx("Uygula")) }
+                                input id="hot_cores" name="cores" type="text" inputmode="numeric" value=((g.cores + 1).min(g.hw.max_cores)) required disabled[!hot];
+                                button class="btn sm" type="submit" disabled[!hot] { (icon("check")) (tx("Uygula")) }
                             }
                         }
                         footer {
-                            (tx("Yalnızca konuk çalışırken ve yalnızca artırılır; azaltmak için konuğu kapatıp çekirdek sayısını değiştirin. "))
+                            (tx("Yalnızca konuk çalışırken. Daha küçük bir sayı yazarsanız çekirdek çıkarılır; konuk işletim sistemi çekirdeği bırakmalıdır. "))
                             (tx("Konukta ajan (qemu-guest-agent) çalışıyorsa yeni çekirdekler kendiliğinden etkinleşir; yoksa konuğun içinde etkinleştirmeniz gerekebilir."))
                         }
                     }
@@ -349,12 +349,12 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         @if p.admin {
                             form class="inline" method="post" action={ (base) "/memory" } {
                                 label for="hot_memory" { (tx("Bellek (MB)")) }
-                                input id="hot_memory" name="memory_mb" type="text" inputmode="numeric" value=(g.mem_total_mb + room.min(1024)) required disabled[!hot || full];
-                                button class="btn sm" type="submit" disabled[!hot || full] { (icon("check")) (tx("Uygula")) }
+                                input id="hot_memory" name="memory_mb" type="text" inputmode="numeric" value=(g.mem_total_mb + room.min(1024)) required disabled[!hot || (full && g.hw.dimms.is_empty())];
+                                button class="btn sm" type="submit" disabled[!hot || (full && g.hw.dimms.is_empty())] { (icon("check")) (tx("Uygula")) }
                             }
                         }
                         footer {
-                            (tx("Yalnızca konuk çalışırken, 128 MB'lık adımlarla ve yalnızca artırılır; azaltmak için bellek balonunu kullanın ya da konuğu kapatın. "))
+                            (tx("Yalnızca konuk çalışırken ve 128 MB'lık adımlarla. Yalnızca sonradan eklenen parçalar, sondan başlayarak çıkarılabilir; Linux konukta güvenilir çıkarma için yeni bellek “taşınabilir” açılmalıdır (çekirdek seçeneği memhp_default_state=online_movable). "))
                             (tx("Linux konuklar yeni belleği çoğunlukla kendiliğinden kullanır; kullanmıyorsa konuk ajanı (qemu-guest-agent) etkinleştirir."))
                         }
                     }

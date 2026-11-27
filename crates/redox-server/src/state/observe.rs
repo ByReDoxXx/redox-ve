@@ -83,6 +83,7 @@ impl AppState {
     /// Gerçek sürücüden konukların, düğümün ve depolamanın güncel durumunu okur.
     /// Bloklayan G/Ç yapar; `spawn_blocking` içinden çağrılmalıdır.
     pub fn refresh(&self, host: Option<&HostSample>, disk_gb: Option<(u64, u64)>) {
+        self.reconcile_pending_unplugs();
         let driver = self.driver();
         if !driver.is_real() {
             return;
