@@ -11,6 +11,10 @@ impl Cluster {
                 "geçersiz anlık görüntü adı \"{name}\": 1-32 karakter; küçük harf, rakam, tire ve alt çizgi kullanın"
             )));
         }
+        // QEMU adı önce anlık görüntü numarası olarak arar: "1" adı, 1 numaralı başka bir anlık görüntüyü gösterirdi.
+        if name.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(Error::InvalidSpec(format!("geçersiz anlık görüntü adı \"{name}\": yalnızca rakamdan oluşamaz")));
+        }
         if guest.snapshots.iter().any(|s| s.name == name) {
             return Err(Error::SnapshotExists(name.to_string()));
         }

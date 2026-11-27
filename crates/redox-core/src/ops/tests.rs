@@ -154,6 +154,9 @@ fn snapshot_bookkeeping() {
     let mut c = cluster();
     assert!(matches!(c.check_snapshot_new(103, "Kötü Ad"), Err(Error::InvalidSpec(_))));
     assert!(matches!(c.check_snapshot_new(103, ""), Err(Error::InvalidSpec(_))));
+    // QEMU "1" adını 1 numaralı anlık görüntü sayardı: yalnızca rakamdan oluşan ad alınmaz.
+    assert!(matches!(c.check_snapshot_new(103, "12"), Err(Error::InvalidSpec(m)) if m.contains("rakam")));
+    c.check_snapshot_new(103, "12-yedek").unwrap();
     c.check_snapshot_new(103, "kurulum_oncesi").unwrap();
     c.add_snapshot(103, "kurulum_oncesi", NOW);
     assert_eq!(c.check_snapshot_new(103, "kurulum_oncesi"), Err(Error::SnapshotExists("kurulum_oncesi".into())));
