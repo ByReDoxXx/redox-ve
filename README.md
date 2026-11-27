@@ -49,6 +49,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
   cloud-init settings, including a static address, can be edited later from the panel.
 - Selectable CPU model per VM, and a memory balloon whose target can be changed while the VM runs.
 - Cores and memory can be added to a running VM (`redox vm cores 103 6`, `redox vm memory 103 8192`), up to a per-VM maximum.
+- A status screen on the server's own console: name, addresses, where the web interface is, whether the service answers and how many guests run; Enter logs in.
 - Import `vmdk`, `vdi`, `vhdx` disks and OVA archives; export a guest as OVA.
 - Templates, full clones and linked clones (a linked clone is ready in under a second).
 - Up to 8 extra data disks and 3 extra network cards; both can be hot-plugged into a running VM.
@@ -427,7 +428,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-542 tests pass on Linux and 461 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+546 tests pass on Linux and 465 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
@@ -456,6 +457,7 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
 
 ## Limits
 
+- The console status screen (`redox tty`) replaces the login prompt on the first virtual console after an install with `install.sh` or the ISO. Its text and the installer's unit file are tested; it has not been seen on a real console yet (the development machine has none), so a wrong terminal setting there would only show up on real hardware. The other consoles (Alt+F2) keep the ordinary login.
 - No shared cluster state. Several servers can be viewed together, but each one manages its own guests.
 - Live migration moves a running VM with a pause of tens of milliseconds, but only plain guests: not with UEFI or a virtual TPM, an attached installation image, a cloud-init drive, shared folders, passed-through devices, or disks that depend on a template or backup. The two QEMU processes connect directly (TLS with a one-time pre-shared key), so the target's migration ports must be reachable from the source. It is tested on real QEMU with a Linux guest between two servers on one machine; it has not been tried between two physical machines, with a Windows guest, or under heavy load. The older "move while running" path (suspend, copy, resume) still pauses the guest for as long as the copy takes and remains for guests that cannot be migrated live.
 - Automatic failover exists only for replicated guests and needs a witness server; there is no fencing and no shared-state cluster. It has not been tried in a real outage.

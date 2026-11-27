@@ -653,6 +653,7 @@ fn main() -> ExitCode {
                 .block_on(serve(opts))
         }),
         Some("user" | "token") => manage_users(&args),
+        Some("tty") => redox_server::tty::run(&args[1..]),
         Some("net") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
             ["net", "vxlan", bridge, vni, local, peers] => redox_server::vxlan::plan(bridge, vni, local, peers).map(|script| print!("{}", redox_server::i18n::cli_text(&script))),
             ["net", "vxlan", bridge, vni, local, peers, "--unit"] => redox_server::vxlan::unit(bridge, vni, local, peers).map(|unit| print!("{}", redox_server::i18n::cli_text(&unit))),

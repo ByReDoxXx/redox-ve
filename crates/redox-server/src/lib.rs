@@ -31,6 +31,7 @@ pub mod qga;
 pub mod report;
 pub mod state;
 pub mod totp;
+pub mod tty;
 pub mod ui;
 pub mod ui_admin;
 pub mod ui_ops;

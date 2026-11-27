@@ -98,6 +98,7 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox media fetch <https-address> [sha256]   (the server downloads the file itself)
         OVA export: curl -H 'Authorization: Bearer TOKEN' -o vm.ova REDOX_URL/api/v1/guests/ID/export
         to upload: curl -T debian.iso -H 'Authorization: Bearer TOKEN' REDOX_URL/api/v1/media/debian.iso
+  redox tty [--once]              (status screen for the server's console: address, service, guests; Enter logs in)
   redox peer list                 (peer servers in the combined view)
   redox peer import <peer> <id>   (copies a stopped virtual machine from the peer to this server)
   redox peer migrate <peer> <id>  (moves a running virtual machine from the peer to this server without stopping it)

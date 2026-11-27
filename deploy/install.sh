@@ -230,6 +230,30 @@ ExecStart=/usr/local/sbin/redox-firstboot
 [Install]
 WantedBy=multi-user.target
 EOF
+    # Fiziksel konsolda (tty1) olağan oturum açma istemi yerine canlı durum ekranı durur; Enter ile oturum açılır.
+    CONSOLE_SCHEME=https; [ "$TLS" = 1 ] || CONSOLE_SCHEME=http
+    cat > "$ROOT/etc/systemd/system/redox-console.service" <<EOF
+[Unit]
+Description=RedoX VE konsol durum ekranı
+After=redox-firstboot.service systemd-user-sessions.service plymouth-quit-wait.service
+Conflicts=getty@tty1.service
+Before=getty.target
+ConditionPathExists=/dev/tty1
+
+[Service]
+ExecStart=/usr/local/bin/redox tty --listen $LISTEN --scheme $CONSOLE_SCHEME --port 8006 --state /var/lib/redox/state.json
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
     cat > "$ROOT/etc/systemd/system/redox-banner.service" <<'EOF'
 [Unit]
 Description=RedoX VE konsol açılış ekranı
@@ -251,7 +275,9 @@ if [ -n "$ROOT" ]; then
     say "Sınama kipi: dosyalar $ROOT altına yazıldı" "Test mode: files were written under $ROOT"
     exit 0
 fi
-run systemctl enable redox.service redox-firstboot.service redox-banner.service
+run systemctl enable redox.service redox-firstboot.service redox-banner.service redox-console.service
+# tty1'i durum ekranı kullanır; öbür sanal konsollarda (Alt+F2) olağan oturum açma durur.
+run systemctl disable getty@tty1.service
 [ "$TLS" = 0 ] || run systemctl enable caddy.service
 if [ "$FROM_INSTALLER" = 1 ]; then
     # Kurulum ortamında hizmetler başlatılmaz; ilk açılışta kendileri başlar.

@@ -45,3 +45,17 @@ Arayüz `http://127.0.0.1:8006` adresindedir. Dışarı açmak için önüne TLS
 | `--alert-webhook`, `--alert-email`, `--alert-ntfy`, `--alert-telegram` | Uyarı kanalları. |
 | `--backup-report 07:30`, `--backup-age-days 7`, `--backup-test-every 7@03:00` | Yedek raporu, korumasız konuk eşiği, zamanlanmış sınama. |
 | `--api-rate 600` | API hız sınırı (kullanıcı başına dakikada). |
+
+## Konsol ekranı
+
+`install.sh` ya da ISO ile kurulumdan sonra sunucunun kendi ekranında (ilk sanal konsol) oturum açma istemi yerine bir
+durum ekranı durur: sunucunun adı ve adresleri, panelin adresi, yönetim hizmetinin yanıt verip vermediği, çalışan konuk
+sayısı, bellek, yük ve açık kalma süresi. Birkaç saniyede bir yenilenir ve hiçbir işlem yapmaz. Olağan oturum açma için
+**Enter**'a basın; oturumu kapatınca ekran geri gelir. Öbür sanal konsollarda (Alt+F2 ve sonrası) olağan oturum açma durur.
+
+```
+redox tty --once        # ekranı bir kez yazar (SSH üzerinden de çalışır)
+systemctl disable --now redox-console.service && systemctl enable --now getty@tty1.service   # düz oturum açma istemine dönüş
+```
+
+Ekran fiziksel bir konsolda henüz denenmedi; orada sorun çıkarırsa ikinci komut oturum açma istemini geri getirir.

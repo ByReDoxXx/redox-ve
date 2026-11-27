@@ -45,3 +45,18 @@ The interface is at `http://127.0.0.1:8006`. To expose it, put a TLS-terminating
 | `--alert-webhook`, `--alert-email`, `--alert-ntfy`, `--alert-telegram` | Alert channels. |
 | `--backup-report 07:30`, `--backup-age-days 7`, `--backup-test-every 7@03:00` | Backup report, unprotected threshold, scheduled boot tests. |
 | `--api-rate 600` | API rate limit (per user per minute). |
+
+## The console screen
+
+After an install with `install.sh` or the ISO, the server's own screen (the first virtual console) shows a status
+screen instead of a login prompt: the server's name and addresses, where the web interface is, whether the management
+service answers, how many guests are running, memory, load and uptime. It refreshes every few seconds and performs no
+actions. Press **Enter** to get the ordinary login; when you log out the screen comes back. The other virtual consoles
+(Alt+F2 and up) keep the ordinary login prompt.
+
+```
+redox tty --once        # print the screen once (also works over SSH)
+systemctl disable --now redox-console.service && systemctl enable --now getty@tty1.service   # go back to a plain login prompt
+```
+
+The screen has not been tried on a physical console yet; if it misbehaves there, the second command restores the login prompt.

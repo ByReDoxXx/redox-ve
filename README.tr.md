@@ -44,6 +44,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
   cloud-init ayarları, sabit adres dahil, sonradan panelden düzenlenir.
 - Sanal makine başına seçilebilen işlemci modeli ve hedefi çalışırken değişen bellek balonu.
 - Çalışan sanal makineye çekirdek ve bellek ekleme (`redox vm cores 103 6`, `redox vm memory 103 8192`); üst sınır konuk başına verilir.
+- Sunucunun kendi konsolunda durum ekranı: ad, adresler, panelin adresi, hizmetin yanıt verip vermediği ve çalışan konuk sayısı; Enter ile oturum açılır.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
 - Şablonlar, tam klonlar ve bağlı klonlar (bağlı klon bir saniyenin altında hazır olur).
 - En fazla 8 ek veri diski ve 3 ek ağ kartı; ikisi de çalışan sanal makineye takılabilir.
@@ -429,7 +430,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 542, Windows'ta 461 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 546, Windows'ta 465 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
@@ -458,6 +459,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 
 ## Sınırlar
 
+- Konsol durum ekranı (`redox tty`), `install.sh` ya da ISO ile kurulumdan sonra ilk sanal konsolda oturum açma isteminin yerini alır. Metni ve kurulum betiğinin yazdığı birim dosyası sınandı; gerçek bir konsolda henüz görülmedi (geliştirme makinesinde yok), bu yüzden oradaki yanlış bir terminal ayarı ancak gerçek donanımda ortaya çıkar. Öbür konsollarda (Alt+F2) olağan oturum açma durur.
 - Ortak küme durumu yoktur. Birkaç sunucu birlikte görüntülenebilir, ama her biri kendi konuklarını yönetir.
 - Canlı taşıma, çalışan sanal makineyi onlarca milisaniyelik bir duraklamayla taşır, ama yalnızca sade konukları: UEFI ya da sanal TPM, takılı kurulum kalıbı, cloud-init sürücüsü, paylaşılan klasör, aktarılmış aygıt ya da bir şablona/yedeğe bağlı disk varsa taşımaz. İki QEMU birbirine doğrudan bağlanır (tek kullanımlık ön paylaşımlı anahtarlı TLS); hedefin taşıma kapıları kaynaktan erişilebilir olmalıdır. Gerçek QEMU'da bir Linux konukla, tek makinedeki iki sunucu arasında sınandı; iki fiziksel makine arasında, Windows konukla ya da ağır yük altında denenmedi. Eski "çalışırken al" yolu (askıya al, kopyala, sürdür) konuğu kopyalama süresince duraklatır ve canlı taşınamayan konuklar için durmaktadır.
 - Kendiliğinden devralma yalnızca çoğaltılan konuklar içindir ve bir hakem sunucu ister; kaynağı zorla kapatma (fencing) ve ortak durumlu küme yoktur. Gerçek bir kesintide denenmedi.

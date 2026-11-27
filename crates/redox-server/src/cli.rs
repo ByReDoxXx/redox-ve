@@ -114,6 +114,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox media fetch <https-adresi> [sha256]    (sunucu dosyayı kendisi indirir)
         OVA dışa aktarma: curl -H 'Authorization: Bearer TOKEN' -o vm.ova REDOX_URL/api/v1/guests/KIMLIK/export
         yüklemek için: curl -T debian.iso -H 'Authorization: Bearer TOKEN' REDOX_URL/api/v1/media/debian.iso
+  redox tty [--once]              (sunucunun konsolundaki durum ekranı: adres, hizmet, konuklar; Enter ile oturum açılır)
   redox peer list                 (birleşik görünümdeki eş sunucular)
   redox peer import <eş> <kimlik> (eşteki kapalı sanal makineyi bu sunucuya kopyalar)
   redox peer migrate <eş> <kimlik> (eşteki çalışan sanal makineyi kapatmadan bu sunucuya taşır)

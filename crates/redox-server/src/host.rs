@@ -127,6 +127,11 @@ fn local_ip() -> String {
         .unwrap_or_else(|_| "127.0.0.1".to_string())
 }
 
+/// Dışarı giden arayüzün adresi; ağ yoksa `None`.
+pub fn primary_ip() -> Option<String> {
+    Some(local_ip()).filter(|ip| ip != "127.0.0.1" && ip != "0.0.0.0")
+}
+
 /// Bu makineyi tek düğüm olarak tanımlar.
 pub fn local_node() -> Node {
     Node {
