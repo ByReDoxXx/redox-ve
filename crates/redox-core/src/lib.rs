@@ -3,6 +3,7 @@
 //! Bu crate giriş/çıkış yapmaz; zaman dışarıdan `now` (epoch saniyesi) olarak verilir,
 //! böylece bütün kurallar belirlenimci biçimde test edilebilir.
 
+pub mod affinity;
 pub mod approvals;
 pub mod cluster;
 pub mod command;

@@ -842,11 +842,18 @@ pub fn render(view: View, v: &Value) -> String {
         View::Balance => {
             let head = format!("işlemci %{}  bellek %{}", n(v, "cpu_pct"), n(v, "mem_pct"));
             let moves: Vec<String> = v["moves"].as_array().into_iter().flatten().map(|m| format!("  {:<6} {:<16} -> {:<12} ({}; sonra burada %{}, eşte %{})   redox peer send {} {}", n(m, "vmid"), s(m, "name"), s(m, "peer"), s(m, "reason"), n(m, "here_mem_pct"), n(m, "peer_mem_pct"), s(m, "peer"), n(m, "vmid"))).collect();
-            match (v["busy"].as_bool() == Some(true), moves.is_empty()) {
+            let broken: String = v["violations"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|v| format!("\n  kural bozuk: {v}")).collect();
+            let busy = v["busy"].as_bool() == Some(true);
+            if !busy && !broken.is_empty() {
+                let advice = if moves.is_empty() { "taşınacak uygun eş yok".to_string() } else { format!("öneriler:\n{}", moves.join("\n")) };
+                return format!("{head}:{broken}\n{advice}");
+            }
+            let advice = match (busy, moves.is_empty()) {
                 (false, _) => format!("{head}: sunucu sıkışmış değil, öneri yok"),
                 (true, true) => format!("{head}: sunucu sıkışmış, ama öneri üretilemedi: {}", s(v, "note")),
                 (true, false) => format!("{head}: sunucu sıkışmış. Öneriler:\n{}", moves.join("\n")),
-            }
+            };
+            format!("{advice}{broken}")
         }
         View::Profile => {
             let lines = |key: &str| v[key].as_array().map(|all| all.iter().filter_map(Value::as_str).map(|l| format!("  {l}")).collect::<Vec<_>>()).unwrap_or_default();

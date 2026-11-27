@@ -34,6 +34,8 @@ struct ServeOptions {
     tls_key: Option<PathBuf>,
     health_dir: Option<PathBuf>,
     ldap: Option<PathBuf>,
+    auto_balance: bool,
+    balance_as: Option<String>,
     allow_plain_http: bool,
     driver: String,
     data_dir: PathBuf,
@@ -84,6 +86,8 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         tls_key: None,
         health_dir: None,
         ldap: None,
+        auto_balance: false,
+        balance_as: None,
         allow_plain_http: false,
         driver: "sim".to_string(),
         data_dir: PathBuf::from("redox-data"),
@@ -134,6 +138,8 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--allow-plain-http" => opts.allow_plain_http = true,
             "--no-lxc" => opts.no_lxc = true,
             "--no-autostart" => opts.no_autostart = true,
+            "--auto-balance" => opts.auto_balance = true,
+            "--balance-as" => opts.balance_as = Some(value()?.clone()),
             "--four-eyes" => opts.four_eyes = true,
             "--storage" => opts.storages.push(host::parse_storage(value()?)?),
             "--firewall" => opts.firewall = true,
@@ -413,6 +419,22 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 let worker = st.clone();
                 let _ = tokio::task::spawn_blocking(move || worker.health_tick()).await;
+            }
+        });
+    }
+    if opts.auto_balance {
+        say!("Kendiliğinden yük dengeleme açık: sunucu 5 dakika sıkışık kalırsa ya da bir ayrı tutma kuralı bozulursa bir konuk eşe canlı taşınır.");
+        let (st, as_name) = (state.clone(), opts.balance_as.clone());
+        tokio::spawn(async move {
+            let memory = Arc::new(std::sync::Mutex::new(redox_server::state::balance::AutoBalance::default()));
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let (worker, memory, as_name) = (st.clone(), memory.clone(), as_name.clone());
+                let _ = tokio::task::spawn_blocking(move || {
+                    let mut memory = memory.lock().unwrap_or_else(|e| e.into_inner());
+                    worker.auto_balance_tick(&mut memory, as_name.as_deref(), redox_server::state::now());
+                })
+                .await;
             }
         });
     }

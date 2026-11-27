@@ -381,11 +381,14 @@ fn replica_row(p: &Page, peers: &[crate::peers::PeerView], r: &redox_core::repli
 /// Yük dengeleme önerisi: yalnızca sunucu sıkışmışken görünür.
 fn balance_card(p: &Page, b: &crate::state::balance::Balance) -> Markup {
     html! {
-        @if b.busy {
+        @if b.busy || !b.violations.is_empty() {
             div class="card" {
                 header { h2 { (tx("Yük dengeleme önerisi")) } (tip("Bu sunucu sıkışmış: hangi sanal makinenin hangi eşe taşınmasının işe yarayacağı. Kendiliğinden bir şey taşınmaz.")) span class="note" { (tfmt(format!("işlemci %{} · bellek %{}", b.cpu_pct, b.mem_pct))) } }
+                @if !b.violations.is_empty() {
+                    dl class="kv" { @for v in &b.violations { dt { (icon("alert")) } dd { (crate::i18n::message(v)) } } }
+                }
                 @if b.moves.is_empty() {
-                    p class="empty" { (tx("Bu sunucu sıkışmış, ama bir öneri üretilemedi:")) " " (crate::i18n::message(b.note.as_deref().unwrap_or(""))) "." }
+                    @if b.busy { p class="empty" { (tx("Bu sunucu sıkışmış, ama bir öneri üretilemedi:")) " " (crate::i18n::message(b.note.as_deref().unwrap_or(""))) "." } }
                 } @else {
                     div class="tw" { table {
                         thead { tr { th { (tx("Konuk")) } th { (tx("Gerekçe")) } th { (tx("Hedef")) } th { (tx("Sonra bellek (burada / eşte)")) } @if p.admin && p.real { th { span class="sr" { (tx("Gönder")) } } } } }
