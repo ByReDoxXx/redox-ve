@@ -119,7 +119,7 @@ impl Ctx {
     }
 }
 
-fn theme_of(headers: &HeaderMap) -> &'static str {
+pub(crate) fn theme_of(headers: &HeaderMap) -> &'static str {
     let cookies = headers.get(COOKIE).and_then(|v| v.to_str().ok()).unwrap_or("");
     if cookies.split(';').any(|c| c.trim() == "theme=light") {
         "light"
@@ -547,7 +547,7 @@ pub struct ThemeQuery {
 }
 
 /// Yalnızca site içi yollara izin verir (açık yönlendirme olmasın).
-fn safe_back(back: &str) -> &str {
+pub(crate) fn safe_back(back: &str) -> &str {
     if back.starts_with('/') && !back.starts_with("//") && !back.contains('\\') {
         back
     } else {
@@ -601,6 +601,7 @@ pub async fn login(
             )
                 .into_response()
         }
+        Err(LoginError::SecondStep(challenge)) => crate::ui_ops::key_step_page(theme_of(&headers), view::KeyStep::Login { next }, &challenge),
         Err(LoginError::Invalid) => {
             println!("başarısız giriş denemesi: {name:?} ({ip})");
             audit("giriş (hatalı parola ya da kod)", false);
@@ -713,6 +714,7 @@ pub async fn asset(Path(file): Path<String>) -> Response {
         "icons.svg" => ("image/svg+xml", view::ICONS_SVG),
         "console.js" => ("text/javascript; charset=utf-8", view::CONSOLE_JS),
         "terminal.js" => ("text/javascript; charset=utf-8", view::TERMINAL_JS),
+        "webauthn.js" => ("text/javascript; charset=utf-8", view::WEBAUTHN_JS),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     ([(CONTENT_TYPE, mime), (CACHE_CONTROL, "public, max-age=3600")], body).into_response()

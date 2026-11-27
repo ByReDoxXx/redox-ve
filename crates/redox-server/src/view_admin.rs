@@ -6,7 +6,7 @@ use crate::i18n::tx;
 
 use crate::audit::AuditEntry;
 use crate::auth::{Role, User, MIN_PASSWORD_CHARS};
-use crate::view::{tip, datetime, icon, layout, page_head, Page};
+use crate::view::{tip, datetime, icon, layout, page_head, security_keys_card, Page};
 
 fn role_label(r: Role) -> &'static str {
     match r {
@@ -45,8 +45,9 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
                             @if u.ldap { br; span class="tag" { "LDAP" } }
                         }
                         td {
-                            @if u.totp_secret.is_some() { span class="pill ok" { (icon("check")) (tx("Açık")) } }
+                            @if u.totp_secret.is_some() || !u.keys.is_empty() { span class="pill ok" { (icon("check")) (tx("Açık")) } }
                             @else { span class="pill idle" { (tx("Kapalı")) } }
+                            @if !u.keys.is_empty() { " " span class="tag" { (u.keys.len()) (tx(" güvenlik anahtarı")) } }
                         }
                         td { (token_list(&format!("/users/{}", u.name), u)) }
                         td class="act" { div class="stackf" {
@@ -61,7 +62,7 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
                                     button class="btn sm" type="submit" { (tx("Kapsamı Kaydet")) }
                                 }
                             }
-                            @if u.totp_secret.is_some() {
+                            @if u.totp_secret.is_some() || !u.keys.is_empty() {
                                 form method="post" action={ "/users/" (u.name) "/totp-reset" } {
                                     button class="btn sm" type="submit" { (tx("2 Adımı Sıfırla")) }
                                 }
@@ -136,7 +137,7 @@ pub struct TotpSetup {
     pub qr_svg: String,
 }
 
-pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>) -> String {
+pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>, keys_ready: bool) -> String {
     let body = html! {
         (page_head(html! { (tx("Hesabım")) }, html! { span class="pill idle" { (role_label(user.role)) } }, html! {}, "", &[]))
         div class="stack" {
@@ -180,6 +181,7 @@ pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>) -> String 
                     p class="hint" { (tx("Telefonunuzu kaybederseniz bir yönetici Kullanıcılar sayfasından ya da sunucuda ")) span class="mono" { "redox user totp-reset" } (tx(" ile sıfırlayabilir.")) }
                 }
             }
+            (security_keys_card(user, keys_ready))
             div class="card" {
                 header { h2 { (tx("API token'larım")) } (tip("Adınıza bağlanan komut satırı ve betikler için anahtarlar.")) }
                 div class="body" {

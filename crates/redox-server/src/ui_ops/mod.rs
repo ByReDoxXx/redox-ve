@@ -21,6 +21,8 @@ use crate::view_ops::{self, Confirm, EditForm};
 mod admin;
 mod backups;
 mod screen;
+mod security_key;
+pub use security_key::*;
 mod switches;
 mod edit;
 mod files;

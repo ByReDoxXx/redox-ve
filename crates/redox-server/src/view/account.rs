@@ -56,7 +56,7 @@ pub fn login(theme: &str, next: &str, username: &str, error: Option<&str>, sso: 
                         }
                         div {
                             h2 { (tx("Sunucunuz, sizin kurallarınızla.")) }
-                            p { (tx("Sanal makineler ve konteynerler için tek dosyalık, JavaScript'siz yönetim paneli.")) }
+                            p { (tx("Sanal makineler ve konteynerler için tek dosyalık yönetim paneli.")) }
                         }
                         p class="hint" { (tx("Hesaplar sunucuda ")) span class="mono" { "redox user add" } (tx(" ile oluşturulur.")) }
                     }

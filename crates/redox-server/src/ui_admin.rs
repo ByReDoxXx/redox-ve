@@ -36,7 +36,8 @@ fn forbidden() -> Response {
 fn done(back: &str, result: Result<String, String>) -> Redirect {
     match result {
         Ok(notice) => flash(back, "notice", &notice),
-        Err(e) => flash(back, "error", &(capitalize(&e) + ".")),
+        // Çekirdek iletileri büyük harf ve nokta eklenmeden önce çevrilir (çevrilmiş metin değişmez).
+        Err(e) => flash(back, "error", &(capitalize(&tfmt(e)) + ".")),
     }
 }
 
@@ -95,7 +96,7 @@ pub async fn user_delete(State(st): State<AppState>, Extension(me): Extension<Id
 }
 
 pub async fn user_totp_reset(State(st): State<AppState>, Path(name): Path<String>) -> Redirect {
-    done("/users", st.auth().edit(|u| u.disable_totp(&name)).map(|()| tfmt(format!("{name} için iki adımlı doğrulama kapatıldı."))))
+    done("/users", st.auth().edit(|u| u.reset_second_step(&name)).map(|()| tfmt(format!("{name} için iki adımlı doğrulama kapatıldı."))))
 }
 
 fn create_token(st: &AppState, me: &Identity, headers: &HeaderMap, user: &str, label: &str, back: &str) -> Response {
@@ -138,7 +139,7 @@ pub async fn account(State(st): State<AppState>, Extension(me): Extension<Identi
         secret: secret.clone(),
         qr_svg: qr_svg(&crate::totp::otpauth_uri("RedoX VE", &user.name, secret)),
     });
-    Html(view_admin::account_page(&ctx.page(Current::Other, "/account"), &user, setup.as_ref())).into_response()
+    Html(view_admin::account_page(&ctx.page(Current::Other, "/account"), &user, setup.as_ref(), st.auth().webauthn.is_some())).into_response()
 }
 
 pub async fn account_password(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Response {

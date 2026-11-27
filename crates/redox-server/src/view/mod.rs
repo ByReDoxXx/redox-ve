@@ -1,4 +1,4 @@
-//! Sunucuda üretilen arayüz (maud). Tarayıcıda JavaScript çalışmaz: gezinme bağlantılarla,
+//! Sunucuda üretilen arayüz (maud). Tarayıcıda JavaScript gerektiren üç sayfa dışında betik çalışmaz: gezinme bağlantılarla,
 //! işlemler HTML formlarıyla, canlı güncelleme sayfa yenilemesiyle yapılır.
 
 use chrono::{Local, TimeZone};
@@ -18,6 +18,7 @@ mod fwsets;
 mod guests;
 mod mirrors;
 mod perf;
+mod security_key;
 mod shared;
 mod switches;
 mod widgets;
@@ -27,6 +28,7 @@ pub use backups::*;
 pub use cluster::*;
 pub use forms::*;
 pub use guests::*;
+pub use security_key::*;
 pub use widgets::*;
 use redox_core::{
     metrics, Action, Cluster, Guest, GuestKind, GuestStatus, Node, NodeStatus, Task, TaskStatus, VmId,
@@ -36,15 +38,17 @@ pub const STYLE_CSS: &str = include_str!("../../assets/style.css");
 pub const LOGO_SVG: &str = include_str!("../../assets/logo.svg");
 pub const WORDMARK_SVG: &str = include_str!("../../assets/wordmark.svg");
 pub const ICONS_SVG: &str = include_str!("../../assets/icons.svg");
-/// Uygulamadaki tek betik: canlı konsol istemcisi. Yalnızca konsol sayfasında yüklenir.
+// Betik yükleyen sayfalar yalnızca üçtür: canlı konsol, konteyner terminali ve güvenlik anahtarı adımı.
+// Her biri yalnızca kendi dosyasını yükler.
 pub const CONSOLE_JS: &str = include_str!("../../assets/console.js");
 pub const TERMINAL_JS: &str = include_str!("../../assets/terminal.js");
+pub const WEBAUTHN_JS: &str = include_str!("../../assets/webauthn.js");
 
 /// Gömülü varlıkların içerik damgası. Adreslere `?v=` olarak eklenir; böylece
 /// güncellemeden sonra tarayıcı eski stil dosyasını önbellekten kullanmaz.
 pub fn asset_version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let all = [STYLE_CSS, LOGO_SVG, WORDMARK_SVG, ICONS_SVG, CONSOLE_JS, TERMINAL_JS, crate::fonts::FONTS_CSS].concat();
+        let all = [STYLE_CSS, LOGO_SVG, WORDMARK_SVG, ICONS_SVG, CONSOLE_JS, TERMINAL_JS, WEBAUTHN_JS, crate::fonts::FONTS_CSS].concat();
         crate::auth::sha256_hex(&all)[..12].to_string()
     });
     &VERSION

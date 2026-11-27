@@ -34,6 +34,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox user passwd <ad>
   redox user remove <ad>
   redox user totp-reset <ad>      (iki adımlı doğrulamayı kapatır)
+  redox user keys-reset <ad>      (güvenlik anahtarlarını kaldırır)
   redox user list
   redox token create <kullanıcı> <etiket>
   redox token revoke <kullanıcı> <etiket>
@@ -140,6 +141,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox hostnet bond <ad> <active-backup|802.3ad|balance-xor> <a,b> | vlan <arayüz> <etiket> | bridge <ad> [ports=a,b] [vlan-aware=true]
   redox hostnet guest <ad> <adres/ön> [dhcp=baş-son] [nat=true]     (DHCP/DNS'li konuk ağı)
   serve --disk-key-file <dosya>   (şifreli diskli konuklar: oluştururken API'de encrypted: true ya da panelde Diskleri şifrele kutusu)
+  serve --webauthn-origin <adres> (güvenlik anahtarıyla ikinci adım: panelin tarayıcıdaki https:// adresi; IP adresi olamaz)
   redox shared init <dizin>                                         (bir dizini ortak depo olarak hazırlar; sunucuda: serve --storage ad=<dizin> --shared-storage ad)
   redox shared list | take <eş> <kimlik> | adopt <depo> <kimlik>    (ortak depodaki konuklar; disk kopyalamadan alma ve devralma)
   redox firewall set list | save <ad> <adres,adres> | remove <ad>             (kurallarda @ad olarak kullanılan adres kümeleri)

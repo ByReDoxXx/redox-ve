@@ -36,6 +36,7 @@ pub mod report;
 pub mod shared;
 pub mod state;
 pub mod totp;
+pub mod webauthn;
 pub mod tty;
 pub mod ui;
 pub mod ui_admin;
@@ -77,6 +78,7 @@ pub fn app(state: AppState) -> Router {
         .route("/", get(ui::datacenter))
         .route("/login", get(ui::login_form).post(ui::login))
         .route("/logout", post(ui::logout))
+        .route("/login/key", post(ui_ops::login_key))
         .route("/login/oidc", get(ui::oidc_start))
         .route("/login/oidc/callback", get(ui::oidc_callback))
         .route("/healthz", get(|| async { "ok" }))
@@ -171,6 +173,9 @@ pub fn app(state: AppState) -> Router {
         .route("/account/totp/start", post(ui_admin::totp_start))
         .route("/account/totp/confirm", post(ui_admin::totp_confirm))
         .route("/account/totp/disable", post(ui_admin::totp_disable))
+        .route("/account/keys/start", post(ui_ops::key_add_start))
+        .route("/account/keys/finish", post(ui_ops::key_add_finish))
+        .route("/account/keys/remove", post(ui_ops::key_remove))
         .route("/account/tokens", post(ui_admin::account_token_create))
         .route("/account/tokens/{label}/revoke", post(ui_admin::account_token_revoke))
         .nest("/api/v1", api::routes())
@@ -260,7 +265,7 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
 
     let path = req.uri().path().to_string();
     // Dil, giriş yapmadan da değiştirilebilir (giriş sayfasının kendisi için).
-    if path == "/lang" || path == "/login" || path == "/login/oidc" || path == "/login/oidc/callback" || path == "/healthz" || path.starts_with("/assets/") {
+    if path == "/lang" || path == "/login" || path == "/login/key" || path == "/login/oidc" || path == "/login/oidc/callback" || path == "/healthz" || path.starts_with("/assets/") {
         return Ok(());
     }
     let is_api = path.starts_with("/api/") || path == "/metrics";

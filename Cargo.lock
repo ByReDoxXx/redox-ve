@@ -926,6 +926,7 @@ dependencies = [
  "maud",
  "qrcode",
  "redox-core",
+ "ring",
  "rpassword",
  "rustls",
  "serde",

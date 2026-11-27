@@ -26,7 +26,7 @@ impl UserFile {
         self.users.iter().find(|u| u.name == name)
     }
 
-    fn find_mut(&mut self, name: &str) -> Result<&mut User, String> {
+    pub(super) fn find_mut(&mut self, name: &str) -> Result<&mut User, String> {
         self.users
             .iter_mut()
             .find(|u| u.name == name)
@@ -53,6 +53,7 @@ impl UserFile {
             totp_pending: None,
             scope: Vec::new(),
             sso: None,
+            keys: Vec::new(),
         });
         Ok(())
     }

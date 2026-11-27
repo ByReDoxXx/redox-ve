@@ -32,6 +32,7 @@ struct ServeOptions {
     behind_tls_proxy: bool,
     tls_cert: Option<PathBuf>,
     tls_key: Option<PathBuf>,
+    webauthn_origin: Option<redox_server::webauthn::Relying>,
     health_dir: Option<PathBuf>,
     ldap: Option<PathBuf>,
     shared_storages: Vec<String>,
@@ -86,6 +87,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         behind_tls_proxy: false,
         tls_cert: None,
         tls_key: None,
+        webauthn_origin: None,
         health_dir: None,
         ldap: None,
         shared_storages: Vec::new(),
@@ -138,6 +140,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--behind-tls-proxy" => opts.behind_tls_proxy = true,
             "--tls-cert" => opts.tls_cert = Some(PathBuf::from(value()?)),
             "--tls-key" => opts.tls_key = Some(PathBuf::from(value()?)),
+            "--webauthn-origin" => opts.webauthn_origin = Some(redox_server::webauthn::Relying::parse(value()?)?),
             "--health-dir" => opts.health_dir = Some(PathBuf::from(value()?)),
             "--allow-plain-http" => opts.allow_plain_http = true,
             "--no-lxc" => opts.no_lxc = true,
@@ -370,6 +373,12 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     };
     let mut auth = Auth::new(users, Some(opts.users.clone()), opts.behind_tls_proxy, Cost::Production);
     auth.direct_tls = tls.is_some();
+    auth.webauthn = opts.webauthn_origin.clone();
+    if let Some(rp) = &auth.webauthn {
+        say!("güvenlik anahtarı girişi açık: {}", rp.origin);
+    } else if auth.list().iter().any(|u| !u.keys.is_empty()) {
+        complain!("uyarı: güvenlik anahtarı kayıtlı kullanıcılar var ama --webauthn-origin verilmedi; bu kullanıcılar anahtarla giriş yapamaz");
+    }
     if let Some(path) = &opts.ldap {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
         let directory = redox_server::ldap::Config::parse(&text)?;
@@ -740,6 +749,7 @@ fn manage_users(args: &[String]) -> Result<(), String> {
         ["user", "passwd", name] => file.set_password(name, &read_new_password()?, Cost::Production)?,
         ["user", "remove", name] => file.remove_user(name)?,
         ["user", "totp-reset", name] => file.disable_totp(name)?,
+        ["user", "keys-reset", name] => file.clear_keys(name)?,
         ["token", "create", user, label, "--read-only"] => {
             let plain = file.create_token_as(user, label, true)?;
             file.save(&path)?;

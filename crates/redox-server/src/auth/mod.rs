@@ -12,9 +12,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+mod keys;
 mod password;
 mod users;
 
+pub use keys::*;
 pub use password::*;
 pub use users::*;
 
@@ -97,6 +99,9 @@ pub struct User {
     /// Parolası LDAP / Active Directory'de doğrulanır; yerel parola özeti kullanılmaz.
     #[serde(default)]
     pub ldap: bool,
+    /// Kayıtlı güvenlik anahtarları (WebAuthn). Doluysa giriş parolaya ek olarak anahtar ya da uygulama kodu ister.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<SecurityKey>,
 }
 
 /// Doğrulanmış istek sahibi.
@@ -129,6 +134,8 @@ pub enum LoginError {
     Invalid,
     /// Çok fazla hatalı deneme; saniye cinsinden kalan bekleme.
     Locked(u64),
+    /// Parola doğru; oturum için kayıtlı güvenlik anahtarı gerekiyor.
+    SecondStep(Box<KeyChallenge>),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -168,6 +175,10 @@ pub struct Auth {
     pub direct_tls: bool,
     /// Dizin sunucusu (`--ldap`); `ldap` işaretli kullanıcılar parolalarıyla yalnızca buradan doğrulanır.
     pub ldap: Option<crate::ldap::Config>,
+    /// Güvenlik anahtarları için panelin adresi (`--webauthn-origin`).
+    pub webauthn: Option<crate::webauthn::Relying>,
+    /// Yanıt bekleyen güvenlik anahtarı sınamaları (bilet → sınama).
+    key_challenges: Mutex<HashMap<String, keys::Pending>>,
     /// Var olmayan kullanıcıda da aynı süreyi harcamak için.
     dummy_hash: String,
     cost: Cost,
@@ -178,6 +189,11 @@ pub struct Auth {
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Deneme sayacının anahtarı: istemci ve kullanıcı adı.
+fn attempt_key(client: &str, name: &str) -> String {
+    format!("{client}|{}", name.to_lowercase())
 }
 
 fn mtime(path: &Path) -> Option<SystemTime> {
@@ -210,6 +226,8 @@ impl Auth {
             behind_tls_proxy,
             direct_tls: false,
             ldap: None,
+            webauthn: None,
+            key_challenges: Mutex::new(HashMap::new()),
             dummy_hash: hash_password("var-olmayan-kullanici-icin", cost),
         }
     }
@@ -267,8 +285,10 @@ impl Auth {
 
     /// İkinci adım: kullanıcıda açıksa kod doğru ve daha önce kullanılmamış olmalı.
     fn second_factor_ok(&self, user: Option<&User>, code: &str, now: u64) -> bool {
-        let Some((user, secret)) = user.and_then(|u| u.totp_secret.as_ref().map(|s| (u, s))) else {
-            return true;
+        let Some(user) = user else { return true };
+        let Some(secret) = &user.totp_secret else {
+            // Yalnızca güvenlik anahtarı olan hesapta kod ikinci adımın yerine geçmez.
+            return user.keys.is_empty();
         };
         let Some(step) = crate::totp::verify(secret, code, now) else {
             return false;
@@ -306,11 +326,9 @@ impl Auth {
 
     /// Parolayı (ve açıksa doğrulama kodunu) denetler; yeni bir oturum token'ı döndürür.
     pub fn login_with_code(&self, client: &str, name: &str, password: &str, code: &str, now: u64) -> Result<String, LoginError> {
-        let key = format!("{client}|{}", name.to_lowercase());
-        if let Some(a) = lock(&self.attempts).get(&key) {
-            if a.locked_until > now {
-                return Err(LoginError::Locked(a.locked_until - now));
-            }
+        let key = attempt_key(client, name);
+        if let Some(wait) = self.locked_for(&key, now) {
+            return Err(LoginError::Locked(wait));
         }
 
         let user = self.users().find(name).cloned();
@@ -319,31 +337,54 @@ impl Auth {
             Some(user) => self.password_ok(user, password),
             None => verify_password(&self.dummy_hash, password),
         };
+        // Güvenlik anahtarı olan hesapta kod yazılmadıysa sıradaki adım anahtardır. Deneme sayacı burada ne artar
+        // ne sıfırlanır: oturum henüz açılmamıştır.
+        if let Some(user) = user.as_ref().filter(|u| password_ok && code.is_empty() && !u.keys.is_empty()) {
+            return Err(match self.begin_key_login(user, now) {
+                Ok(challenge) => LoginError::SecondStep(Box::new(challenge)),
+                Err(why) => {
+                    // Anahtar denetlenemiyorsa giriş yoktur.
+                    eprintln!("uyarı: {}: {why}", user.name);
+                    LoginError::Invalid
+                }
+            });
+        }
         // Hangi adımın yanlış olduğu bilerek söylenmez.
         let ok = password_ok && user.is_some() && self.second_factor_ok(user.as_ref(), code, now);
-
-        let mut attempts = lock(&self.attempts);
         if !ok {
-            if attempts.len() > MAX_SESSIONS {
-                attempts.retain(|_, a| a.locked_until > now || a.first + WINDOW_SECS > now);
-            }
-            let a = attempts.entry(key).or_default();
-            if a.first + WINDOW_SECS <= now {
-                *a = Attempts { failures: 0, first: now, locked_until: 0 };
-            }
-            a.failures += 1;
-            if a.failures >= MAX_FAILURES {
-                a.locked_until = now + LOCK_SECS;
-                a.failures = 0;
-                a.first = now;
-                return Err(LoginError::Locked(LOCK_SECS));
-            }
-            return Err(LoginError::Invalid);
+            return Err(self.count_failure(key, now));
         }
-        attempts.remove(&key);
-        drop(attempts);
+        self.forget_failures(&key);
 
         Ok(self.open_session(user.expect("ok ise kullanıcı vardır"), now))
+    }
+
+    fn locked_for(&self, key: &str, now: u64) -> Option<u64> {
+        lock(&self.attempts).get(key).filter(|a| a.locked_until > now).map(|a| a.locked_until - now)
+    }
+
+    fn forget_failures(&self, key: &str) {
+        lock(&self.attempts).remove(key);
+    }
+
+    /// Hatalı bir denemeyi sayar; sınır aşılırsa istemci o kullanıcı için bir süre kilitlenir.
+    fn count_failure(&self, key: String, now: u64) -> LoginError {
+        let mut attempts = lock(&self.attempts);
+        if attempts.len() > MAX_SESSIONS {
+            attempts.retain(|_, a| a.locked_until > now || a.first + WINDOW_SECS > now);
+        }
+        let a = attempts.entry(key).or_default();
+        if a.first + WINDOW_SECS <= now {
+            *a = Attempts { failures: 0, first: now, locked_until: 0 };
+        }
+        a.failures += 1;
+        if a.failures >= MAX_FAILURES {
+            a.locked_until = now + LOCK_SECS;
+            a.failures = 0;
+            a.first = now;
+            return LoginError::Locked(LOCK_SECS);
+        }
+        LoginError::Invalid
     }
 
     fn open_session(&self, user: User, now: u64) -> String {
