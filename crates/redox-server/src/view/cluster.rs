@@ -124,6 +124,7 @@ pub fn node(p: &Page, n: &Node) -> String {
                 (stat((tx("Çalışma Süresi")), &uptime(n.uptime_secs), "", &format!("linux {} · {}", n.kernel, n.ip), None))
             }
             (usage_card(p, "node", n.cores as u64, n.cpu_pct, mp))
+            @if p.real { (super::perf::perf_card(&crate::host::performance())) }
             @if p.admin && !p.cluster.maintenance {
                 div class="card" {
                     header { h2 { (tx("Bakım")) } (tip("Sunucuyu güncellemeden önce konukları düzenli kapatır; bakım bitince yeniden başlatır.")) span class="note" { (tx("sunucuyu güncellemeden ya da yeniden başlatmadan önce")) } }

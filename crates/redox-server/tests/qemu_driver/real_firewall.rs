@@ -39,7 +39,7 @@ fn open(r: &Real, from: &str, ip: &str, port: u16) -> bool {
 fn real_kernel_enforces_inbound_outbound_groups_and_every_network_card() {
     let Some(r) = real_firewall() else { return };
     let mut cluster = Cluster::demo(0);
-    let mut spec = cluster.guest(100).map(|g| g.clone()).unwrap();
+    let mut spec = cluster.guest(100).cloned().unwrap();
     spec.vmid = 100;
     spec.kind = GuestKind::Vm;
     spec.bridge = "br0".into();

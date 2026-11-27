@@ -42,6 +42,11 @@ pub fn options_tab(p: &Page, g: &Guest, f: &EditForm) -> Markup {
                     }
                     @if g.kind == GuestKind::Vm {
                         div class="field" {
+                            label for="cpu_affinity" { (tx("Sabitlenen çekirdekler")) }
+                            input id="cpu_affinity" name="cpu_affinity" type="text" value=(f.cpu_affinity) placeholder="0-3,8" autocomplete="off" spellcheck="false";
+                            span class="hint" tabindex="0" role="note" { (tx("Konuk yalnızca bu sunucu çekirdeklerinde çalışır; boş ise hepsinde. Çalışırken de değişir. Çekirdekler başka konuklara yasaklanmaz.")) }
+                        }
+                        div class="field" {
                             label for="cpu_shares" { (tx("İşlemci payı")) }
                             input id="cpu_shares" name="cpu_shares" type="text" inputmode="numeric" value=(f.cpu_shares);
                             span class="hint" tabindex="0" role="note" { (tx("Sunucunun işlemcisi yetmediğinde konuğun payı: 200 paylı konuk 100 paylının iki katı işlemci alır. 0 olağandır (100). İşlemci boşken kimse kısılmaz; çalışırken de değişir.")) }

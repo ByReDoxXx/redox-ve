@@ -27,6 +27,7 @@ mod real_compat;
 mod real_firewall;
 mod real_ft;
 mod real_mirror;
+mod real_perf;
 mod real_qemu;
 mod suspend_hotplug_net;
 

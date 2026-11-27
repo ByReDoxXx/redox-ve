@@ -434,6 +434,11 @@ pub struct GuestPatch {
     pub fw_groups: Option<Vec<String>>,
     pub firmware: Option<crate::hw::Firmware>,
     pub disk_bus: Option<crate::hw::DiskBus>,
+    /// Boş dizge sabitlemeyi kaldırır.
+    pub cpu_affinity: Option<String>,
+    /// NUMA düğüm numarası; boş dizge bağı kaldırır.
+    pub numa_node: Option<String>,
+    pub hugepages: Option<bool>,
     pub nic_model: Option<crate::hw::NicModel>,
     /// İkinci CD sürücüsü; boş dizge kalıbı çıkarır.
     pub iso2: Option<String>,

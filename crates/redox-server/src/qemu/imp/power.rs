@@ -50,10 +50,8 @@ pub fn apply(d: &QemuDriver, g: &Guest, action: Action) -> Result<(), String> {
             if resuming {
                 args.extend(["-incoming".to_string(), format!("exec:cat {}", shell_quote(&state))]);
             }
-            let started = std::process::Command::new(&d.cfg.qemu_bin)
-                .args(args)
-                .output()
-                .map_err(|e| format!("{} çalıştırılamadı: {e}", d.cfg.qemu_bin))
+            let started = crate::qemu::perf::preflight(g, &crate::host::performance())
+                .and_then(|()| std::process::Command::new(&d.cfg.qemu_bin).args(args).output().map_err(|e| format!("{} çalıştırılamadı: {e}", d.cfg.qemu_bin)))
                 .and_then(|out| if out.status.success() { Ok(()) } else { Err(format!("QEMU başlatılamadı: {}", last_line(&out.stderr))) })
                 .and_then(|()| {
                     if wait_until(Duration::from_secs(5), alive) { Ok(()) } else { Err("QEMU başladı ama süreç bulunamadı (hemen çıkmış olabilir)".to_string()) }

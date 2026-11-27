@@ -105,6 +105,7 @@ pub fn routes() -> Router<AppState> {
         .route("/mirror-stores/{origin}/{vmid}/report", post(mirror_report))
         .route("/mirror-stores/{origin}/{vmid}/promote", post(mirror_promote))
         .route("/vswitches", get(vswitches).post(vswitch_put))
+        .route("/host/performance", get(host_performance))
         .route("/firewall/sets", get(ip_sets).post(ip_set_put))
         .route("/firewall/sets/{name}", delete_route(ip_set_delete))
         .route("/firewall/groups", get(fw_groups).post(fw_group_put))
@@ -208,6 +209,11 @@ async fn balance(State(st): State<AppState>) -> Json<crate::state::balance::Bala
 }
 
 /// Dağıtık anahtarlar: tanım, bu sunucudaki durum, kullanan konuklar ve eşlerdeki tanımla karşılaştırma.
+/// Sunucunun NUMA, büyük sayfa ve KSM bilgisi (benzetim sürücüsünde boş).
+async fn host_performance(State(st): State<AppState>) -> Json<crate::qemu::perf::HostPerformance> {
+    Json(if st.driver().is_real() { crate::host::performance() } else { Default::default() })
+}
+
 async fn ip_sets(State(st): State<AppState>) -> Json<Vec<redox_core::fwsets::IpSet>> {
     Json(st.snapshot().ip_sets)
 }

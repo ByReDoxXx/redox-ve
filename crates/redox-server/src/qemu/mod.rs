@@ -18,6 +18,7 @@ use serde_json::Value;
 mod backup;
 mod cbt;
 mod machine;
+pub mod perf;
 
 mod args;
 pub mod ft_args;

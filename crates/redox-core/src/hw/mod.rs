@@ -13,6 +13,7 @@ mod devices;
 mod firewall;
 mod memory;
 mod network;
+mod perf;
 mod schedule;
 
 pub use compat::*;
@@ -21,6 +22,7 @@ pub use devices::*;
 pub use firewall::*;
 pub use memory::*;
 pub use network::*;
+pub use perf::*;
 pub use schedule::*;
 
 /// cloud-init kullanıcısı verilmezse açılan hesap.
@@ -143,6 +145,12 @@ pub struct Hardware {
     pub restart: bool,
     /// Sunucuyla paylaşılan klasörler (yalnızca sanal makinelerde; konukta 9p ile bağlanır).
     pub shares: Vec<Share>,
+    /// Konuğun çalışabileceği sunucu çekirdekleri (`0-3,8`); boşsa hepsi. Çalışırken de değişir.
+    pub cpu_affinity: String,
+    /// Belleğin ayrılacağı sunucu NUMA düğümü; çekirdek listesi boşsa konuk o düğümün çekirdeklerinde çalışır.
+    pub numa_node: Option<u32>,
+    /// Bellek, sunucunun ayırdığı 2 MB'lık büyük sayfalardan, konuk açılırken bütünüyle alınır.
+    pub hugepages: bool,
     /// Asıl diskin denetleyicisi (Windows kurulumu ve aktarılan diskler için SATA).
     pub disk_bus: DiskBus,
     /// Ağ kartlarının modeli.
@@ -248,6 +256,7 @@ impl Hardware {
         if let Some(bad) = self.fw_rules.iter().chain(&self.fw_out).find(|r| !r.valid()) {
             return Err(format!("geçersiz güvenlik duvarı kuralı: {bad}"));
         }
+        self.check_performance(kind)?;
         if (self.uses_compat()) && kind != GuestKind::Vm {
             return Err("disk denetleyicisi, ağ kartı modeli ve ikinci kalıp yalnızca sanal makinelerde kullanılır".to_string());
         }

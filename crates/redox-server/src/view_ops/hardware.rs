@@ -16,6 +16,9 @@ pub struct EditForm {
     pub memory_mb: String,
     pub iso: String,
     pub iso2: String,
+    pub cpu_affinity: String,
+    pub numa_node: String,
+    pub hugepages: Option<String>,
     pub disk_bus: String,
     pub nic_model: String,
     pub forwards: String,
@@ -76,6 +79,9 @@ impl EditForm {
             memory_mb: g.mem_total_mb.to_string(),
             iso: g.iso.clone().unwrap_or_default(),
             iso2: g.hw.iso2.clone().unwrap_or_default(),
+            cpu_affinity: g.hw.cpu_affinity.clone(),
+            numa_node: g.hw.numa_node.map(|n| n.to_string()).unwrap_or_default(),
+            hugepages: g.hw.hugepages.then(|| "1".to_string()),
             disk_bus: g.hw.disk_bus.as_str().to_string(),
             nic_model: g.hw.nic_model.as_str().to_string(),
             forwards: g.forwards.iter().map(|f| format!("{}:{}", f.host_port, f.guest_port)).collect::<Vec<_>>().join(", "),
@@ -160,6 +166,16 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                                 option value="uefi-secure" selected[f.firmware == "uefi-secure"] { (tx("UEFI + güvenli önyükleme")) }
                             }
                             span class="hint" tabindex="0" role="note" { (tx("Kurulu bir işletim sistemi, donanım yazılımı değişince açılmayabilir.")) }
+                        }
+                        div class="field" {
+                            label for="numa_node" { (tx("NUMA düğümü")) }
+                            input id="numa_node" form="hw" name="numa_node" type="text" inputmode="numeric" value=(f.numa_node) disabled[off];
+                            span class="hint" tabindex="0" role="note" { (tx("Belleği ve (çekirdek listesi boşsa) sanal çekirdekleri sunucunun bu NUMA düğümüne bağlar. Boş: bağ yok.")) }
+                        }
+                        div class="field" {
+                            span class="label" { (tx("Büyük sayfalar")) }
+                            label class="check" { input type="checkbox" form="hw" name="hugepages" value="1" checked[f.hugepages.is_some()] disabled[off]; (tx("Belleği 2 MB'lık sayfalardan ayır")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Sunucuda önceden boş büyük sayfa ayrılmış olmalıdır (vm.nr_hugepages). Bellek balonu ve çalışırken bellek ekleme ile birlikte kullanılamaz.")) }
                         }
                         div class="field" {
                             span class="label" { (tx("Güvenlik yongası")) }

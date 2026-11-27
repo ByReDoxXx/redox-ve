@@ -108,6 +108,7 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("get", "/firewall/groups", "Security groups: reusable inbound and outbound rules"),
     ("post", "/firewall/groups", "Create or update a security group (name, rules, out)"),
     ("delete", "/firewall/groups/{name}", "Remove an unused security group"),
+    ("get", "/host/performance", "NUMA nodes, huge pages and kernel same-page merging state of this server"),
     ("get", "/vswitches", "Distributed switches: definition, local network status, guests using it and comparison with the peers"),
     ("post", "/vswitches", "Create or update a distributed switch (name vds*, vni, mtu, members: tunnel addresses of every server)"),
     ("delete", "/vswitches/{name}", "Remove a distributed switch; ?everywhere=true removes it on the peers too"),

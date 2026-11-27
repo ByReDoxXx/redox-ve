@@ -15,6 +15,7 @@ mod ft;
 mod fwsets;
 mod guests;
 mod mirrors;
+mod perf;
 mod switches;
 mod widgets;
 

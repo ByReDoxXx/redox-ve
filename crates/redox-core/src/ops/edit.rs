@@ -18,6 +18,8 @@ impl Cluster {
             || patch.bridge.as_ref().is_some_and(|b| *b != guest.bridge)
             || patch.firmware.is_some_and(|f| f != guest.hw.firmware)
             || patch.disk_bus.is_some_and(|v| v != guest.hw.disk_bus)
+            || patch.numa_node.as_ref().is_some_and(|v| v.trim() != guest.hw.numa_node.map(|n| n.to_string()).unwrap_or_default())
+            || patch.hugepages.is_some_and(|v| v != guest.hw.hugepages)
             || patch.nic_model.is_some_and(|v| v != guest.hw.nic_model)
             || patch.iso2.as_ref().is_some_and(|i| i.as_str() != guest.hw.iso2.as_deref().unwrap_or(""))
             || patch.secure_boot.is_some_and(|s| s != guest.hw.secure_boot)
@@ -125,12 +127,29 @@ impl Cluster {
         if [patch.backup_weekly, patch.backup_monthly, patch.backup_yearly].iter().flatten().any(|n| *n > crate::retention::MAX_GFS) {
             return Err(Error::InvalidSpec(format!("haftalık, aylık ve yıllık yedek sayıları en fazla {} olabilir", crate::retention::MAX_GFS)));
         }
-        if patch.disk_bus.is_some() || patch.nic_model.is_some() || patch.iso2.is_some() || patch.test_port.is_some() || patch.test_cmd.is_some() || patch.nested.is_some() || patch.nic_guard.is_some() || patch.firewall.is_some() || patch.fw_rules.is_some() || patch.fw_out.is_some() || patch.fw_out_restrict.is_some() || patch.fw_groups.is_some() || patch.firmware.is_some() || patch.secure_boot.is_some() || patch.tpm.is_some() || patch.nics.is_some() || patch.usb.is_some() || patch.pci.is_some() || patch.boot_order.is_some() || patch.boot_delay.is_some() || patch.schedules.is_some() || patch.disk_mbps.is_some() || patch.disk_iops.is_some() || patch.net_mbps.is_some() || patch.vlan.is_some() || patch.shares.is_some() || patch.bridge.is_some() || patch.apply_cloud_init(&mut guest.hw.clone()) || patch.cpu_type.is_some() || patch.balloon.is_some() || patch.backup_pre.is_some() || patch.backup_post.is_some() {
+        let numa = match patch.numa_node.as_deref().map(str::trim) {
+            None => guest.hw.numa_node,
+            Some("") => None,
+            Some(text) => Some(text.parse::<u32>().map_err(|_| Error::InvalidSpec(format!("NUMA düğümü 0 ile {} arasında olmalı", crate::hw::MAX_NUMA_NODE)))?),
+        };
+        if let Some(list) = patch.cpu_affinity.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+            let cpus = crate::hw::parse_cpu_list(list).map_err(Error::InvalidSpec)?;
+            if cpus.last().is_some_and(|last| *last >= node.cores) {
+                return Err(Error::InvalidSpec(format!("çekirdek numarası sunucuda yok: {} düğümünde 0 ile {} arasındaki çekirdekler var", node.id, node.cores.saturating_sub(1))));
+            }
+        }
+        if patch.cpu_affinity.is_some() || patch.numa_node.is_some() || patch.hugepages.is_some() || patch.disk_bus.is_some() || patch.nic_model.is_some() || patch.iso2.is_some() || patch.test_port.is_some() || patch.test_cmd.is_some() || patch.nested.is_some() || patch.nic_guard.is_some() || patch.firewall.is_some() || patch.fw_rules.is_some() || patch.fw_out.is_some() || patch.fw_out_restrict.is_some() || patch.fw_groups.is_some() || patch.firmware.is_some() || patch.secure_boot.is_some() || patch.tpm.is_some() || patch.nics.is_some() || patch.usb.is_some() || patch.pci.is_some() || patch.boot_order.is_some() || patch.boot_delay.is_some() || patch.schedules.is_some() || patch.disk_mbps.is_some() || patch.disk_iops.is_some() || patch.net_mbps.is_some() || patch.vlan.is_some() || patch.shares.is_some() || patch.bridge.is_some() || patch.max_memory_mb.is_some() || patch.apply_cloud_init(&mut guest.hw.clone()) || patch.cpu_type.is_some() || patch.balloon.is_some() || patch.backup_pre.is_some() || patch.backup_post.is_some() {
             let mut hw = guest.hw.clone();
             hw.backup_pre = patch.backup_pre.clone().map(|c| c.trim().to_string()).unwrap_or(hw.backup_pre);
             hw.backup_post = patch.backup_post.clone().map(|c| c.trim().to_string()).unwrap_or(hw.backup_post);
             hw.cpu_type = patch.cpu_type.clone().unwrap_or(hw.cpu_type);
             hw.disk_bus = patch.disk_bus.unwrap_or(hw.disk_bus);
+            hw.cpu_affinity = patch.cpu_affinity.as_ref().map(|l| l.trim().to_string()).unwrap_or(hw.cpu_affinity);
+            hw.numa_node = numa;
+            hw.hugepages = patch.hugepages.unwrap_or(hw.hugepages);
+            // Bu istekte değişen bellek üst sınırı ve balon da uyum denetimine girer.
+            hw.balloon = patch.balloon.unwrap_or(hw.balloon);
+            hw.max_mem_mb = patch.max_memory_mb.unwrap_or(hw.max_mem_mb);
             hw.nic_model = patch.nic_model.unwrap_or(hw.nic_model);
             hw.iso2 = patch.iso2.clone().map(|i| Some(i).filter(|i| !i.is_empty())).unwrap_or(hw.iso2);
             hw.balloon = patch.balloon.unwrap_or(hw.balloon);
@@ -223,6 +242,15 @@ impl Cluster {
         }
         if let Some(iso) = &patch.iso {
             g.iso = Some(iso.clone()).filter(|i| !i.is_empty());
+        }
+        if let Some(list) = &patch.cpu_affinity {
+            g.hw.cpu_affinity = list.trim().to_string();
+        }
+        if patch.numa_node.is_some() {
+            g.hw.numa_node = numa;
+        }
+        if let Some(huge) = patch.hugepages {
+            g.hw.hugepages = huge;
         }
         if let Some(bus) = patch.disk_bus {
             g.hw.disk_bus = bus;

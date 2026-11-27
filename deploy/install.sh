@@ -100,6 +100,8 @@ if [ "$DRY_RUN" = 1 ]; then
     echo "+ write redox-net.service redox-net.path $VDS_CONF; include in $QEMU_CONF"
 else
     cp "$HERE/redox-net.service" "$HERE/redox-net.path" "$ROOT/etc/systemd/system/"
+    # KSM birimi yalnızca kopyalanır: açmak yöneticinin kararıdır.
+    cp "$HERE/redox-ksm.service" "$ROOT/etc/systemd/system/"
     mkdir -p "$ROOT/etc/qemu"
     [ -f "$VDS_CONF" ] || : > "$VDS_CONF"
     chmod 0644 "$VDS_CONF"

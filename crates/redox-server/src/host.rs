@@ -6,6 +6,11 @@ use std::sync::Mutex;
 
 use redox_core::{Node, NodeStatus, Storage, StorageKind};
 
+/// Bu makinenin NUMA, büyük sayfa ve KSM bilgisi (Linux dışında boştur).
+pub fn performance() -> crate::qemu::perf::HostPerformance {
+    crate::qemu::perf::read_performance(Path::new("/sys"), &std::fs::read_to_string("/proc/meminfo").unwrap_or_default())
+}
+
 /// `/proc/meminfo` → (toplam kB, kullanılabilir kB).
 pub fn parse_meminfo(text: &str) -> Option<(u64, u64)> {
     let field = |name: &str| -> Option<u64> {

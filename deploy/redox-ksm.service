@@ -1,0 +1,15 @@
+[Unit]
+Description=RedoX VE: aynı içerikli bellek sayfalarını birleştirme (KSM)
+# İsteğe bağlıdır: benzer işletim sistemli çok sanal makinede bellek kazandırır, karşılığında biraz işlemci
+# harcar. Konuklar arasında paylaşılan bellek yan kanal saldırılarını kolaylaştırır; birbirine güvenmeyen
+# kullanıcıların konuklarını barındırıyorsanız açmayın.
+ConditionPathExists=/sys/kernel/mm/ksm/run
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c "echo 1000 > /sys/kernel/mm/ksm/sleep_millisecs; echo 1 > /sys/kernel/mm/ksm/run"
+ExecStop=/bin/sh -c "echo 0 > /sys/kernel/mm/ksm/run"
+
+[Install]
+WantedBy=multi-user.target

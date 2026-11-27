@@ -60,6 +60,7 @@ fn base(d: &QemuDriver) -> Result<std::path::PathBuf, String> {
 /// ayarlar başlatılırken uygulanır. İkisi de sıfırsa ve konuğun grubu hiç açılmamışsa dokunulmaz.
 pub fn apply_limits(d: &QemuDriver, g: &Guest) -> Result<(), String> {
     let Some(pid) = live_pid(d, g.vmid) else { return Ok(()) };
+    apply_affinity(d, g, pid)?;
     let wanted = g.hw.cpu_shares > 0 || g.hw.mem_reserve_mb > 0;
     let base = match base(d) {
         Ok(base) => base,
@@ -78,6 +79,26 @@ pub fn apply_limits(d: &QemuDriver, g: &Guest) -> Result<(), String> {
     std::fs::write(dir.join("cgroup.procs"), pid.to_string()).map_err(|e| format!("konuk denetim grubuna alınamadı: {e}"))?;
     std::fs::write(dir.join("cpu.weight"), redox_core::hw::cpu_weight(g.hw.cpu_shares).to_string()).map_err(|e| format!("işlemci payı uygulanamadı: {e}"))?;
     std::fs::write(dir.join("memory.min"), (g.hw.mem_reserve_mb << 20).to_string()).map_err(|e| format!("bellek garantisi uygulanamadı: {e}"))
+}
+
+/// Sürecin çalışabileceği çekirdekler (`/proc/<pid>/status`).
+fn allowed_cpus(pid: &str) -> Option<String> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    status.lines().find_map(|l| l.strip_prefix("Cpus_allowed_list:")).map(|v| v.trim().to_string())
+}
+
+/// QEMU'nun bütün iş parçacıklarını istenen çekirdeklere sabitler; sonradan açılan iş parçacıkları (eklenen
+/// sanal çekirdekler) bunu devralır. Sabitleme kaldırılmışsa süreç, hizmetin kendi çekirdek kümesine döner.
+fn apply_affinity(d: &QemuDriver, g: &Guest, pid: u32) -> Result<(), String> {
+    let host = crate::host::performance();
+    let list = match crate::qemu::perf::wanted_cpus(g, &host) {
+        Some(cpus) => redox_core::hw::format_cpu_list(&cpus),
+        None => match (allowed_cpus("self"), allowed_cpus(&pid.to_string())) {
+            (Some(own), Some(current)) if own != current => own,
+            _ => return Ok(()),
+        },
+    };
+    tool(&d.cfg.taskset_bin, &["-a", "-p", "-c", &list, &pid.to_string()]).map_err(|e| format!("konuk {list} çekirdeklerine sabitlenemedi: {e}"))
 }
 
 /// Kapanan konuğun grubunu kaldırır (içi boşalmış olmalıdır; değilse çekirdek reddeder ve grup sonraki

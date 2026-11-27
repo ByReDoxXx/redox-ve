@@ -20,6 +20,7 @@ pub struct QemuConfig {
     pub tc_bin: String,
     /// VLAN'lı kartların TAP arayüzünü kuran `ip` ve `bridge` (iproute2).
     pub ip_bin: String,
+    pub taskset_bin: String,
     pub bridge_bin: String,
     /// Ağ arayüzlerinin sysfs dizini (köprünün VLAN süzmesi buradan okunur).
     pub sys_net: PathBuf,
@@ -52,6 +53,7 @@ impl QemuConfig {
             swtpm_bin: "swtpm".to_string(),
             tc_bin: "tc".to_string(),
             ip_bin: "ip".to_string(),
+            taskset_bin: "taskset".to_string(),
             bridge_bin: "bridge".to_string(),
             sys_net: PathBuf::from("/sys/class/net"),
             sys_module: PathBuf::from("/sys/module"),

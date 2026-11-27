@@ -488,3 +488,31 @@ pub(super) async fn windows_friendly_devices_are_chosen_at_creation_and_images_c
     let denied = send(&app, as_viewer(Method::POST, "/api/v1/guests/102/media").header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "drive": 1 }).to_string())).unwrap()).await.0;
     assert_eq!(denied, StatusCode::FORBIDDEN);
 }
+
+// ---------- Performans ayarları ----------
+
+#[tokio::test]
+pub(super) async fn pinning_numa_and_huge_pages_are_set_with_their_limits() {
+    let (app, state) = setup();
+    let patch = |id: u32, body: Value| request(Method::PATCH, &format!("/api/v1/guests/{id}")).header(CONTENT_TYPE, "application/json").body(Body::from(body.to_string())).unwrap();
+    // Sabitleme çalışırken de değişir; NUMA ve büyük sayfalar yalnızca kapalıyken.
+    assert!(api(&app, patch(102, json!({ "cpu_affinity": "0-3,8" }))).await.0.is_success());
+    assert_eq!(state.snapshot().guest(102).unwrap().hw.cpu_affinity, "0-3,8");
+    let (status, v) = api(&app, patch(102, json!({ "cpu_affinity": "500" }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(api(&app, patch(102, json!({ "numa_node": "0" }))).await.0, StatusCode::CONFLICT);
+    assert!(api(&app, patch(102, json!({ "cpu_affinity": "" }))).await.0.is_success());
+    assert!(api(&app, patch(103, json!({ "numa_node": "1", "hugepages": true }))).await.0.is_success());
+    let hw = state.snapshot().guest(103).unwrap().hw.clone();
+    assert_eq!((hw.numa_node, hw.hugepages), (Some(1), true));
+    // Büyük sayfalarla balon ve çalışırken bellek ekleme olmaz.
+    assert_eq!(api(&app, patch(103, json!({ "balloon": true }))).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(api(&app, patch(103, json!({ "max_memory_mb": 32768 }))).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    let tab = page(&app, "/guests/103?tab=donanim").await;
+    assert!(tab.contains(r#"name="numa_node" type="text" inputmode="numeric" value="1""#) && tab.contains(r#"name="hugepages" value="1" checked"#), "{tab}");
+    assert!(page(&app, "/guests/103?tab=secenekler").await.contains(r#"name="cpu_affinity""#));
+    assert!(api(&app, patch(103, json!({ "numa_node": "", "hugepages": false }))).await.0.is_success());
+    assert!(!state.snapshot().guest(103).unwrap().hw.pinned_memory());
+    let (status, host) = api(&app, get("/api/v1/host/performance")).await;
+    assert_eq!((status, host["numa"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "benzetimde sunucu bilgisi yok");
+}

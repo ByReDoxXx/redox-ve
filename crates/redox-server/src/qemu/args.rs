@@ -135,9 +135,14 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         // çalışırken değişmeyen üst sınıra bağlanır (çalışırken takılan diskler de aynı değeri alır).
         push(&["-global", &format!("virtio-blk-pci.num-queues={}", core_queues(g.hw.max_cores))]);
     }
-    if mem_slots {
+    // NUMA bağı ve büyük sayfalar, bellek nesnesinin kendisinde istenir.
+    if mem_slots || g.hw.pinned_memory() {
         // Sonradan takılan belleği Windows konuklar yalnızca bellek düğümü (NUMA) tanımlıysa kabul eder.
-        push(&["-object", &format!("memory-backend-ram,id=ram0,size={base_mb}M"), "-numa", "node,nodeid=0,memdev=ram0"]);
+        let mut backend = if g.hw.hugepages { format!("memory-backend-memfd,id=ram0,size={base_mb}M,hugetlb=on,hugetlbsize=2M,prealloc=on") } else { format!("memory-backend-ram,id=ram0,size={base_mb}M") };
+        if let Some(node) = g.hw.numa_node {
+            backend.push_str(&format!(",host-nodes={node},policy=bind"));
+        }
+        push(&["-object", &backend, "-numa", "node,nodeid=0,memdev=ram0"]);
         for (i, mb) in g.hw.dimms.iter().enumerate() {
             push(&["-object", &format!("memory-backend-ram,id={},size={mb}M", dimm_backend(i))]);
             push(&["-device", &format!("pc-dimm,id={},memdev={},slot={i}", dimm_device(i), dimm_backend(i))]);
