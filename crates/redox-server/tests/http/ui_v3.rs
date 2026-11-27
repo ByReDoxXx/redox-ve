@@ -106,7 +106,7 @@ pub(super) async fn guest_header_menu_and_suspend_notice() {
     let (app, state) = setup();
     let stopped = page(&app, "/guests/103").await;
     assert!(stopped.contains(r#"<details class="menu">"#) && stopped.contains(r#"formaction="/guests/103/backups">"#) && stopped.contains(r#"href="/guests/103?tab=cogalt""#));
-    assert!(stopped.contains(r#"formaction="/guests/103/suspend" disabled>"#), "kapalı konuk askıya alınamaz");
+    assert!(!stopped.contains("/guests/103/suspend"), "kapalı konukta askıya alma sunulmaz");
     assert!(stopped.contains(r#"<a class="danger" href="/guests/103/delete">"#));
 
     let running = page(&app, "/guests/102").await;

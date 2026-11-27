@@ -57,12 +57,15 @@ pub(super) async fn guest_page_reflects_status_in_buttons() {
     let (app, _) = setup();
     let stopped = page(&app, "/guests/103").await;
     assert!(stopped.contains(r#"name="action" value="start">"#), "durmuş konuk başlatılabilir");
-    assert!(stopped.contains(r#"name="action" value="stop" disabled>"#));
-    assert!(stopped.contains(r#"name="action" value="reboot" disabled>"#));
+    // Başlıkta yalnızca geçerli eylemler durur: durmuş konukta kapatma ve konsol düğmesi yoktur.
+    assert!(!stopped.contains(r#"name="action" value="stop""#) && !stopped.contains(r#"name="action" value="reboot""#));
+    assert!(!stopped.contains(r#"<a class="btn primary" href="/guests/103?tab=konsol">"#));
     assert!(stopped.contains(r#"href="/guests/103/delete""#), "durmuş konuk silinebilir");
 
     let running = page(&app, "/guests/102").await;
-    assert!(running.contains(r#"name="action" value="start" disabled>"#));
+    assert!(!running.contains(r#"name="action" value="start""#), "çalışan konukta Başlat görünmez");
+    assert!(running.contains(r#"<a class="btn primary" href="/guests/102?tab=konsol">"#), "birincil eylem konsoldur");
+    assert!(running.contains(r#"name="action" value="reboot">"#));
     assert!(running.contains(r#"name="action" value="stop">"#));
     assert!(running.contains(r#"name="action" value="pause">"#));
     assert!(!running.contains(r#"href="/guests/102/delete""#), "çalışan konuk silinemez");
@@ -70,6 +73,7 @@ pub(super) async fn guest_page_reflects_status_in_buttons() {
 
     let paused = page(&app, "/guests/104").await;
     assert!(paused.contains(r#"name="action" value="resume">"#) && paused.contains("Sürdür"));
+    assert!(!paused.contains(r#"name="action" value="pause""#) && paused.contains(r#"name="action" value="stop">"#));
 }
 
 #[tokio::test]

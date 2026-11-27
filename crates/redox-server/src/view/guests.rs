@@ -70,24 +70,35 @@ pub(super) fn guest_actions(p: &Page, g: &Guest) -> Markup {
     let stopped = g.status == GuestStatus::Stopped;
     let live = if g.kind == GuestKind::Vm { p.live } else { p.live_ct };
     let can_backup = free && (stopped || live);
+    // Başlıkta yalnızca şu an geçerli eylemler durur; az kullanılanlar menüdedir.
+    let has_console = g.kind == GuestKind::Vm || p.real;
     html! {
         form class="acts" method="post" action={ (base) "/action" } {
-            button class="btn go" name="action" value="start" disabled[!can(Action::Start) || g.hw.template] { (icon("play")) (tx("Başlat")) }
-            div class="group" {
-                button class="btn" name="action" value="stop" disabled[!can(Action::Stop)] { (icon("stop")) (tx("Kapat")) }
-                button class="btn" name="action" value="reboot" disabled[!can(Action::Reboot)] { (icon("restart")) (tx("Yeniden Başlat")) }
-            }
-            div class="group" {
-                button class="btn" name="action" value=(toggle.as_str()) disabled[!can(toggle)] {
-                    (icon(if toggle == Action::Resume { "play" } else { "pause" })) (tx(toggle.label()))
+            @if stopped {
+                button class="btn primary" name="action" value="start" disabled[!can(Action::Start) || g.hw.template] { (icon("play")) (tx("Başlat")) }
+            } @else {
+                @if g.status == GuestStatus::Paused {
+                    button class="btn primary" name="action" value="resume" disabled[!can(Action::Resume)] { (icon("play")) (tx(Action::Resume.label())) }
+                } @else if has_console {
+                    a class="btn primary" href={ (base) "?tab=konsol" } { (icon("terminal")) (tx("Konsol")) }
                 }
-                @if p.admin && g.kind == GuestKind::Vm {
-                    button class="btn" formaction={ (base) "/suspend" } disabled[stopped || !free] { (icon("half")) (tx("Askıya Al")) }
+                div class="group" {
+                    button class="btn" name="action" value="stop" disabled[!can(Action::Stop)] { (icon("stop")) (tx("Kapat")) }
+                    button class="btn" name="action" value="reboot" disabled[!can(Action::Reboot)] { (icon("restart")) (tx("Yeniden Başlat")) }
                 }
             }
             details class="menu" {
                 summary class="btn" { (tx("Diğer")) (icon("caret")) }
                 div class="menu-list" {
+                    @if !stopped {
+                        @if toggle == Action::Pause {
+                            button name="action" value="pause" disabled[!can(Action::Pause)] { (icon("pause")) (tx(Action::Pause.label())) }
+                        }
+                        @if p.admin && g.kind == GuestKind::Vm {
+                            button formaction={ (base) "/suspend" } disabled[!free] { (icon("half")) (tx("Askıya Al")) small { (tx("belleği diske yazar")) } }
+                        }
+                        hr;
+                    }
                     button formaction={ (base) "/backups" } disabled[!can_backup] { (icon("backup")) (tx("Şimdi yedekle")) }
                     a href={ (base) "?tab=goruntuler" } { (icon("snapshot")) (tx("Anlık görüntü al")) }
                     @if p.admin {
@@ -202,11 +213,18 @@ pub(super) fn overview(p: &Page, g: &Guest) -> Markup {
     let disk_detail = if extra.is_empty() { g.storage.clone() } else { format!("{}{extra} GB · {}", g.disk_gb, g.storage) };
     html! {
         div class="stack" {
-            div class="stats" {
-                (stat((tx("İşlemci")), &g.cpu_pct.to_string(), "%", &format!("{} vCPU", g.cores), Some(g.cpu_pct)))
-                (stat((tx("Bellek")), &mp.to_string(), "%", &format!("{} / {} GB", mb_as_gb(g.mem_used_mb), mb_as_gb(g.mem_total_mb)), Some(mp)))
-                (stat("Disk", &disk_total(g).to_string(), " GB", &disk_detail, None))
-                (stat((tx("Çalışma Süresi")), &guest_uptime(g, p.now), "", &tfmt(format!("düğüm {}", g.node)), None))
+            // Özet şeridi: bir bakışta kaynak, ağ ve koruma durumu.
+            div class="facts" {
+                div { div class="k" { (tx("İşlemci")) } div class="v" { (g.cpu_pct) "%" small { (g.cores) " vCPU" } } (bar(g.cpu_pct, "CPU", true)) }
+                div { div class="k" { (tx("Bellek")) } div class="v" { (mb_as_gb(g.mem_used_mb)) " GB" small { "/ " (mb_as_gb(g.mem_total_mb)) " GB" } } (bar(mp, (tx("Bellek")), true)) }
+                div { div class="k" { "Disk" } div class="v" { (disk_total(g)) " GB" small { (disk_detail) } } }
+                div { div class="k" { (tx("Ağ")) } div class="v" { (g.ip.as_deref().unwrap_or("-")) small { @if g.bridge == redox_core::NAT { "NAT" } @else { (g.bridge) } } } }
+                div { div class="k" { (tx("Koruma")) } div class="v" {
+                    @match last {
+                        Some(b) => { span class="st run" { (tx("Yedekli")) } small { (datetime(b.created)) } },
+                        None => { span class="st pause" { (tx("Yedek yok")) } },
+                    }
+                } }
             }
             div class="cols" {
                 div class="stack" {
