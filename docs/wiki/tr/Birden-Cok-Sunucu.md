@@ -58,6 +58,54 @@ kullanıcıları, token'ları ve eş sunucu adreslerini taşımaz.
 
 Kendiliğinden devralma için aşağıya bakın.
 
+## Eşzamanlı disk yansıtma
+
+Yansıtma açıkken **çalışan sanal makinenin her disk yazması eş sunucudaki bir kopyaya da gider** ve ikisi de
+almadan yazma tamamlanmaz. Sanal makinenin çalıştığı sunucu ölürse, konuğa "yazıldı" denen her şey kopyadadır.
+(Aşağıdaki çoğaltma aralıklarla kopyalar: son turdan beri yazılanlar kaybolur.)
+
+```
+redox mirror add 103 ankara                 # 103'ün çalıştığı sunucuda
+redox mirror list                           # eşitleniyor, eşit, koptu (nedeniyle)
+redox mirror off 103 [--delete-copy]
+
+redox mirror copies                         # eşte: tuttuğu kopyalar
+redox mirror promote <kaynak> 103           # devralma: kopyadan KAPALI bir konuk oluşturur
+redox mirror delete-copy <kaynak> 103
+```
+
+Aynı işlemler *Küme* sayfasındaki **Disk yansıtma** ve **Tutulan kopyalar** kartlarındadır.
+
+**Bir şey bozulunca ne olur**
+
+* **Eş yanıt vermez olursa** (elektrik kesintisi, kopan bağlantı). Yazmalar eşzamanlı olduğu için konuğun disk
+  yazmaları bekler. Yalnızca yerel hipervizöre soran bir bekçi, takılan ilerlemeyi 8 saniye sonra görür, bağlantıyı
+  keser ve bekleyen yazmaların tamamlanmasını sağlar. Konuk çalışmayı sürdürür; yansıtma *koptu* görünür ve kopya o
+  andan sonra geridedir.
+* **Kopmadan sonra** dakikada bir yeniden denenir. Yeni eşitleme dosyaların **yeni bir kuşağına** yapılır; son
+  eksiksiz kopya, yenisi tamamlanana kadar durur. Eşte **iki kat disk alanı** hesaplayın.
+* **Kaynak sunucu ölürse.** Eşte yaklaşık 30 saniye bekleyin (kaynak hâlâ "eşit" bildirirken devralma reddedilir),
+  konuğun orada gerçekten kapalı olduğunu doğrulayın, sonra devralıp yeni konuğu başlatın.
+
+**Devralma bilerek elledir.** Eş, "kaynak kapandı" ile "aramızdaki bağlantı koptu" durumlarını ayıramaz; ikincisinde
+konuk kaynakta çalışmayı sürdürür ve iki yerde birden başlatmak veriyi bozar. *Son eşit an*a bakın: yansıtma kaynak
+ölmeden önce koptuysa kopya o kadar eskidir.
+
+**Sınırlar**
+
+* Konuk başına bir eşte bir kopya. Bu, çok sunuculu bir depolama havuzu değildir: veri dilimleme, kendiliğinden
+  yeniden dengeleme ve ortak veri deposu yoktur.
+* **Yedek, anlık görüntü ve askıya alma yansıtmayı duraklatır** (QEMU yansıtılan diskte bunlara izin vermez). Sonra
+  **baştan** eşitlenir: her biri ağ üzerinden tam bir kopyaya mal olur ve bitene kadar eşte yalnızca eski kopya
+  vardır. Dahili anlık görüntüler kopyaya girmez.
+* Yansıtılan konuk canlı taşınamaz, depolaması da taşınamaz; önce yansıtmayı kapatın.
+* Bekçi RedoX hizmetinin parçasıdır. Hizmet durdurulmuşken eş donarsa konuğun yazmaları, bağlantı zaman aşımına
+  uğrayana kadar bekler.
+* Birden çok diskli konukta bir diskin bağlantısı koparsa, yansıtma durmadan önce öbür diske birkaç yazma daha
+  (en çok bir saniyelik) gidebilir; bu durumda kopyanın diskleri tam aynı andan olmayabilir.
+* Yazma hızını sunucular arası ağ belirler. UEFI, sanal TPM, konteyner, şablon ve bağlı diskler desteklenmez.
+* Kopya, eşin taşıma kapılarından (`--migrate-ports`) TLS ve tek kullanımlık anahtarla şifreli gider.
+
 ## Çoğaltma (yedek kopya)
 
 ```bash

@@ -48,7 +48,8 @@ fn real_from(initrd_var: &str) -> Option<Real> {
     cfg.qemu_bin = script(
         &dir,
         "qemu",
-        &format!("rm -f '{serial}'\nprintf '%s\\n' \"$@\" > '{serial}.args'\nexec '{qemu}' \"$@\" -kernel '{kernel}' -initrd '{initrd}' -append 'console=ttyS0 rdinit=/bin/sh quiet' -serial 'unix:{serial},server=on,wait=off'", serial = serial.display()),
+        // Makinesiz "kopya tutucu" süreçlere çekirdek ve seri kapı eklenmez.
+        &format!("[ \"$1 $2\" = '-machine none' ] && exec '{qemu}' \"$@\"\nrm -f '{serial}'\nprintf '%s\\n' \"$@\" > '{serial}.args'\nexec '{qemu}' \"$@\" -kernel '{kernel}' -initrd '{initrd}' -append 'console=ttyS0 rdinit=/bin/sh quiet' -serial 'unix:{serial},server=on,wait=off'", serial = serial.display()),
     );
     cfg.qemu_img_bin = img;
     cfg.kvm = std::fs::OpenOptions::new().read(true).write(true).open("/dev/kvm").is_ok();

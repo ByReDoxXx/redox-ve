@@ -54,6 +54,11 @@ pub struct Cluster {
     /// çalışmayı, zamanlanmış işler yürümeyi sürdürür. Yalnızca bir yönetici kilidi kaldırabilir.
     #[serde(default)]
     pub lockdown: bool,
+    /// Eşzamanlı disk yansıtmaları: buradan eşlere (kaynak taraf) ve eşlerden buraya tutulan kopyalar.
+    #[serde(default)]
+    pub mirrors: Vec<crate::mirrors::Mirror>,
+    #[serde(default)]
+    pub mirror_stores: Vec<crate::mirrors::MirrorStore>,
     /// Dağıtık anahtarlar (ada göre sıralı): eşlerle birebir aynı tanımla paylaşılan konuk ağları.
     #[serde(default)]
     pub vswitches: Vec<crate::vswitch::VSwitch>,
@@ -98,6 +103,8 @@ impl Cluster {
             maintenance: false,
             lockdown: false,
             vswitches: Vec::new(),
+            mirrors: Vec::new(),
+            mirror_stores: Vec::new(),
             maintenance_resume: Vec::new(),
             guest_fs: Vec::new(),
             approvals: Vec::new(),

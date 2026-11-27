@@ -189,6 +189,9 @@ impl AppState {
         let (to, to2, to3) = (target.to_string(), target.to_string(), target.to_string());
         let running = self.lock().guest(vmid)?.status != redox_core::GuestStatus::Stopped;
         if running && kind == redox_core::GuestKind::Vm && self.driver().hotplug(redox_core::GuestKind::Vm) {
+            if self.snapshot().mirror(vmid).is_some() {
+                return Err(Error::InvalidSpec(format!("{vmid} disk yansıtması açıkken depolaması taşınamaz; önce yansıtmayı kapatın")));
+            }
             return self.run_op(
                 vmid,
                 user,

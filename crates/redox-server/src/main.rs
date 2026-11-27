@@ -488,6 +488,15 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
             tokio::time::sleep(Duration::from_secs(15)).await;
         }
     });
+    // Disk yansıtma bekçisi: donan bir kopya konuğun yazmalarını beklettiği için saniyede bir ve ayrı bir döngüde.
+    let mirrors = state.clone();
+    tokio::spawn(async move {
+        loop {
+            let st = mirrors.clone();
+            let _ = tokio::task::spawn_blocking(move || st.mirror_tick()).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
     // Zamanlanmış yedekler ve güç işlemleri: yarım dakikada bir saati gelenleri başlat, eski yedekleri buda.
     let scheduler = state.clone();
     tokio::spawn(async move {

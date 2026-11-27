@@ -50,6 +50,20 @@ pub trait Remote: Send + Sync {
     fn delete(&self, name: &str) -> Result<(), String>;
 }
 
+/// Bir konuğun disk yansıtmasının o anki hali.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MirrorProbe {
+    /// Konuğun disk sayısı ve bunlardan yansıtma işi süren.
+    pub disks: usize,
+    pub jobs: usize,
+    /// Bütün işler yetişmiş ve her yazma iki yere birden gidiyor.
+    pub synced: bool,
+    /// İşlerin toplam ilerlemesi (bayt). `done < total` iken uzun süre değişmemesi karşı tarafın yanıt
+    /// vermediğini gösterir; o sürede konuğun disk yazmaları da bekler.
+    pub done: u64,
+    pub total: u64,
+}
+
 pub trait Hypervisor: Send + Sync {
     fn name(&self) -> &'static str;
 
@@ -289,6 +303,53 @@ pub trait Hypervisor: Send + Sync {
     /// Çalışan konuğun disklerini, konuğu durdurmadan `target` depolama alanına taşır.
     fn move_storage_live(&self, _guest: &Guest, _target: &str) -> Result<(), String> {
         Err("bu sürücü çalışan konuğun disklerini taşıyamaz".to_string())
+    }
+
+    /// Bu sürücü çalışan konuğun disklerini eşzamanlı yansıtabilir ve başkasının kopyasını tutabilir mi?
+    fn disk_mirroring(&self) -> bool {
+        false
+    }
+
+    /// Çalışan konuğun disklerinin sanal boyutları (bayt), disk sırasıyla.
+    fn mirror_disk_sizes(&self, _guest: &Guest) -> Result<Vec<u64>, String> {
+        Err("bu sürücü disk yansıtmayı desteklemiyor".to_string())
+    }
+
+    /// Kaynak: konuğun disklerini `host:port`taki kopyaya yansıtmaya başlar. Eşitlendikten sonra her yazma iki
+    /// yere birden gider; bağlantı `key` ile şifrelenir. İş kendiliğinden bitmez.
+    fn mirror_start(&self, _guest: &Guest, _host: &str, _port: u16, _key: &str) -> Result<(), String> {
+        Err("bu sürücü disk yansıtmayı desteklemiyor".to_string())
+    }
+
+    /// Kaynak: yansıtmanın o anki hali; konuk çalışmıyorsa `None`. Yalnızca yerel hipervizöre sorar, ağa dokunmaz.
+    fn mirror_probe(&self, _guest: &Guest) -> Option<MirrorProbe> {
+        None
+    }
+
+    /// Kaynak: yansıtmayı bırakır. Karşı taraf yanıt vermiyorsa bağlantı zorla kesilir; konuğun bekleyen disk
+    /// yazmaları tamamlanır.
+    fn mirror_stop(&self, _guest: &Guest) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Hedef: `id` adlı kopya için boş diskler açar ve `bind:port` üzerinden şifreli, yazılabilir sunar.
+    fn replica_serve(&self, _id: &str, _sizes: &[u64], _bind: &str, _port: u16, _key: &str) -> Result<(), String> {
+        Err("bu sürücü disk kopyası tutamaz".to_string())
+    }
+
+    /// Hedef: kopyanın sunumunu kapatır (yazılanlar diske iner); dosyalar kalır.
+    fn replica_release(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Hedef: kopyanın dosyalarını siler.
+    fn replica_delete(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Hedef: kopyanın disklerini yeni oluşturulmuş konuğun diskleri yapar.
+    fn replica_adopt(&self, _id: &str, _guest: &Guest) -> Result<(), String> {
+        Err("bu sürücü disk kopyası tutamaz".to_string())
     }
 
     /// UEFI donanım yazılımı kurulu mu?

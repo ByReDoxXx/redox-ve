@@ -16,23 +16,26 @@ fn tls_dir(d: &QemuDriver, vmid: VmId) -> std::path::PathBuf {
 
 /// Anahtarı yalnızca hizmet kullanıcısının okuyabildiği bir dosyaya yazar ve QEMU'ya şifreleme nesnesi olarak tanıtır.
 fn add_tls(d: &QemuDriver, vmid: VmId, key: &str, endpoint: &str) -> Result<(), String> {
+    add_tls_object(&d.cfg.qmp_path(vmid), &tls_dir(d, vmid), TLS_ID, key, endpoint)
+}
+
+pub(super) fn add_tls_object(sock: &Path, dir: &Path, id: &str, key: &str, endpoint: &str) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     if !redox_core::valid_migrate_key(key) {
         return Err("taşıma anahtarı geçersiz".to_string());
     }
-    let dir = tls_dir(d, vmid);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).map_err(|e| format!("{} oluşturulamadı: {e}", dir.display()))?;
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| format!("{} oluşturulamadı: {e}", dir.display()))?;
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(dir.join("keys.psk")).map_err(|e| format!("taşıma anahtarı yazılamadı: {e}"))?;
     file.write_all(format!("qemu:{key}\n").as_bytes()).map_err(|e| format!("taşıma anahtarı yazılamadı: {e}"))?;
-    let object = serde_json::json!({ "execute": "object-add", "arguments": { "qom-type": "tls-creds-psk", "id": TLS_ID, "endpoint": endpoint, "dir": dir.display().to_string() } });
-    qmp_values(&d.cfg.qmp_path(vmid), &[object]).map(|_| ())
+    let object = serde_json::json!({ "execute": "object-add", "arguments": { "qom-type": "tls-creds-psk", "id": id, "endpoint": endpoint, "dir": dir.display().to_string() } });
+    qmp_values(sock, &[object]).map(|_| ())
 }
 
 /// Konuğun disklerinin QEMU'daki aygıt adları: önce asıl disk, sonra ek diskler. Aynı kayıttan açılan iki
 /// QEMU'da adlar aynıdır; diskler iki sunucu arasında bu adlarla eşleşir.
-fn disk_devices(d: &QemuDriver, g: &Guest) -> Result<Vec<String>, String> {
+pub(super) fn disk_devices(d: &QemuDriver, g: &Guest) -> Result<Vec<String>, String> {
     let reply = qmp(&d.cfg.qmp_path(g.vmid), &["query-block"])?;
     let blocks = reply.first().and_then(Value::as_array).ok_or("konuğun diskleri QEMU'dan okunamadı")?;
     let mut wanted = vec![d.cfg.disk_of(g)];

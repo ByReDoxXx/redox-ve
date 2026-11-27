@@ -24,6 +24,7 @@ mod guest_ops;
 mod ha_shares;
 mod hardware;
 mod jobs;
+mod mirrors;
 mod network;
 mod pages;
 mod platform;

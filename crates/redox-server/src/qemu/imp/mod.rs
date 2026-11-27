@@ -14,6 +14,7 @@ mod limits;
 mod live;
 mod measure;
 mod migrate;
+mod mirror;
 mod power;
 mod storage;
 
@@ -23,6 +24,7 @@ pub use limits::*;
 pub use live::*;
 pub(super) use measure::*;
 pub use migrate::*;
+pub use mirror::*;
 pub use power::*;
 pub use storage::*;
 

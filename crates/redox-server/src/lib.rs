@@ -133,6 +133,7 @@ pub fn app(state: AppState) -> Router {
         .route("/cluster/migrate", post(ui::peer_migrate))
         .route("/cluster/send", post(ui::peer_send))
         .route("/cluster/switch", post(ui_ops::switch_action))
+        .route("/cluster/mirror", post(ui_ops::mirror_action))
         .route("/cluster/replica", post(ui::replica_action))
         .route("/help", get(ui::help))
         .route("/cmd", post(ui::command))
@@ -310,6 +311,8 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
 /// Kilit kipinde de açık kalan, durum değiştiren yollar.
 pub fn lockdown_exempt(path: &str) -> bool {
     path == "/logout" || path == "/lockdown/off" || path == "/api/v1/lockdown" || path.starts_with("/account")
+        // Kaynağın yansıtma bildirimi yönetim değişikliği değildir; kilitliyken kesilirse hedef kopyayı sahipsiz sanır.
+        || (path.starts_with("/api/v1/mirror-stores/") && path.ends_with("/report"))
 }
 
 /// Operatöre açık işlemler: yolun hedeflediği konuğun kimliğini döndürür, değilse `None`.

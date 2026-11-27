@@ -220,6 +220,42 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.move_storage_live(guest, target)
     }
 
+    fn disk_mirroring(&self) -> bool {
+        self.vm.disk_mirroring()
+    }
+
+    fn mirror_disk_sizes(&self, guest: &Guest) -> Result<Vec<u64>, String> {
+        self.of(guest)?.mirror_disk_sizes(guest)
+    }
+
+    fn mirror_start(&self, guest: &Guest, host: &str, port: u16, key: &str) -> Result<(), String> {
+        self.of(guest)?.mirror_start(guest, host, port, key)
+    }
+
+    fn mirror_probe(&self, guest: &Guest) -> Option<redox_core::MirrorProbe> {
+        self.of(guest).ok()?.mirror_probe(guest)
+    }
+
+    fn mirror_stop(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.mirror_stop(guest)
+    }
+
+    fn replica_serve(&self, id: &str, sizes: &[u64], bind: &str, port: u16, key: &str) -> Result<(), String> {
+        self.vm.replica_serve(id, sizes, bind, port, key)
+    }
+
+    fn replica_release(&self, id: &str) -> Result<(), String> {
+        self.vm.replica_release(id)
+    }
+
+    fn replica_delete(&self, id: &str) -> Result<(), String> {
+        self.vm.replica_delete(id)
+    }
+
+    fn replica_adopt(&self, id: &str, guest: &Guest) -> Result<(), String> {
+        self.vm.replica_adopt(id, guest)
+    }
+
     fn migrate_layout(&self, guest: &Guest) -> Option<u8> {
         self.of(guest).ok()?.migrate_layout(guest)
     }

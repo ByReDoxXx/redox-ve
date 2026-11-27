@@ -12,6 +12,7 @@ mod approvals;
 mod failover;
 mod maintenance;
 mod migrate;
+pub mod mirrors;
 mod ratelimit;
 mod backup;
 pub mod balance;
@@ -203,6 +204,8 @@ struct Inner {
     migrate: Mutex<MigrateSettings>,
     /// Dağıtık anahtarların ağ yardımcısı için yazıldığı dosya.
     vswitch_file: std::sync::OnceLock<PathBuf>,
+    /// Disk yansıtma bekçisinin tur arası bilgisi.
+    mirrors: mirrors::MirrorWatch,
     /// Çerezi olmayan ziyaretçiye gösterilecek dil İngilizce mi? (`--lang en`)
     english: std::sync::atomic::AtomicBool,
     /// API hız sınırı: (dakikadaki istek sınırı; 0 kapalı, kullanıcı → (dakika, o dakikadaki istek sayısı)).
@@ -243,6 +246,7 @@ impl AppState {
             move_precopy: std::sync::atomic::AtomicBool::new(false),
             migrate: Mutex::new(MigrateSettings::default()),
             vswitch_file: Default::default(),
+            mirrors: Default::default(),
             english: std::sync::atomic::AtomicBool::new(false),
             api_rate: Mutex::new((0, HashMap::new())),
             report: Mutex::new((None, None)),

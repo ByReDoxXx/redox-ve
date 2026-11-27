@@ -90,6 +90,12 @@ pub fn routes() -> Router<AppState> {
         .route("/peers/{name}/migrate/{vmid}", post(peer_migrate))
         .route("/peers/{name}/send/{vmid}", post(peer_send))
         .route("/balance", get(balance))
+        .route("/mirrors", get(mirrors).post(mirror_enable))
+        .route("/mirrors/{vmid}", delete_route(mirror_disable))
+        .route("/mirror-stores", get(mirror_stores).post(mirror_prepare))
+        .route("/mirror-stores/{origin}/{vmid}", delete_route(mirror_store_delete))
+        .route("/mirror-stores/{origin}/{vmid}/report", post(mirror_report))
+        .route("/mirror-stores/{origin}/{vmid}/promote", post(mirror_promote))
         .route("/vswitches", get(vswitches).post(vswitch_put))
         .route("/vswitches/{name}", delete_route(vswitch_delete))
         .route("/vswitches/{name}/push", post(vswitch_push))
@@ -197,6 +203,86 @@ async fn vswitches(State(st): State<AppState>) -> Json<Vec<crate::state::vswitch
 async fn vswitch_put(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(switch): Json<redox_core::VSwitch>) -> Result<StatusCode, ApiError> {
     st.vswitch_put(switch, &me.user)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- Eşzamanlı disk yansıtma ----------
+
+/// Sürücü ya da eş sunucu bekleten işi istek iş parçacığının dışında çalıştırır.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, redox_core::Error> + Send + 'static) -> Result<T, ApiError> {
+    Ok(tokio::task::spawn_blocking(work).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??)
+}
+
+/// Bu sunucudaki konukların yansıtmaları.
+async fn mirrors(State(st): State<AppState>) -> Json<Vec<redox_core::Mirror>> {
+    Json(st.snapshot().mirrors)
+}
+
+#[derive(serde::Deserialize)]
+struct MirrorBody {
+    vmid: VmId,
+    peer: String,
+}
+
+async fn mirror_enable(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<MirrorBody>) -> Result<StatusCode, ApiError> {
+    st.mirror_enable(body.vmid, &body.peer, &me.user)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+#[derive(serde::Deserialize, Default)]
+struct MirrorOffQuery {
+    #[serde(default)]
+    delete_copy: bool,
+}
+
+async fn mirror_disable(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, axum::extract::Query(q): axum::extract::Query<MirrorOffQuery>) -> Result<StatusCode, ApiError> {
+    let user = me.user.clone();
+    blocking(move || st.mirror_disable(vmid, q.delete_copy, &user)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Burada tutulan kopyalar (konuğun kaydı yalnızca özetlenir).
+async fn mirror_stores(State(st): State<AppState>) -> Json<Vec<serde_json::Value>> {
+    Json(st.snapshot().mirror_stores.iter().map(|s| json!({ "origin": s.origin, "vmid": s.vmid, "name": s.guest.name, "disks": 1 + s.guest.hw.disks.len(), "generation": s.generation, "complete": s.complete, "in_sync": s.in_sync, "last_in_sync": s.last_in_sync })).collect())
+}
+
+#[derive(serde::Deserialize)]
+struct PrepareBody {
+    origin: String,
+    guest: Box<Guest>,
+    sizes: Vec<u64>,
+    key: String,
+}
+
+/// Kaynak sunucu çağırır: yeni kopya kuşağı açılır ve diskler yazılabilir sunulur.
+async fn mirror_prepare(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<PrepareBody>) -> ApiResult<serde_json::Value> {
+    let user = me.user.clone();
+    let host = st.migrate_settings().host;
+    let (generation, port) = blocking(move || st.mirror_store_prepare(&body.origin, *body.guest, &body.sizes, &body.key, &user)).await?;
+    Ok(Json(json!({ "generation": generation, "port": port, "host": host })))
+}
+
+#[derive(serde::Deserialize)]
+struct ReportBody {
+    generation: u32,
+    in_sync: bool,
+}
+
+async fn mirror_report(State(st): State<AppState>, Path((origin, vmid)): Path<(String, VmId)>, Json(body): Json<ReportBody>) -> Result<StatusCode, ApiError> {
+    blocking(move || st.mirror_store_report(&origin, vmid, body.generation, body.in_sync)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn mirror_store_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((origin, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
+    let user = me.user.clone();
+    blocking(move || st.mirror_store_delete(&origin, vmid, &user)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Devralma: kopyadan kapalı bir konuk oluşturur.
+async fn mirror_promote(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((origin, vmid)): Path<(String, VmId)>) -> ApiResult<serde_json::Value> {
+    let user = me.user.clone();
+    let id = blocking(move || st.mirror_promote(&origin, vmid, &user)).await?;
+    Ok(Json(json!({ "vmid": id })))
 }
 
 #[derive(serde::Deserialize, Default)]

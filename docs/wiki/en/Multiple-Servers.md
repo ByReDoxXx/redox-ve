@@ -58,6 +58,55 @@ listed). The profile carries no users, tokens or peer addresses.
 
 For automatic failover see below.
 
+## Synchronous disk mirroring
+
+With mirroring on, **every disk write of a running virtual machine also goes to a copy on a peer server**, and the
+write does not complete until both have it. If the server running the VM dies, the copy has everything the guest was
+told is written. (Replication, below, copies at intervals: what was written since the last run is lost.)
+
+```
+redox mirror add 103 ankara                 # on the server where VM 103 runs
+redox mirror list                           # syncing, in sync, broken (with the reason)
+redox mirror off 103 [--delete-copy]
+
+redox mirror copies                         # on the peer: the copies it holds
+redox mirror promote <source> 103           # take over: creates a STOPPED guest from the copy
+redox mirror delete-copy <source> 103
+```
+
+The *Cluster* page has the same in the **Disk mirroring** and **Copies held here** cards.
+
+**What happens when something fails**
+
+* **The peer stops responding** (power cut, broken link). Because writes are synchronous, the guest's disk writes
+  wait. A watchdog that only asks the local hypervisor notices the stuck progress after 8 seconds, cuts the
+  connection and lets the waiting writes finish. The guest keeps running; the mirror shows *broken* and the copy is
+  behind from that moment.
+* **After a break** it retries every minute. A new synchronisation goes into a **new generation** of files; the last
+  complete copy is kept until the new one is complete. Plan for **twice the disk space** on the peer.
+* **The source server dies.** On the peer, wait about 30 seconds (while the source still reports "in sync", take-over
+  is refused), check that the guest really is off there, then take over and start the new guest.
+
+**Take-over is manual, on purpose.** The peer cannot tell "the source is down" from "the link between us is lost";
+in the second case the guest is still running on the source, and starting it twice corrupts data. Look at *Last in
+sync*: if the mirror broke before the source died, the copy is that old.
+
+**Limits**
+
+* One copy per guest, on one peer. This is not a storage pool across many servers: there is no striping, no automatic
+  rebalancing and no shared datastore.
+* **Backups, snapshots and suspend pause the mirror** (QEMU does not allow them on a mirrored disk). It then resyncs
+  **from the beginning**, so each of these costs a full copy over the network, and until that finishes the peer only
+  has the older copy. Internal snapshots are not part of the copy.
+* A mirrored guest cannot be live-migrated or have its storage moved; turn mirroring off first.
+* The watchdog is part of the RedoX service. If the service is stopped while a peer hangs, the guest's writes wait
+  until the connection times out.
+* With several disks, if the connection of one disk breaks, another can get a few more writes (up to about a second)
+  before mirroring stops, so in that case the disks of the copy may not be from exactly the same moment.
+* Write speed is limited by the network between the servers. UEFI, virtual TPM, containers, templates and linked
+  disks are not supported.
+* The copy goes over the peer's migration ports (`--migrate-ports`), encrypted with TLS and a one-time key.
+
 ## Replication (standby copy)
 
 ```bash

@@ -215,7 +215,55 @@ fn peer_error(e: ureq::Error) -> String {
     }
 }
 
+/// Hedefin kopya için verdiği yanıt.
+pub struct MirrorOpened {
+    pub generation: u32,
+    pub port: u16,
+    /// Kaynağın bağlanacağı adres; hedef bildirmediyse eşin yönetim adresindeki ad kullanılır.
+    pub host: Option<String>,
+}
+
+/// `https://ad:8006/…` adresindeki sunucu adı ya da IP (köşeli ayraçsız).
+pub fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let authority = rest.split(['/', '?']).next()?;
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split_once(']')?.0,
+        None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
+    };
+    redox_core::valid_migrate_host(host).then(|| host.to_string())
+}
+
 impl Peer {
+    pub fn host_name(&self) -> Option<String> {
+        url_host(&self.url)
+    }
+
+    pub fn mirror_prepare(&self, origin: &str, guest: &Guest, sizes: &[u64], key: &str) -> Result<MirrorOpened, String> {
+        let body = serde_json::json!({ "origin": origin, "guest": guest, "sizes": sizes, "key": key });
+        let reply: serde_json::Value = self
+            .request("POST", "/api/v1/mirror-stores", Duration::from_secs(60))
+            .send_json(body)
+            .map_err(peer_error)?
+            .into_json()
+            .map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())?;
+        let number = |name: &str| reply[name].as_u64().ok_or_else(|| "eş sunucunun yanıtı anlaşılamadı".to_string());
+        Ok(MirrorOpened {
+            generation: u32::try_from(number("generation")?).map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())?,
+            port: u16::try_from(number("port")?).map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())?,
+            host: reply["host"].as_str().filter(|h| redox_core::valid_migrate_host(h)).map(str::to_string),
+        })
+    }
+
+    pub fn mirror_report(&self, origin: &str, vmid: redox_core::VmId, generation: u32, in_sync: bool) -> Result<(), String> {
+        let body = serde_json::json!({ "generation": generation, "in_sync": in_sync });
+        self.request("POST", &format!("/api/v1/mirror-stores/{origin}/{vmid}/report"), Duration::from_secs(20)).send_json(body).map(|_| ()).map_err(peer_error)
+    }
+
+    pub fn mirror_delete(&self, origin: &str, vmid: redox_core::VmId) -> Result<(), String> {
+        self.request("DELETE", &format!("/api/v1/mirror-stores/{origin}/{vmid}"), Duration::from_secs(60)).call().map(|_| ()).map_err(peer_error)
+    }
+
     fn request(&self, method: &str, path: &str, read_timeout: Duration) -> ureq::Request {
         ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(10))

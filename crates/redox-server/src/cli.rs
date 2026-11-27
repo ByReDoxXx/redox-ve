@@ -126,6 +126,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox peer migrate <eş> <kimlik> (eşteki çalışan sanal makineyi kapatmadan bu sunucuya taşır)
   redox peer send <eş> <kimlik>   (bu sunucudaki çalışan sanal makineyi kapatmadan eşe taşır)
   redox balance                   (yük dengeleme önerisi: sunucu sıkışmışsa hangi konuk hangi eşe taşınmalı)
+  redox mirror list | add <kimlik> <eş> | off <kimlik> [--delete-copy]   (eşzamanlı disk yansıtma)
+  redox mirror copies | promote <kaynak> <kimlik> | delete-copy <kaynak> <kimlik>   (burada tutulan kopyalar)
   redox switch list | set <vds-ad> <vni> <adres,adres> [--mtu <n>] | push <ad> | remove <ad> [--everywhere]   (dağıtık anahtar)
   redox task list
 ";
@@ -167,6 +169,9 @@ pub enum View {
     Balance,
     Switches,
     SwitchPeers,
+    Mirrors,
+    MirrorStores,
+    Promoted,
     /// Yanıt olduğu gibi (girintili JSON) yazılır.
     Json,
     /// Hazır imaj kataloğu.
@@ -475,6 +480,13 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["storage", "list"] => get("/storage", View::Storage),
         ["peer", "list"] => get("/peers", View::Peers),
         ["balance"] => get("/balance", View::Balance),
+        ["mirror", "list"] => get("/mirrors", View::Mirrors),
+        ["mirror", "add", id, peer] => req("POST", "/mirrors".to_string(), Some(json!({ "vmid": vmid(id)?, "peer": peer })), View::Done("yansıtma açıldı; durumu: redox mirror list")),
+        ["mirror", "off", id] => req("DELETE", format!("/mirrors/{}", vmid(id)?), None, View::Done("yansıtma kapatıldı; eşteki kopya duruyor")),
+        ["mirror", "off", id, "--delete-copy"] => req("DELETE", format!("/mirrors/{}?delete_copy=true", vmid(id)?), None, View::Done("yansıtma kapatıldı ve eşteki kopya silindi")),
+        ["mirror", "copies"] => get("/mirror-stores", View::MirrorStores),
+        ["mirror", "promote", origin, id] => req("POST", format!("/mirror-stores/{origin}/{}/promote", vmid(id)?), None, View::Promoted),
+        ["mirror", "delete-copy", origin, id] => req("DELETE", format!("/mirror-stores/{origin}/{}", vmid(id)?), None, View::Done("kopya silindi")),
         ["switch", "list"] => get("/vswitches", View::Switches),
         ["switch", "set", name, vni, members, rest @ ..] => req("POST", "/vswitches".to_string(), Some(switch_body(name, vni, members, rest)?), View::Done("anahtar kaydedildi; eşlere göndermek için: redox switch push <ad>")),
         ["switch", "push", name] => req("POST", format!("/vswitches/{name}/push"), None, View::SwitchPeers),
@@ -689,6 +701,26 @@ pub fn render(view: View, v: &Value) -> String {
             .map(|p| if p["ok"] == true { format!("{}: tamam", s(p, "peer")) } else { format!("{}: {}", s(p, "peer"), s(p, "error")) })
             .collect::<Vec<_>>()
             .join("\n"),
+        View::Mirrors => or_none(
+            rows(&|m| {
+                let state = serde_json::from_value::<redox_core::MirrorState>(m["state"].clone()).map_or("bilinmiyor", redox_core::MirrorState::label);
+                let why = m["error"].as_str().map(|e| format!("\n  neden: {e}")).unwrap_or_default();
+                format!("{:<6} -> {:<12} {state}{why}", n(m, "vmid"), s(m, "peer"))
+            }),
+            "yansıtılan disk yok",
+        ),
+        View::MirrorStores => or_none(
+            rows(&|x| {
+                let state = match (x["complete"].is_null(), x["in_sync"] == true) {
+                    (true, _) => "ilk kopya tamamlanmadı",
+                    (false, true) => "kaynakla eşit",
+                    (false, false) => "kaynak eşit bildirmiyor",
+                };
+                format!("{:<14} {:<6} {:<16} {state}", s(x, "origin"), n(x, "vmid"), s(x, "name"))
+            }),
+            "tutulan kopya yok",
+        ),
+        View::Promoted => format!("kopyadan {} numaralı konuk oluşturuldu; başlatmak için: redox vm start {}", n(v, "vmid"), n(v, "vmid")),
         View::Balance => {
             let head = format!("işlemci %{}  bellek %{}", n(v, "cpu_pct"), n(v, "mem_pct"));
             let moves: Vec<String> = v["moves"].as_array().into_iter().flatten().map(|m| format!("  {:<6} {:<16} -> {:<12} ({}; sonra burada %{}, eşte %{})   redox peer send {} {}", n(m, "vmid"), s(m, "name"), s(m, "peer"), s(m, "reason"), n(m, "here_mem_pct"), n(m, "peer_mem_pct"), s(m, "peer"), n(m, "vmid"))).collect();
@@ -954,6 +986,18 @@ mod tests {
             assert!(english.contains(part), "{part}\n{english}");
         }
         assert_eq!(render(View::SwitchPeers, &json!({"peers": [{"peer": "ankara", "ok": true}, {"peer": "izmir", "ok": false, "error": "erişilemiyor"}]})), "ankara: tamam\nizmir: erişilemiyor");
+        let on = parse(&args("mirror add 103 ankara")).unwrap();
+        assert_eq!((on.path.as_str(), on.body.clone().unwrap()), ("/mirrors", json!({"vmid": 103, "peer": "ankara"})));
+        assert_eq!(parse(&args("mirror off 103 --delete-copy")).unwrap().path, "/mirrors/103?delete_copy=true");
+        assert_eq!(parse(&args("mirror promote pve-ist-01 103")).unwrap().path, "/mirror-stores/pve-ist-01/103/promote");
+        assert!(parse(&args("mirror add yuz ankara")).is_err());
+        let listed = render(View::Mirrors, &json!([{"vmid": 103, "peer": "ankara", "state": "in_sync", "error": null}, {"vmid": 104, "peer": "izmir", "state": "broken", "error": "yansıtma koptu"}]));
+        assert!(listed.contains("103    -> ankara       eşit") && listed.contains("koptu\n  neden: yansıtma koptu"), "{listed}");
+        let held = render(View::MirrorStores, &json!([{"origin": "pve-ist-01", "vmid": 103, "name": "db", "complete": 2, "in_sync": false}, {"origin": "pve-ist-01", "vmid": 104, "name": "web", "complete": null, "in_sync": false}]));
+        assert!(held.contains("kaynak eşit bildirmiyor") && held.contains("ilk kopya tamamlanmadı"), "{held}");
+        assert!(render(View::Promoted, &json!({"vmid": 120})).contains("redox vm start 120"));
+        let english = crate::i18n::lines_to_english(&listed);
+        assert!(english.contains("in sync") && english.contains("reason: "), "{english}");
         assert_eq!(parse(&args("profile export")).unwrap().path, "/profile");
         let file = std::env::temp_dir().join(format!("redox-profil-{}.json", std::process::id()));
         std::fs::write(&file, r#"{"kind":"redox-profile","options":{}}"#).unwrap();

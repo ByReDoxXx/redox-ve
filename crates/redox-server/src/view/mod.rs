@@ -12,6 +12,7 @@ mod backups;
 mod cluster;
 mod forms;
 mod guests;
+mod mirrors;
 mod switches;
 mod widgets;
 

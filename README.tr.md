@@ -48,6 +48,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Bakım kipi sunucuyu boşaltabilir: çalışan sanal makineler eşe canlı taşınır (`redox maintenance on --evacuate <eş>`).
 - Sanal makine başına işlemci payı ve bellek garantisi (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): sunucu sıkışınca işlemciyi kimin alacağı ve geri alınmayacak bellek; ikisi de konuk çalışırken değişir.
 - Kilit kipi (`redox lockdown on`): açıkken yöneticiler dahil hiç kimsenin arayüzden ya da API'den değişiklik yapamadığı bir değişiklik dondurma; konuklar ve zamanlanmış işler sürer.
+- Eşzamanlı disk yansıtma (`redox mirror`): çalışan sanal makinenin her yazması eşteki bir kopyaya da gider; eş donarsa bekçi konuğu kurtarır, eş kopyadan (elle) devralabilir.
 - Dağıtık anahtarlar (`redox switch`): bir kez tanımlanıp bütün eşlere gönderilen ortak VXLAN konuk ağı; ağı küçük bir root yardımcısı kurar ve yalnızca kendi aygıtlarına dokunur.
 - Yük dengeleme önerisi (`redox balance`): sunucu sıkıştığında çalışan hangi sanal makinenin hangi eşe canlı taşınacağını söyler; kendiliğinden bir şey taşımaz, taşımayı `redox peer send` yapar.
 - Sunucu profili (`redox profile export | diff | apply`): bir sunucunun ayarlarını başkasıyla karşılaştırır, havuzları ve yedek işlerini eşitler.
@@ -318,6 +319,8 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 | `GET /support` | Destek paketi (yalnızca yönetici) |
 | `GET`/`POST /lockdown` | Kilit kipi (değişiklik dondurma) |
 | `GET /profile`, `POST /profile/diff`, `/profile/apply` | Sunucu profili |
+| `GET`/`POST /mirrors`, `DELETE /mirrors/{vmid}` | Eşzamanlı disk yansıtma (kaynak) |
+| `GET /mirror-stores`, `POST /mirror-stores/{origin}/{vmid}/promote`, `DELETE …` | Eşler için tutulan kopyalar, devralma |
 | `GET`/`POST /vswitches`, `DELETE /vswitches/{name}`, `POST /vswitches/{name}/push` | Dağıtık anahtarlar |
 | `GET /balance`, `POST /peers/{name}/send/{vmid}` | Yük dengeleme önerisi; sanal makineyi eşe canlı taşıma |
 | `GET /tasks`, `GET /tasks/{id}` | Görev günlüğü |
@@ -443,7 +446,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 577, Windows'ta 491 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 582, Windows'ta 495 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 

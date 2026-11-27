@@ -39,6 +39,11 @@ pub fn parse_migrate_ports(text: &str) -> Result<(u16, u16), String> {
     Ok((first, last))
 }
 
+/// Aralıktan şu an boş olan tek bir kapı seçer.
+pub(super) fn free_port(range: (u16, u16), bind: &str) -> Result<u16, String> {
+    (range.0..=range.1).find(|port| std::net::TcpListener::bind((bind, *port)).is_ok()).ok_or_else(|| format!("boş kapı yok ({}-{}); aralığı --migrate-ports ile genişletin", range.0, range.1))
+}
+
 /// Aralıktan şu an boş olan iki kapı seçer.
 fn free_ports(range: (u16, u16), bind: &str) -> Result<(u16, u16), String> {
     let mut found = Vec::new();
@@ -54,14 +59,14 @@ fn free_ports(range: (u16, u16), bind: &str) -> Result<(u16, u16), String> {
 }
 
 /// Tek kullanımlık taşıma anahtarı.
-fn new_key() -> Result<String, String> {
+pub(super) fn new_key() -> Result<String, String> {
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes).map_err(|e| format!("taşıma anahtarı üretilemedi: {e}"))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Kapı seçimi ile QEMU'nun kapıları açması arasına ikinci bir taşıma girmesin.
-static PICK: Mutex<()> = Mutex::new(());
+pub(super) static PICK: Mutex<()> = Mutex::new(());
 
 impl AppState {
     pub fn set_migrate(&self, settings: MigrateSettings) {
@@ -93,6 +98,9 @@ impl AppState {
         }
         if !redox_core::valid_migrate_key(key) || nbd_port < 1024 || ram_port < 1024 || nbd_port == ram_port {
             return Err(Error::InvalidSpec("taşıma isteği eksik ya da geçersiz (anahtar ve iki ayrı kapı gerekir)".to_string()));
+        }
+        if self.snapshot().mirror(vmid).is_some() {
+            return Err(Error::InvalidSpec(format!("{vmid} disk yansıtması açıkken canlı taşınamaz; önce yansıtmayı kapatın")));
         }
         if !self.driver().live_migration() {
             return Err(Error::InvalidSpec("bu sürücü canlı taşımayı desteklemiyor (gerçek sürücü gerekir)".to_string()));
@@ -129,36 +137,12 @@ impl AppState {
         Ok(())
     }
 
-    /// Hata, görev günlüğüne yazıldıysa `true` ile döner.
-    fn migrate_now(&self, peer: &crate::peers::Peer, peer_name: &str, vmid: VmId, user: &str) -> Result<(), (String, bool)> {
-        let early = |message: String| (message, false);
-        let remote = peer.guest(vmid).map_err(early)?;
-        if let Some(why) = redox_core::migrate_blocker(&remote) {
-            return Err(early(why.to_string()));
-        }
-        if remote.status != redox_core::GuestStatus::Running {
-            return Err(early(format!("{vmid} eş sunucuda çalışmıyor; canlı taşıma çalışan konuk içindir (kapalı konuk \"Buraya Al\" ile kopyalanır)")));
-        }
-        if remote.lock.is_some() {
-            return Err(early(format!("{vmid} üzerinde eş sunucuda bir işlem sürüyor; bitince yeniden deneyin")));
-        }
+    /// Başka sunucudaki bir konuk kaydından burada oluşturulacak konuğun tanımı (canlı taşıma ve devralma).
+    /// Sunucuya özgü ayarlar uyarlanır; ek diskler sonradan `restore_hardware` ile eklenir.
+    pub(super) fn local_spec(&self, remote: &Guest, vmid: Option<VmId>) -> Result<GuestSpec, Error> {
         let local = self.snapshot();
-        let node = local.nodes.first().ok_or_else(|| early("bu sunucuda düğüm yok".to_string()))?;
-        let storage = local.storages.iter().find(|s| s.available_on(&node.id)).ok_or_else(|| early("bu sunucuda depolama yok".to_string()))?;
-        if remote.cores.max(remote.hw.max_cores) > node.cores || remote.mem_total_mb.max(remote.hw.max_mem_mb) > node.mem_total_mb {
-            return Err(early(format!("canlı taşınan konuk aynı işlemci ve bellekle açılmalı ({} çekirdek, {} MB); bu sunucu yetmiyor", remote.cores.max(remote.hw.max_cores), remote.mem_total_mb.max(remote.hw.max_mem_mb))));
-        }
-        // Aynı kimlik burada doluysa konuk gelemez; tek istisna, bu konuğun buradan taşınırken geride kalan
-        // kapalı kopyasıdır: konuk geri geliyorsa bayat kopyanın yerini alır (yedekleri kimliğe bağlı kalır).
-        let leftover = match local.guest(vmid) {
-            Err(_) => false,
-            Ok(here) if here.kind == redox_core::GuestKind::Vm && here.status == redox_core::GuestStatus::Stopped && here.lock.is_none() && here.tags.iter().any(|t| t == redox_core::MIGRATED_TAG) => true,
-            Ok(_) => return Err(early(format!("bu sunucuda {vmid} kimliği dolu; canlı taşınan konuk aynı kimlikle gelir (ağ kartının adresi kimlikten türetilir)"))),
-        };
-        let layout = peer.migrate_prepare(vmid).map_err(early)?;
-        if leftover {
-            self.delete_guest(vmid, user).map_err(|e| early(format!("burada kalan eski kopya kaldırılamadı: {e}")))?;
-        }
+        let node = local.nodes.first().ok_or_else(|| Error::InvalidSpec("bu sunucuda düğüm yok".to_string()))?;
+        let storage = local.storages.iter().find(|s| s.available_on(&node.id)).ok_or_else(|| Error::InvalidSpec("bu sunucuda depolama yok".to_string()))?;
         // Sunucuya özgü ayarlar taşınmaz: köprü burada yoksa NAT'a düşülür (konuğun kartı aynı kalır, bağlandığı ağ değişir).
         let known = self.driver().bridges();
         let here = |bridge: &String| if known.contains(bridge) { bridge.clone() } else { redox_core::NAT.to_string() };
@@ -176,11 +160,14 @@ impl AppState {
             hw.nic_guard = false;
         }
         hw.suspended = false;
+        hw.usb.clear();
+        hw.pci.clear();
+        hw.shares.clear();
         // Ek diskler konuk oluşturulduktan sonra numaralarıyla, boş olarak eklenir.
         hw.disks.clear();
         hw.disk_seq = 0;
-        let spec = GuestSpec {
-            vmid: Some(vmid),
+        Ok(GuestSpec {
+            vmid,
             name: remote.name.clone(),
             kind: remote.kind,
             node: node.id.clone(),
@@ -193,7 +180,60 @@ impl AppState {
             onboot: false,
             iso: None,
             hw,
+        })
+    }
+
+    /// `local_spec` ile oluşturulan konuğa kaynağın ek disklerini, çekirdek ve bellek yapısını verir.
+    pub(super) fn restore_hardware(&self, id: VmId, remote: &Guest) -> Result<Guest, String> {
+        let driver = self.driver();
+        for disk in &remote.hw.disks {
+            let guest = self
+                .mutate(|c| {
+                    c.add_disk_exact(id, disk)?;
+                    c.guest(id).cloned()
+                })
+                .map_err(|e| e.to_string())?;
+            driver.add_disk(&guest, disk.id, disk.size_gb).map_err(|e| format!("ek disk {}: {e}", disk.id))?;
+        }
+        self.mutate(|c| {
+            let g = c.guest_mut_for_import(id)?;
+            (g.cores, g.mem_total_mb) = (remote.cores, remote.mem_total_mb);
+            (g.hw.dimms, g.hw.max_cores, g.hw.max_mem_mb, g.hw.balloon_mb) = (remote.hw.dimms.clone(), remote.hw.max_cores, remote.hw.max_mem_mb, remote.hw.balloon_mb);
+            Ok::<_, Error>(g.clone())
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// Hata, görev günlüğüne yazıldıysa `true` ile döner.
+    fn migrate_now(&self, peer: &crate::peers::Peer, peer_name: &str, vmid: VmId, user: &str) -> Result<(), (String, bool)> {
+        let early = |message: String| (message, false);
+        let remote = peer.guest(vmid).map_err(early)?;
+        if let Some(why) = redox_core::migrate_blocker(&remote) {
+            return Err(early(why.to_string()));
+        }
+        if remote.status != redox_core::GuestStatus::Running {
+            return Err(early(format!("{vmid} eş sunucuda çalışmıyor; canlı taşıma çalışan konuk içindir (kapalı konuk \"Buraya Al\" ile kopyalanır)")));
+        }
+        if remote.lock.is_some() {
+            return Err(early(format!("{vmid} üzerinde eş sunucuda bir işlem sürüyor; bitince yeniden deneyin")));
+        }
+        let local = self.snapshot();
+        let node = local.nodes.first().ok_or_else(|| early("bu sunucuda düğüm yok".to_string()))?;
+        if remote.cores.max(remote.hw.max_cores) > node.cores || remote.mem_total_mb.max(remote.hw.max_mem_mb) > node.mem_total_mb {
+            return Err(early(format!("canlı taşınan konuk aynı işlemci ve bellekle açılmalı ({} çekirdek, {} MB); bu sunucu yetmiyor", remote.cores.max(remote.hw.max_cores), remote.mem_total_mb.max(remote.hw.max_mem_mb))));
+        }
+        // Aynı kimlik burada doluysa konuk gelemez; tek istisna, bu konuğun buradan taşınırken geride kalan
+        // kapalı kopyasıdır: konuk geri geliyorsa bayat kopyanın yerini alır (yedekleri kimliğe bağlı kalır).
+        let leftover = match local.guest(vmid) {
+            Err(_) => false,
+            Ok(here) if here.kind == redox_core::GuestKind::Vm && here.status == redox_core::GuestStatus::Stopped && here.lock.is_none() && here.tags.iter().any(|t| t == redox_core::MIGRATED_TAG) => true,
+            Ok(_) => return Err(early(format!("bu sunucuda {vmid} kimliği dolu; canlı taşınan konuk aynı kimlikle gelir (ağ kartının adresi kimlikten türetilir)"))),
         };
+        let layout = peer.migrate_prepare(vmid).map_err(early)?;
+        if leftover {
+            self.delete_guest(vmid, user).map_err(|e| early(format!("burada kalan eski kopya kaldırılamadı: {e}")))?;
+        }
+        let spec = self.local_spec(&remote, Some(vmid)).map_err(|e| early(e.to_string()))?;
         let id = self.create_guest(&spec, user).map_err(|e| early(e.to_string()))?;
         let moved = self.migrate_into(peer, peer_name, &remote, id, layout, user);
         if moved.is_err() {
@@ -207,23 +247,7 @@ impl AppState {
         let early = |message: String| (message, false);
         let driver = self.driver();
         // Hedef QEMU'nun bulacağı kayıt, kaynağınkiyle aynı donanımı anlatmalıdır.
-        for disk in &remote.hw.disks {
-            let guest = self
-                .mutate(|c| {
-                    c.add_disk_exact(id, disk)?;
-                    c.guest(id).cloned()
-                })
-                .map_err(|e| early(e.to_string()))?;
-            driver.add_disk(&guest, disk.id, disk.size_gb).map_err(|e| early(format!("ek disk {}: {e}", disk.id)))?;
-        }
-        let guest = self
-            .mutate(|c| {
-                let g = c.guest_mut_for_import(id)?;
-                (g.cores, g.mem_total_mb) = (remote.cores, remote.mem_total_mb);
-                (g.hw.dimms, g.hw.max_cores, g.hw.max_mem_mb, g.hw.balloon_mb) = (remote.hw.dimms.clone(), remote.hw.max_cores, remote.hw.max_mem_mb, remote.hw.balloon_mb);
-                Ok::<_, Error>(g.clone())
-            })
-            .map_err(|e| early(e.to_string()))?;
+        let guest = self.restore_hardware(id, remote).map_err(early)?;
         let command = format!("vm migrate {peer_name}/{}", remote.vmid);
         let task = self.mutate(|c| c.begin_op(id, command, user, now(), None)).map_err(|e| early(e.to_string()))?;
         let outcome = (|| -> Result<(), String> {

@@ -172,6 +172,20 @@ impl QemuDriver {
     }
 }
 
+impl QemuDriver {
+    /// QEMU, disk yansıtması süren bir diskte yedek ve anlık görüntüye izin vermez. Bu işlemlerden önce yansıtma
+    /// tutarlı bir noktada bırakılır; bekçi bunu kopma saymaz ve iş bitince baştan eşitler.
+    fn pause_mirror(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        if imp::mirror_probe(self, guest).is_some_and(|p| p.jobs > 0) {
+            return imp::mirror_stop(self, guest).map_err(|e| format!("disk yansıtması duraklatılamadı: {e}"));
+        }
+        #[cfg(not(unix))]
+        let _ = guest;
+        Ok(())
+    }
+}
+
 impl Hypervisor for QemuDriver {
     fn name(&self) -> &'static str {
         if self.cfg.kvm {
@@ -549,6 +563,90 @@ impl Hypervisor for QemuDriver {
         }
     }
 
+    fn disk_mirroring(&self) -> bool {
+        cfg!(unix)
+    }
+
+    fn mirror_disk_sizes(&self, guest: &Guest) -> Result<Vec<u64>, String> {
+        #[cfg(unix)]
+        return imp::mirror_disk_sizes(self, guest);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn mirror_start(&self, guest: &Guest, host: &str, port: u16, key: &str) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::mirror_start(self, guest, host, port, key);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, host, port, key);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn mirror_stop(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::mirror_stop(self, guest);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn replica_serve(&self, id: &str, sizes: &[u64], bind: &str, port: u16, key: &str) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::replica_serve(self, id, sizes, bind, port, key);
+        #[cfg(not(unix))]
+        {
+            let _ = (id, sizes, bind, port, key);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn replica_release(&self, id: &str) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::replica_release(self, id);
+        #[cfg(not(unix))]
+        {
+            let _ = (id);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn replica_delete(&self, id: &str) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::replica_delete(self, id);
+        #[cfg(not(unix))]
+        {
+            let _ = (id);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn replica_adopt(&self, id: &str, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::replica_adopt(self, id, guest);
+        #[cfg(not(unix))]
+        {
+            let _ = (id, guest);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn mirror_probe(&self, guest: &Guest) -> Option<redox_core::MirrorProbe> {
+        #[cfg(unix)]
+        return imp::mirror_probe(self, guest);
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            None
+        }
+    }
+
     fn live_migration(&self) -> bool {
         cfg!(unix)
     }
@@ -659,6 +757,7 @@ impl Hypervisor for QemuDriver {
         // Çalışan konukta disk QEMU'nun elindedir: işlem QEMU'ya yaptırılır.
         #[cfg(unix)]
         if self.alive(guest.vmid) {
+            self.pause_mirror(guest)?;
             if matches!(op, SnapshotOp::Rollback(_)) {
                 imp::drop_bitmaps(self, guest);
             }
@@ -705,6 +804,7 @@ impl Hypervisor for QemuDriver {
         #[cfg(unix)]
         if self.alive(guest.vmid) {
             let disks: Vec<PathBuf> = disk_ids(guest).iter().map(|n| self.guest_disk(guest, *n)).collect();
+            self.pause_mirror(guest)?;
             return imp::disk_snapshot(self, guest, name, &disks);
         }
         // Kapalı konukta anlık görüntü zaten yalnızca disklerdir.
@@ -733,6 +833,7 @@ impl Hypervisor for QemuDriver {
     fn suspend(&self, guest: &Guest) -> Result<(), String> {
         #[cfg(unix)]
         {
+            self.pause_mirror(guest)?;
             imp::suspend(self, guest)
         }
         #[cfg(not(unix))]
@@ -810,6 +911,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn backup(&self, guest: &Guest, id: &str) -> Result<BackupSize, String> {
+        self.pause_mirror(guest)?;
         let size = self.backup_disks(guest, id)?;
         // Diskler tamam; makine durumu eklenemezse yedek eksik sayılır ve geri alınır.
         if let Err(e) = self.save_machine(guest, id) {

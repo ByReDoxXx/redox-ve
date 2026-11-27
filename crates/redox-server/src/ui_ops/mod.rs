@@ -26,6 +26,7 @@ mod edit;
 mod files;
 mod hardware;
 mod lifecycle;
+mod mirrors;
 
 pub use admin::*;
 pub use backups::*;
@@ -35,6 +36,7 @@ pub use edit::*;
 pub use files::*;
 pub use hardware::*;
 pub use lifecycle::*;
+pub use mirrors::*;
 
 fn vmid_of(raw: &str) -> Result<VmId, Redirect> {
     raw.parse().map_err(|_| flash("/", "error", &tfmt(format!("Geçersiz konuk kimliği: {raw}"))))
