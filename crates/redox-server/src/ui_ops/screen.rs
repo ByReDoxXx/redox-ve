@@ -36,6 +36,7 @@ pub async fn vnc(
     State(st): State<AppState>,
     Extension(me): Extension<Identity>,
     Extension(crate::ClientIp(ip)): Extension<crate::ClientIp>,
+    headers: HeaderMap,
     Path(raw): Path<String>,
     ws: Result<axum::extract::ws::WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Response {
@@ -54,15 +55,26 @@ pub async fn vnc(
         Err(rejection) => return rejection.into_response(),
     };
     st.auth().audit.record(now(), &me.user, &ip, &format!("console {}", guest.vmid), true);
-    ws.on_upgrade(move |client| bridge(client, socket))
+    // Yetki bağlantı boyunca yeniden denetlenir: izni alınan, kapsamı daralan, oturumu kapatılan ya da silinen
+    // kullanıcının açık konsolu da kapanır. Konsolu kullanan (tuşa basan, fareyi oynatan) oturum boşta sayılmaz.
+    let allowed = move |active: bool| {
+        let me = if active { crate::identify(&st, &headers) } else { crate::identify_without_touching(&st, &headers) };
+        me.is_some_and(|me| console_allowed(&st, &me, &raw).is_ok())
+    };
+    ws.on_upgrade(move |client| bridge(client, socket, allowed))
 }
+
+/// Açık konsolda yetkinin yeniden denetlenme aralığı.
+pub(super) const CONSOLE_RECHECK_SECS: u64 = 2;
 
 /// Bir konsol oturumunun en uzun süresi; dolunca bağlantı kapanır (sayfa yenilenerek yeniden açılır).
 pub(super) const CONSOLE_SESSION_LIMIT: std::time::Duration = std::time::Duration::from_secs(12 * 3600);
 
 #[cfg(unix)]
-pub(super) async fn bridge(client: axum::extract::ws::WebSocket, socket: std::path::PathBuf) {
+pub(super) async fn bridge(client: axum::extract::ws::WebSocket, socket: std::path::PathBuf, allowed: impl Fn(bool) -> bool + Send + 'static) {
     use axum::extract::ws::Message;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let active = AtomicBool::new(false);
     use futures_util::{SinkExt, StreamExt};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let Ok(stream) = tokio::net::UnixStream::connect(&socket).await else { return };
@@ -72,6 +84,7 @@ pub(super) async fn bridge(client: axum::extract::ws::WebSocket, socket: std::pa
         while let Some(Ok(message)) = from_browser.next().await {
             match message {
                 Message::Binary(bytes) => {
+                    active.store(true, Ordering::Relaxed);
                     if to_guest.write_all(&bytes).await.is_err() {
                         break;
                     }
@@ -94,19 +107,30 @@ pub(super) async fn bridge(client: axum::extract::ws::WebSocket, socket: std::pa
             }
         }
     };
+    let watch = async {
+        let mut check = tokio::time::interval(std::time::Duration::from_secs(CONSOLE_RECHECK_SECS));
+        check.tick().await;
+        loop {
+            check.tick().await;
+            if !allowed(active.swap(false, Ordering::Relaxed)) {
+                break;
+            }
+        }
+    };
     // Bir yön kapanınca öbürü de bırakılır: iki uç da düşer.
     let _ = tokio::time::timeout(CONSOLE_SESSION_LIMIT, async {
         tokio::select! {
             _ = up => {}
             _ = down => {}
+            _ = watch => {}
         }
     })
     .await;
 }
 
 #[cfg(not(unix))]
-pub(super) async fn bridge(_client: axum::extract::ws::WebSocket, _socket: std::path::PathBuf) {
-    let _ = CONSOLE_SESSION_LIMIT;
+pub(super) async fn bridge(_client: axum::extract::ws::WebSocket, _socket: std::path::PathBuf, _allowed: impl Fn(bool) -> bool + Send + 'static) {
+    let _ = (CONSOLE_SESSION_LIMIT, CONSOLE_RECHECK_SECS);
 }
 
 /// Konsol çerçevesi: yalnızca aynı siteden çerçevelenebilir.

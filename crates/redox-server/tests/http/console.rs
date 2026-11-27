@@ -107,3 +107,89 @@ pub(super) fn console_client_logic_passes_its_node_tests() {
 }
 
 // ---------- Kendiliğinden yeniden başlatma ----------
+
+#[cfg(unix)]
+mod live {
+    use super::*;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::Message;
+
+    /// Konsol soketi gerçekten açılan sahte sürücü.
+    struct WithConsole(std::path::PathBuf);
+
+    impl Hypervisor for WithConsole {
+        fn name(&self) -> &'static str {
+            "qemu-kvm"
+        }
+        fn is_real(&self) -> bool {
+            true
+        }
+        fn supports(&self, _: GuestKind) -> bool {
+            true
+        }
+        fn apply(&self, _: &Guest, _: Action) -> Result<(), String> {
+            Ok(())
+        }
+        fn vnc_socket(&self, g: &Guest) -> Option<std::path::PathBuf> {
+            (g.kind == GuestKind::Vm && g.status == GuestStatus::Running).then(|| self.0.clone())
+        }
+    }
+
+    /// Açık bir konsol, oturumu kapatılan (ya da yetkisi alınan) kullanıcıya açık kalmaz.
+    #[tokio::test]
+    async fn an_open_console_closes_when_the_session_ends() {
+        let dir = std::env::temp_dir().join(format!("redox-konsol-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("102.vnc");
+        let guest = tokio::net::UnixListener::bind(&socket).unwrap();
+        // Konuk tarafı: gelen baytı geri yollar.
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            while let Ok((mut stream, _)) = guest.accept().await {
+                tokio::spawn(async move {
+                    let mut chunk = [0u8; 64];
+                    while let Ok(n) = stream.read(&mut chunk).await {
+                        if n == 0 || stream.write_all(&chunk[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        let auth = Auth::new(users(), None, false, Cost::Test);
+        let state = AppState::new(Cluster::demo(now()), Box::new(WithConsole(socket)), Duration::ZERO, None, auth);
+        let router = app(state.clone());
+        let cookie = login_cookie(&router, "admin", ADMIN_PW).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>()).await });
+
+        let mut request = format!("ws://{address}/guests/102/vnc").into_client_request().unwrap();
+        request.headers_mut().insert("cookie", cookie.parse().unwrap());
+        request.headers_mut().insert("origin", format!("http://{address}").parse().unwrap());
+        let (mut console, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+
+        // Bağlantı çalışıyor ve yetki sürdükçe açık kalıyor (denetim aralığından uzun süre).
+        console.send(Message::Binary(b"RFB".to_vec().into())).await.unwrap();
+        let echoed = tokio::time::timeout(Duration::from_secs(10), console.next()).await.unwrap();
+        assert!(matches!(echoed, Some(Ok(Message::Binary(bytes))) if &bytes[..] == b"RFB"));
+        assert!(tokio::time::timeout(Duration::from_secs(5), console.next()).await.is_err(), "yetki sürerken konsol kapanmaz");
+
+        let token = cookie.split_once('=').unwrap().1.split(';').next().unwrap().to_string();
+        state.auth().logout(&token);
+        let closed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match console.next().await {
+                    None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        })
+        .await;
+        assert!(closed.is_ok(), "oturum kapanınca konsol da kapanır");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
