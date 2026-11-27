@@ -94,3 +94,40 @@ router advertisements. Works on bridged cards and needs `--firewall`.
 - Every administrator should turn on two-step verification (*My Account*).
 - Every state-changing request is written to the audit log (*Audit Log*).
 - The interface runs no JavaScript (content security policy `script-src 'none'`; the live console page is the exception).
+
+## Outbound rules, security groups, address sets
+
+```bash
+redox firewall set save office 10.0.0.0/24,192.168.1.5
+redox firewall group save web in='tcp/443,tcp/22 from @office' out='udp/53'
+redox vm set 103 firewall=true fw-groups=web fw-out-restrict=true fw-out='tcp/443 to @office'
+```
+
+Definitions are not sent to peer servers automatically.
+
+## Server networking from the panel
+
+```bash
+redox hostnet guest vnet1 10.10.0.1/24 dhcp=10.10.0.50-10.10.0.200 nat=true
+redox hostnet bond bond0 active-backup enp2s0,enp3s0
+redox hostnet vlan bond0 20
+redox hostnet bridge vmbr1 ports=bond0.20 vlan-aware=true
+```
+
+`redox-hostnet.service` builds the network (DHCP needs `dnsmasq-base`). The server's management card cannot be moved into a bridge from the panel. To check by hand: `redox net apply /var/lib/redox/hostnet.json --dry-run`.
+
+## TLS and LDAP
+
+```bash
+redox tls self-signed server.example.com --dir /var/lib/redox/tls
+redox serve ... --tls-cert /var/lib/redox/tls/tls.crt --tls-key /var/lib/redox/tls/tls.key
+```
+
+For Let's Encrypt give certbot `deploy/certbot-redox-hook.sh` as `--deploy-hook`. LDAP settings file:
+
+```
+url = ldaps://dc.example.com
+bind = uid={user},ou=people,dc=example,dc=com
+```
+
+Try it with `redox ldap test ldap.conf ali`, start the server with `--ldap ldap.conf`, and mark the user with `redox user ldap ali on --users …`. At least one administrator keeps a local password.

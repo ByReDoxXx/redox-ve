@@ -303,9 +303,9 @@ pub(super) fn real_qemu_migrates_a_running_guest_to_another_server() {
 
     // Hedefte: bellek, çalışan döngü, çekirdekler ve diskler.
     assert_eq!(b.ask("cat /tmp/isaret"), ["isaret-4471"], "bellek durumu korunmalı");
-    let first: u64 = b.ask("cat /tmp/sayac").pop().unwrap().parse().unwrap();
+    let first: u64 = b.ask("cat /tmp/sayac").iter().rev().find_map(|l| l.parse().ok()).expect("sayaç okunamadı");
     std::thread::sleep(Duration::from_secs(1));
-    let second: u64 = b.ask("cat /tmp/sayac").pop().unwrap().parse().unwrap();
+    let second: u64 = b.ask("cat /tmp/sayac").iter().rev().find_map(|l| l.parse().ok()).expect("sayaç okunamadı");
     assert!(second > first, "konuk hedefte çalışmayı sürdürmeli: {first} -> {second}");
     assert_eq!(b.cpus().0, "0-2");
     assert_eq!(b.mem_kb(), memory, "konuk aynı bellekle sürmeli");

@@ -47,3 +47,18 @@ There is no built-in pool management that puts every disk on its own ZFS volume 
 included. A running virtual machine is moved **without stopping it**: its disks are mirrored to the new storage while
 it keeps running, then switched over, and the old files are removed. Only the current content is mirrored, so a
 running guest that has snapshots must be stopped to be moved.
+
+## Windows and imported disks
+
+If the guest has no virtio drivers, choose SATA as the **disk controller** and an Intel **network card model**. When installing Windows, put the install image in the first CD drive and `virtio-win` in the second.
+
+```bash
+redox vm set 103 disk-bus=sata nic-model=e1000e iso2=virtio-win.iso
+redox vm media 103 2 other.iso
+```
+
+While running, only a drive that had an image at start can be changed. Not tested with Windows.
+
+## Performance
+
+`cpu-affinity=0-3` pins the guest to those CPUs (also while running). `numa-node=0` binds its memory to that node. `hugepages=true` needs `vm.nr_hugepages` reserved on the server first. Enable `redox-ksm.service` for KSM; do not enable it when mutually distrusting users share the server.

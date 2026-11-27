@@ -93,3 +93,40 @@ duyurusu gönderemez. Köprüdeki kartlarda etkilidir ve `--firewall` ister.
 - Her yönetici iki adımlı doğrulamayı açsın (*Hesabım*).
 - Durum değiştiren her istek denetim günlüğüne yazılır (*Denetim Günlüğü*).
 - Arayüz JavaScript çalıştırmaz (içerik güvenlik ilkesi `script-src 'none'`; yalnızca canlı konsol sayfası istisnadır).
+
+## Giden kurallar, güvenlik grupları, adres kümeleri
+
+```bash
+redox firewall set save ofis 10.0.0.0/24,192.168.1.5
+redox firewall group save web in='tcp/443,tcp/22 from @ofis' out='udp/53'
+redox vm set 103 firewall=true fw-groups=web fw-out-restrict=true fw-out='tcp/443 to @ofis'
+```
+
+Tanımlar eş sunuculara kendiliğinden gönderilmez.
+
+## Panelden sunucu ağı
+
+```bash
+redox hostnet guest vnet1 10.10.0.1/24 dhcp=10.10.0.50-10.10.0.200 nat=true
+redox hostnet bond bond0 active-backup enp2s0,enp3s0
+redox hostnet vlan bond0 20
+redox hostnet bridge vmbr1 ports=bond0.20 vlan-aware=true
+```
+
+Ağı `redox-hostnet.service` kurar (DHCP için `dnsmasq-base`). Sunucunun yönetim kartı panelden köprüye taşınamaz. Elle denemek için: `redox net apply /var/lib/redox/hostnet.json --dry-run`.
+
+## TLS ve LDAP
+
+```bash
+redox tls self-signed sunucu.ornek.com --dir /var/lib/redox/tls
+redox serve ... --tls-cert /var/lib/redox/tls/tls.crt --tls-key /var/lib/redox/tls/tls.key
+```
+
+Let's Encrypt için `deploy/certbot-redox-hook.sh` dosyasını certbot'a `--deploy-hook` olarak verin. LDAP ayar dosyası:
+
+```
+url = ldaps://dc.ornek.com
+bind = uid={user},ou=people,dc=ornek,dc=com
+```
+
+`redox ldap test ayar.conf ali` ile deneyin, sunucuyu `--ldap ayar.conf` ile başlatın, `redox user ldap ali on --users …` ile kullanıcıyı işaretleyin. En az bir yönetici yerel parolayla kalır.

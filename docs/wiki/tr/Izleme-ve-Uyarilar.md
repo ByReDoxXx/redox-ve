@@ -36,3 +36,7 @@ redox vm df 103            # konuk içindeki disklerin doluluğu
 **CSV dışa aktarımı:** kaynak ölçümü `/usage.csv` (API: `GET /api/v1/usage.csv`), denetim günlüğü `/audit.csv`
 (yalnızca yönetici; sayfadaki süzgeçle `?q=`). Formül olarak çalışabilecek hücreler tablolama programları için
 etkisizleştirilir.
+
+## Donanım sağlığı ve güncellemeler
+
+`redox-health.timer` saatte bir `smartctl`, `ipmitool` ve `apt` çıktısını okur (`smartmontools` ve `ipmitool` kurulu değilse o bölümler boş kalır). SMART hatası, bozuk sektör, sıcak ya da yıpranmış disk ve sınır dışı algılayıcı uyarı üretir. Panelden güncelleme için `redox-update.path` birimini ayrıca etkinleştirin: `apt-get upgrade` çalıştırır, paket kaldırmaz, sunucuyu yeniden başlatmaz.

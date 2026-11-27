@@ -83,6 +83,17 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Turkish and English throughout: a switch in the top bar, `--lang en` as the server default, API error messages by
   `Accept-Language`, and the command line with `REDOX_LANG=en`.
 
+- Compatibility for Windows and imported disks: SATA or virtio-scsi disk, Intel network card models, a second CD drive, changing images while running (`redox vm media`); TRIM is enabled on disks.
+- Performance: CPU pinning (also while running), binding memory to a NUMA node, huge pages; KSM state on the node page.
+- Placement tags (`ayri-<group>` keep apart, `birlikte-<group>` keep together, `sabit` pinned) and optional automatic load balancing (`--auto-balance`).
+
+**Server and identity**
+
+- Server networking from the panel (`redox hostnet`): bonds, VLANs, bridges and guest networks with DHCP/DNS, NATed or isolated. An interface carrying an address or the default route is never touched.
+- Disk health (SMART), IPMI sensors, pending updates and optional updating from the panel.
+- Built-in TLS (`--tls-cert`, `--tls-key`, `redox tls self-signed`); a certbot renewal hook for Let's Encrypt.
+- LDAP / Active Directory sign-in (`--ldap`, `redox user ldap`); roles stay local.
+
 **Storage and backup**
 
 - Live snapshots (including memory) and live backups of running VMs.
@@ -116,7 +127,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 
 - User-mode NAT with port forwarding, or bridged networking.
 - VLAN tags per network card, and disk and network rate limits per guest.
-- Per-guest inbound firewall (nftables).
+- Per-guest inbound and outbound firewall (nftables) with reusable security groups and address sets; every network card of a guest is filtered.
 
 **Operations**
 
@@ -323,6 +334,10 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 | `GET`/`POST /mirrors`, `DELETE /mirrors/{vmid}` | Synchronous disk mirroring (source) |
 | `GET /mirror-stores`, `POST /mirror-stores/{origin}/{vmid}/promote`, `DELETE …` | Copies held for peers, take-over |
 | `GET`/`POST /vswitches`, `DELETE /vswitches/{name}`, `POST /vswitches/{name}/push` | Distributed switches |
+| `POST /guests/{vmid}/media` | Change the image in a running guest's CD drive |
+| `GET`/`POST /firewall/sets`, `/firewall/groups`, `DELETE …/{name}` | Address sets and security groups |
+| `GET /host/performance`, `GET /host/health`, `POST /host/update` | Performance hardware, hardware health, update request |
+| `GET`/`POST /host/networks`, `DELETE /host/networks/{name}` | Server networks |
 | `GET /balance`, `POST /peers/{name}/send/{vmid}` | Load balancing advice; live-migrate a VM to a peer |
 | `GET /tasks`, `GET /tasks/{id}` | Task log |
 
@@ -446,7 +461,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-591 tests pass on Linux and 503 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+633 tests pass on Linux and 539 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
@@ -487,6 +502,9 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
 - Containers cannot be moved to another storage or to another server.
 - The live console has no clipboard or audio (text can be typed in as keystrokes).
 - The interface is in Turkish and English only.
+- There is no Ceph, iSCSI or built-in ZFS/LVM-thin management, no migration over shared storage, no shared cluster state, no disk encryption (backup encryption exists), no WebAuthn, no interactive container terminal, no audio or SPICE, no OCI containers, no Terraform provider, no Ansible modules and no direct import from ESXi/vCenter.
+- Nothing has been tried with a Windows guest; the compatibility devices were tested with a Linux guest and a BIOS boot. Huge pages were only tested through the explanatory refusal.
+- LDAP was tested only against the small directory server in the tests, not against OpenLDAP or Active Directory. The SMART and IPMI readers were tested with hand-written sample output, not real hardware. The `redox-hostnet`, `redox-health` and `redox-update` units have not run under a real systemd.
 
 ## License
 

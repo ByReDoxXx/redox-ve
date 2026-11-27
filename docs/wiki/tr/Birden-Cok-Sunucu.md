@@ -253,3 +253,7 @@ Kendiliğinden bir geri dönüş yoktur; adımları siz atarsınız. Kaynak sunu
    yeniden kurulur.
 
 Bu sıra elle denenmedi; her adım tek tek sınanmış işlemlerden (taşıma, silme, çoğaltma) oluşur.
+
+## Yerleştirme etiketleri ve kendiliğinden dengeleme
+
+`ayri-<grup>` etiketli konuklar aynı sunucuda tutulmamaya çalışılır, `birlikte-<grup>` etiketliler ayrılmaz, `sabit` etiketli konuk taşınmaz. `redox serve --auto-balance` ile sunucu 5 dakika sıkışık kalırsa ya da bir ayrı tutma kuralı bozulursa bir konuk canlı taşınır (iki taşıma arasında en az 15 dakika). Karar kuralları birim testlidir; gerçek sunucular arasında kendiliğinden taşıma denenmedi.

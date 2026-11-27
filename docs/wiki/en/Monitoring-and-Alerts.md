@@ -36,3 +36,7 @@ redox vm df 103            # disk usage inside the guest
 **CSV export:** resource usage at `/usage.csv` (API: `GET /api/v1/usage.csv`), the audit log at `/audit.csv`
 (administrators only; `?q=` filters like the page). Cells that could run as formulas are neutralized for spreadsheet
 programs.
+
+## Hardware health and updates
+
+`redox-health.timer` reads `smartctl`, `ipmitool` and `apt` once an hour (without `smartmontools` and `ipmitool` those sections stay empty). A SMART failure, bad sectors, a hot or worn disk and an out-of-range sensor raise alerts. To update from the panel, also enable `redox-update.path`: it runs `apt-get upgrade`, removes no packages and does not reboot.

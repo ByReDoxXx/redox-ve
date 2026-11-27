@@ -26,7 +26,7 @@ fn add_forms() -> Markup {
     html! {
         details class="set" {
             summary class="btn sm quiet" { (icon("plus")) (tx("Konuk ağı ekle")) }
-            form class="addrow vds" method="post" action="/host/networks" {
+            form class="addrow gnet" method="post" action="/host/networks" {
                 input type="hidden" name="kind" value="guest";
                 div class="field" { label for="hn-g-name" { (tx("Ad")) } input id="hn-g-name" name="name" type="text" placeholder="vnet1" required spellcheck="false"; }
                 div class="field" { label for="hn-g-address" { (tx("Adres/ön ek")) } input id="hn-g-address" name="address" type="text" placeholder="10.10.0.1/24" required spellcheck="false"; }

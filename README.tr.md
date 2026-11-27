@@ -79,6 +79,17 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Baştan sona Türkçe ve İngilizce: üst çubukta dil düğmesi, sunucu varsayılanı için `--lang en`, API hata iletileri
   `Accept-Language` başlığına göre, komut satırı `REDOX_LANG=en` ile.
 
+- Windows ve aktarılan diskler için uyumluluk: SATA ya da virtio-scsi disk, Intel ağ kartı modelleri, ikinci CD sürücüsü, çalışırken kalıp değiştirme (`redox vm media`); disklerde TRIM açık.
+- Performans: çekirdek sabitleme (çalışırken de), NUMA düğümüne bellek bağlama, büyük sayfalar; düğüm sayfasında KSM durumu.
+- Yerleştirme etiketleri (`ayri-<grup>`, `birlikte-<grup>`, `sabit`) ve isteğe bağlı kendiliğinden yük dengeleme (`--auto-balance`).
+
+**Sunucu ve kimlik**
+
+- Panelden sunucu ağı (`redox hostnet`): bond, VLAN, köprü ve DHCP/DNS'li, NAT'lı ya da yalıtılmış konuk ağı. Adres ya da varsayılan yol taşıyan arayüze dokunulmaz.
+- Disk sağlığı (SMART), IPMI algılayıcıları, bekleyen güncellemeler ve isteğe bağlı panelden güncelleme.
+- Yerleşik TLS (`--tls-cert`, `--tls-key`, `redox tls self-signed`); Let's Encrypt için certbot yenileme kancası.
+- LDAP / Active Directory ile giriş (`--ldap`, `redox user ldap`); roller yerel kalır.
+
 **Depolama ve yedek**
 
 - Çalışan sanal makinede anlık görüntü (bellekle birlikte) ve yedek.
@@ -113,7 +124,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 
 - Port yönlendirmeli kullanıcı kipi NAT ya da köprü ağı.
 - Ağ kartı başına VLAN etiketi; konuk başına disk ve ağ hız sınırı.
-- Konuk başına gelen trafik güvenlik duvarı (nftables).
+- Konuk başına gelen ve giden trafik güvenlik duvarı (nftables), yeniden kullanılan güvenlik grupları ve adres kümeleri; konuğun bütün ağ kartları süzülür.
 
 **İşletim**
 
@@ -324,6 +335,10 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 | `GET`/`POST /mirrors`, `DELETE /mirrors/{vmid}` | Eşzamanlı disk yansıtma (kaynak) |
 | `GET /mirror-stores`, `POST /mirror-stores/{origin}/{vmid}/promote`, `DELETE …` | Eşler için tutulan kopyalar, devralma |
 | `GET`/`POST /vswitches`, `DELETE /vswitches/{name}`, `POST /vswitches/{name}/push` | Dağıtık anahtarlar |
+| `POST /guests/{vmid}/media` | Çalışan konuğun CD sürücüsündeki kalıbı değiştirme |
+| `GET`/`POST /firewall/sets`, `/firewall/groups`, `DELETE …/{name}` | Adres kümeleri ve güvenlik grupları |
+| `GET /host/performance`, `GET /host/health`, `POST /host/update` | Performans donanımı, donanım sağlığı, güncelleme isteği |
+| `GET`/`POST /host/networks`, `DELETE /host/networks/{name}` | Sunucu ağları |
 | `GET /balance`, `POST /peers/{name}/send/{vmid}` | Yük dengeleme önerisi; sanal makineyi eşe canlı taşıma |
 | `GET /tasks`, `GET /tasks/{id}` | Görev günlüğü |
 
@@ -448,7 +463,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 591, Windows'ta 503 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 633, Windows'ta 539 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
@@ -489,6 +504,9 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
 - Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).
 - Arayüz yalnızca Türkçe ve İngilizcedir.
+- Ceph, iSCSI, yerleşik ZFS/LVM-thin yönetimi, ortak depoda taşıma, ortak küme durumu, disk şifreleme (yedek şifreleme var), WebAuthn, konteynerde etkileşimli terminal, ses ve SPICE, OCI konteynerleri, Terraform sağlayıcısı, Ansible modülleri ve ESXi/vCenter'dan doğrudan aktarma yoktur.
+- Windows konukla hiçbir şey denenmedi; uyumluluk aygıtları Linux konukla ve BIOS açılışıyla sınandı. Büyük sayfalar yalnızca açıklayıcı ret yoluyla sınandı.
+- LDAP yalnızca testlerdeki küçük dizin sunucusuna karşı sınandı; OpenLDAP ya da Active Directory ile denenmedi. SMART ve IPMI okuyucuları elle yazılmış örnek çıktılarla sınandı; gerçek donanımda denenmedi. `redox-hostnet`, `redox-health` ve `redox-update` birimleri gerçek systemd altında çalıştırılmadı.
 
 ## Lisans
 

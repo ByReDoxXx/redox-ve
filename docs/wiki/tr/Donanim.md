@@ -47,3 +47,18 @@ Her diski ayrı bir ZFS birimine (zvol) ya da mantıksal birime koyan yerleşik 
 birlikte taşınır. Çalışan sanal makine **durdurulmadan** taşınır: diskleri konuk çalışırken yeni alana aynalanır, sonra
 oraya geçirilir ve eski dosyalar silinir. Yalnızca şimdiki içerik aynalandığı için anlık görüntüsü olan çalışan konuk
 taşınmak için kapatılmalıdır.
+
+## Windows ve aktarılan diskler
+
+Konuk virtio sürücüsü bilmiyorsa **Disk denetleyicisi** olarak SATA, **Ağ kartı modeli** olarak Intel seçin. Windows kurarken kurulum kalıbını birinci, `virtio-win` kalıbını ikinci CD sürücüsüne takın.
+
+```bash
+redox vm set 103 disk-bus=sata nic-model=e1000e iso2=virtio-win.iso
+redox vm media 103 2 baska.iso
+```
+
+Çalışırken yalnızca konuk açılırken kalıp takılı olan sürücü değiştirilir. Windows ile denenmedi.
+
+## Performans
+
+`cpu-affinity=0-3` konuğu o çekirdeklere sabitler (çalışırken de değişir). `numa-node=0` belleği o düğüme bağlar. `hugepages=true` için sunucuda önce `vm.nr_hugepages` ayrılmalıdır. KSM için `redox-ksm.service` birimini etkinleştirin; birbirine güvenmeyen kullanıcılar varsa açmayın.
