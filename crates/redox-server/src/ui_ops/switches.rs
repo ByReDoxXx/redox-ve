@@ -30,25 +30,25 @@ fn parse(f: &SwitchForm) -> Result<VSwitch, String> {
 fn report(done: String, results: &[(String, Result<(), String>)]) -> Redirect {
     let failed: Vec<String> = results.iter().filter_map(|(peer, r)| r.as_ref().err().map(|e| format!("{peer}: {}", tfmt(e.clone())))).collect();
     if failed.is_empty() {
-        flash("/cluster", "notice", &done)
+        flash("/cluster?tab=ag", "notice", &done)
     } else {
-        flash("/cluster", "error", &format!("{} {}", tx("Bazı eşlerde işlem yapılamadı:"), failed.join("; ")))
+        flash("/cluster?tab=ag", "error", &format!("{} {}", tx("Bazı eşlerde işlem yapılamadı:"), failed.join("; ")))
     }
 }
 
 pub async fn switch_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<SwitchForm>) -> Redirect {
     let name = f.name.trim().to_string();
-    let error = |e: Error| flash("/cluster", "error", &(capitalize(&e.to_string()) + "."));
+    let error = |e: Error| flash("/cluster?tab=ag", "error", &(capitalize(&e.to_string()) + "."));
     match f.op.as_str() {
         "save" => match parse(&f) {
-            Err(message) => flash("/cluster", "error", &message),
+            Err(message) => flash("/cluster?tab=ag", "error", &message),
             Ok(switch) => match st.vswitch_put(switch, &me.user) {
-                Ok(()) => flash("/cluster", "notice", &tfmt(format!("{name} anahtarı kaydedildi."))),
+                Ok(()) => flash("/cluster?tab=ag", "notice", &tfmt(format!("{name} anahtarı kaydedildi."))),
                 Err(e) => error(e),
             },
         },
         "remove" if f.everywhere.is_none() => match st.vswitch_remove(&name, &me.user) {
-            Ok(()) => flash("/cluster", "notice", &tfmt(format!("{name} anahtarı silindi."))),
+            Ok(()) => flash("/cluster?tab=ag", "notice", &tfmt(format!("{name} anahtarı silindi."))),
             Err(e) => error(e),
         },
         // Eşlerle konuşan işler istek iş parçacığını tutmaz.
@@ -59,9 +59,9 @@ pub async fn switch_action(State(st): State<AppState>, Extension(me): Extension<
                 Ok(Ok(results)) if push => report(tfmt(format!("{name} anahtarı eşlere gönderildi.")), &results),
                 Ok(Ok(results)) => report(tfmt(format!("{name} anahtarı silindi.")), &results),
                 Ok(Err(e)) => error(e),
-                Err(_) => flash("/cluster", "error", tx("İşlem başlatılamadı.")),
+                Err(_) => flash("/cluster?tab=ag", "error", tx("İşlem başlatılamadı.")),
             }
         }
-        _ => flash("/cluster", "error", tx("Bilinmeyen işlem.")),
+        _ => flash("/cluster?tab=ag", "error", tx("Bilinmeyen işlem.")),
     }
 }

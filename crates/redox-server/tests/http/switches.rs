@@ -31,7 +31,7 @@ pub(super) async fn distributed_switches_are_managed_from_the_api_and_the_cluste
     let (status, v) = api(&app, post_json("/api/v1/vswitches/vds-web/push", &json!({}))).await;
     assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("eş sunucu yok"), "{v}");
 
-    let shown = page(&app, "/cluster").await;
+    let shown = page(&app, "/cluster?tab=ag").await;
     assert!(shown.contains("Dağıtık anahtarlar") && shown.contains("vds-web") && shown.contains("10.9.0.2") && !shown.contains("Eşlerden de sil"), "{shown}");
     assert!(post_ok(&app, "/cluster/switch", "op=save&name=vds-db&vni=200&mtu=1400&members=10.9.0.1%2C+10.9.0.3").await.contains("notice="));
     assert_eq!(state.snapshot().vswitches.len(), 2);
@@ -85,7 +85,7 @@ pub(super) async fn a_switch_is_sent_to_the_peers_and_removed_from_them() {
     assert_eq!(remote.snapshot().vswitches, hub.snapshot().vswitches, "eşteki tanım birebir aynı");
     poll(&hub).await;
     assert_eq!(states(&api(&app, get("/api/v1/vswitches")).await.1)[0], json!(["uzak", "same"]));
-    assert!(page(&app, "/cluster").await.contains("uzak: aynı"));
+    assert!(page(&app, "/cluster?tab=ag").await.contains("uzak: aynı"));
     // Eşte elle değiştirilen tanım "farklı" görünür.
     remote.mutate(|c| c.vswitches[0].mtu = 1300);
     poll(&hub).await;

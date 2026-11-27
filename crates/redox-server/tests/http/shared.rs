@@ -60,7 +60,7 @@ fn calls(d: &Sharing) -> Vec<String> {
 #[tokio::test]
 async fn without_shared_storage_there_is_no_card_and_nothing_to_adopt() {
     let (app, _) = setup();
-    assert!(!page(&app, "/cluster").await.contains("/cluster/shared"));
+    assert!(!page(&app, "/cluster?tab=koruma").await.contains("/cluster/shared"));
     let (status, list) = api(&app, get("/api/v1/shared")).await;
     assert_eq!((status, list.as_array().map(Vec::len)), (StatusCode::OK, Some(0)));
     assert_eq!(send(&app, get("/api/v1/shared/offer/103")).await.0, StatusCode::NOT_FOUND, "ortak depoda olmayan konuk için eş 404 görür");
@@ -125,7 +125,7 @@ async fn a_guest_whose_ownership_was_taken_is_stopped_and_a_quiet_owner_can_be_r
     let g = state.snapshot().guest(103).unwrap().clone();
     assert_eq!((g.status, g.hw.handed_to), (GuestStatus::Stopped, None));
     assert!(!calls(&driver).iter().any(|c| c.starts_with("destroy")), "devralma hiçbir diske dokunmaz");
-    assert!(page(&app, "/cluster").await.contains("Ortak depo"));
+    assert!(page(&app, "/cluster?tab=koruma").await.contains("Ortak depo"));
 
     // Paylaşım kopuksa hiçbir konuk kapatılmaz (karar verilemez).
     std::fs::remove_file(driver.dir.join(".redox-shared")).unwrap();

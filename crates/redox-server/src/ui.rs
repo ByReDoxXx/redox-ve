@@ -193,7 +193,7 @@ pub async fn node(
         return ctx.not_found(&tfmt(format!("“{id}” adında bir düğüm yok.")));
     };
     let back = with_q(&format!("/nodes/{id}"), &ctx.query.q);
-    Html(view::node(&ctx.page(Current::Node(id.clone()), back), node, &st.update_status(), &st.host_net_report())).into_response()
+    Html(view::node(&ctx.page(Current::Node(id.clone()), back), node, &st.update_status())).into_response()
 }
 
 fn parse_vmid(raw: &str) -> Option<VmId> {
@@ -235,7 +235,8 @@ pub async fn peers(State(st): State<AppState>,
     let balance = crate::state::balance::recommend(&st.snapshot(), &views);
     let switches = st.vswitch_report();
     let shared = (!st.shared_storage_ids().is_empty(), st.shared_list(crate::state::now()));
-    Html(view::peers(&ctx.page(Current::Peers, "/cluster"), &views, &balance, &switches, &shared))
+    let section = view::Section::parse(&ctx.query.tab);
+    Html(view::peers(&ctx.page(Current::Peers, section.href()), section, &views, &balance, &switches, &shared, &st.host_net_report()))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -295,7 +296,7 @@ pub struct ReplicaForm {
 /// Birleşik görünümdeki çoğaltma formları.
 pub async fn replica_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<ReplicaForm>) -> Redirect {
     let Some(vmid) = parse_vmid(&f.vmid) else {
-        return flash("/cluster", "error", (tx("Geçersiz konuk kimliği.")));
+        return flash("/cluster?tab=koruma", "error", (tx("Geçersiz konuk kimliği.")));
     };
     let peer = f.peer.trim().to_string();
     let result = match f.op.as_str() {
@@ -304,14 +305,14 @@ pub async fn replica_action(State(st): State<AppState>, Extension(me): Extension
             tokio::task::spawn_blocking(move || st.replica_run(&peer, vmid)).await.unwrap_or_else(|e| Err(Error::Driver(e.to_string()))).map(|()| (tx("Çoğaltma başladı; sonuç görevlerde görünecek.")).to_string())
         }
         "save" => match (f.every_min.trim().parse::<u32>(), f.failover_min.trim()) {
-            (Err(_), _) => return flash("/cluster", "error", (tx("Aralık dakika olarak bir tam sayı olmalı."))),
+            (Err(_), _) => return flash("/cluster?tab=koruma", "error", (tx("Aralık dakika olarak bir tam sayı olmalı."))),
             (Ok(minutes), failover) => {
                 let failover = match failover {
                     "" | "0" => Ok(None),
                     text => text.parse::<u32>().map(Some),
                 };
                 match failover {
-                    Err(_) => return flash("/cluster", "error", (tx("Devralma süresi dakika olarak bir tam sayı olmalı (0 kapatır)."))),
+                    Err(_) => return flash("/cluster?tab=koruma", "error", (tx("Devralma süresi dakika olarak bir tam sayı olmalı (0 kapatır)."))),
                     Ok(failover) => st
                         .replica_put(&peer, vmid, minutes, &me.user)
                         .and_then(|()| if st.snapshot().replicas.iter().any(|r| r.peer == peer && r.source == vmid && r.failover_min == failover) { Ok(()) } else { st.replica_failover_set(&peer, vmid, failover, &me.user) })
@@ -323,18 +324,18 @@ pub async fn replica_action(State(st): State<AppState>, Extension(me): Extension
             "" | "0" => st.replica_failover_set(&peer, vmid, None, &me.user).map(|()| (tx("Kendiliğinden devralma kapatıldı.")).to_string()),
             text => match text.parse::<u32>() {
                 Ok(minutes) => st.replica_failover_set(&peer, vmid, Some(minutes), &me.user).map(|()| tfmt(format!("{peer} sunucusuna {minutes} dakika ulaşılamazsa ve bir hakem onaylarsa yedek kopya kendiliğinden başlatılacak."))),
-                Err(_) => return flash("/cluster", "error", (tx("Devralma süresi dakika olarak bir tam sayı olmalı (0 kapatır)."))),
+                Err(_) => return flash("/cluster?tab=koruma", "error", (tx("Devralma süresi dakika olarak bir tam sayı olmalı (0 kapatır)."))),
             },
         },
         "remove" => st.replica_remove(&peer, vmid, &me.user).map(|()| (tx("Çoğaltma kaldırıldı; yedek kopya olağan bir konuk olarak duruyor.")).to_string()),
         _ => match f.every_min.trim().parse::<u32>() {
             Ok(minutes) => st.replica_put(&peer, vmid, minutes, &me.user).map(|()| tfmt(format!("{peer} sunucusundaki {vmid}, {minutes} dakikada bir buraya çoğaltılacak."))),
-            Err(_) => return flash("/cluster", "error", (tx("Aralık dakika olarak bir tam sayı olmalı."))),
+            Err(_) => return flash("/cluster?tab=koruma", "error", (tx("Aralık dakika olarak bir tam sayı olmalı."))),
         },
     };
     match result {
-        Ok(text) => flash("/cluster", "notice", &text),
-        Err(e) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
+        Ok(text) => flash("/cluster?tab=koruma", "notice", &text),
+        Err(e) => flash("/cluster?tab=koruma", "error", &(capitalize(&e.to_string()) + ".")),
     }
 }
 

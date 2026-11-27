@@ -667,7 +667,7 @@ pub(super) async fn single_sign_on_maps_the_provider_identity_to_a_local_user() 
     assert!(cookies.iter().any(|c| c.starts_with("redox_oidc=;") && c.contains("Max-Age=0")), "durum çerezi silinir");
     let (status, _, home) = send(&app, anon(Method::GET, "/").header(COOKIE, session).body(Body::empty()).unwrap()).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(home.contains("izleyici <small>salt okunur</small>"), "rol yereldir: sağlayıcı yalnızca kimliği doğrular");
+    assert!(home.contains("<b>izleyici</b><small>salt okunur</small>"), "rol yereldir: sağlayıcı yalnızca kimliği doğrular");
 
     // Sağlayıcıya giden istek: kod, gizli anahtar ve PKCE doğrulayıcısı (meydan okumanın ön görüntüsü).
     let sent: std::collections::HashMap<String, String> = serde_urlencoded::from_str(&token_requests.lock().unwrap()[0]).unwrap();
@@ -806,13 +806,13 @@ pub(super) async fn replication_card_shows_and_sets_witnessed_failover() {
         c.replicas[0].failover_note = Some("hiçbir hakem sunucuya ulaşılamıyor: bu sunucunun ağı kopmuş olabilir, devralınmadı".into());
         c.replicas[0].delta = Some((1, 3));
     });
-    let html = page(&app, "/cluster").await;
+    let html = page(&app, "/cluster?tab=koruma").await;
     for needle in ["Devralma", r#"name="failover_min""#, r#"value="10""#, "Engellendi", "Devralınmadı:", "hiçbir hakem sunucuya", "10 dk sonra devralır", "60 dk'da bir", "Önce hakeme", r#"value="save""#, r#"class="set-panel""#] {
         assert!(html.contains(needle), "{needle}");
     }
     // Devralınmış çoğaltma öyle görünür.
     st.mutate(|c| c.replicas[0].failed_over = Some(1_700_000_000));
-    let html = page(&app, "/cluster").await;
+    let html = page(&app, "/cluster?tab=koruma").await;
     assert!(html.contains("Devralındı") && html.contains("iki kopyadan birini kapatın") && !html.contains("Devralınmadı:"));
     // Ayar bölmesi aralığı ve devralmayı birlikte kaydeder.
     let (status, headers, _) = send(&app, post_form("/cluster/replica", "peer=ankara&vmid=500&op=save&every_min=30&failover_min=20")).await;

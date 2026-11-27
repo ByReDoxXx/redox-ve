@@ -409,7 +409,7 @@ pub(super) async fn the_cluster_page_turns_fault_tolerance_on_and_off() {
     // Eş listesi okununca (iki eş) form görünür.
     let state = w.primary.state.clone();
     tokio::task::spawn_blocking(move || state.peers().poll(now())).await.unwrap();
-    let shown = page(&w.primary.app, "/cluster").await;
+    let shown = page(&w.primary.app, "/cluster?tab=koruma").await;
     assert!(shown.contains("Hata toleransı") && shown.contains("/cluster/ft") && shown.contains(&format!("option value=\"{vmid}\"")), "{shown}");
     for bad in [format!("op=on&vmid={vmid}&peer=yedek&witness=yedek"), "op=on&vmid=abc&peer=yedek&witness=hakem".to_string(), format!("op=bilinmez&vmid={vmid}")] {
         assert!(post_ok(&w.primary.app, "/cluster/ft", &bad).await.contains("error="), "{bad}");
@@ -419,9 +419,9 @@ pub(super) async fn the_cluster_page_turns_fault_tolerance_on_and_off() {
     assert!(post_ok(&w.primary.app, "/cluster/ft", &format!("op=on&vmid={vmid}&peer=yedek&witness=hakem")).await.contains("notice="));
     w.act(&w.primary, Action::Start).await.unwrap();
     w.protect(now()).await;
-    let shown = page(&w.primary.app, "/cluster").await;
+    let shown = page(&w.primary.app, "/cluster?tab=koruma").await;
     assert!(shown.contains("korunuyor") && shown.contains("value=\"off\""), "{shown}");
-    let twin = page(&w.standby.app, "/cluster").await;
+    let twin = page(&w.standby.app, "/cluster?tab=koruma").await;
     assert!(twin.contains("Buradaki ikiz"), "{twin}");
     assert!(post_ok(&w.primary.app, "/cluster/ft", &format!("op=off&vmid={vmid}")).await.contains("notice="));
     assert!(w.primary.state.snapshot().protections.is_empty() && w.standby.state.snapshot().standbys.is_empty());

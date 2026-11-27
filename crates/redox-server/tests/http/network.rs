@@ -85,7 +85,7 @@ pub(super) async fn security_groups_and_address_sets_are_managed_and_used_by_gue
     assert!(post_ok(&app, "/cluster/firewall", "op=save-set&name=ofis&entries=10.0.0.0%2F24%2C+192.168.1.5").await.contains("notice="));
     assert!(post_ok(&app, "/cluster/firewall", "op=save-group&name=web&rules=tcp%2F443%2C+tcp%2F22+from+%40ofis&out=udp%2F53").await.contains("notice="));
     assert!(post_ok(&app, "/cluster/firewall", "op=save-group&name=db&rules=tcp%2F5432+from+%40yok&out=").await.contains("error="));
-    let cluster = page(&app, "/cluster").await;
+    let cluster = page(&app, "/cluster?tab=ag").await;
     assert!(cluster.contains("@ofis") && cluster.contains("tcp/22 from @ofis") && cluster.contains("udp/53"), "{cluster}");
 
     // Konuğa verilir; Seçenekler sekmesi alanları gösterir ve kaydeder.
@@ -111,10 +111,9 @@ pub(super) async fn security_groups_and_address_sets_are_managed_and_used_by_gue
 }
 
 #[tokio::test]
-pub(super) async fn server_networks_are_defined_from_the_node_page_and_the_api() {
+pub(super) async fn server_networks_are_defined_from_the_network_page_and_the_api() {
     let (app, state) = setup();
-    let node = state.snapshot().nodes[0].id.clone();
-    let url = format!("/nodes/{node}");
+    let url = "/cluster?tab=ag".to_string();
     assert!(page(&app, &url).await.contains("Panelden tanımlanmış ağ yok."));
     assert!(post_ok(&app, "/host/networks", "op=save&kind=guest&name=vnet1&address=10.10.0.1%2F24&dhcp=10.10.0.50-10.10.0.99&nat=1").await.contains("notice="));
     assert!(post_ok(&app, "/host/networks", "op=save&kind=bond&name=bond0&mode=802.3ad&ports=enp2s0%2C+enp3s0").await.contains("notice="));

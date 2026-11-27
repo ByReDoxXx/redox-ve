@@ -110,7 +110,7 @@ pub(super) async fn viewer_can_read_but_not_change() {
 
     let (status, _, home) = send(&app, get("/")).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(home.contains("izleyici <small>salt okunur</small>") && !home.contains("Yeni Konuk") && !home.contains("/guests/new"));
+    assert!(home.contains("<b>izleyici</b><small>salt okunur</small>") && !home.contains("Yeni Konuk") && !home.contains("/guests/new"));
     let (_, _, guest) = send(&app, get("/guests/103")).await;
     assert!(guest.contains("Salt okunur hesap") && !guest.contains(r#"name="action""#) && !guest.contains("/guests/103/delete"));
     assert_eq!(send(&app, get("/api/v1/guests")).await.0, StatusCode::OK);

@@ -14,17 +14,17 @@ pub struct MirrorForm {
 
 pub async fn mirror_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<MirrorForm>) -> Redirect {
     let Ok(vmid) = f.vmid.trim().parse::<VmId>() else {
-        return flash("/cluster", "error", tx("Geçersiz konuk kimliği."));
+        return flash("/cluster?tab=koruma", "error", tx("Geçersiz konuk kimliği."));
     };
-    let error = |e: Error| flash("/cluster", "error", &(capitalize(&e.to_string()) + "."));
+    let error = |e: Error| flash("/cluster?tab=koruma", "error", &(capitalize(&e.to_string()) + "."));
     if f.op == "add" {
         return match st.mirror_enable(vmid, f.peer.trim(), &me.user) {
-            Ok(()) => flash("/cluster", "notice", &tfmt(format!("{vmid} diskleri {} sunucusuna yansıtılacak; ilk eşitleme birazdan başlar.", f.peer.trim()))),
+            Ok(()) => flash("/cluster?tab=koruma", "notice", &tfmt(format!("{vmid} diskleri {} sunucusuna yansıtılacak; ilk eşitleme birazdan başlar.", f.peer.trim()))),
             Err(e) => error(e),
         };
     }
     if !matches!(f.op.as_str(), "off" | "promote" | "delete") {
-        return flash("/cluster", "error", tx("Bilinmeyen işlem."));
+        return flash("/cluster?tab=koruma", "error", tx("Bilinmeyen işlem."));
     }
     // Eşle ya da sürücüyle konuşan işler istek iş parçacığını tutmaz.
     let (op, origin, delete_copy, user) = (f.op.clone(), f.origin.trim().to_string(), f.delete_copy.is_some(), me.user.clone());
@@ -34,8 +34,8 @@ pub async fn mirror_action(State(st): State<AppState>, Extension(me): Extension<
         _ => st.mirror_store_delete(&origin, vmid, &user).map(|()| tfmt(format!("{origin}/{vmid} kopyası silindi."))),
     });
     match work.await {
-        Ok(Ok(done)) => flash("/cluster", "notice", &done),
+        Ok(Ok(done)) => flash("/cluster?tab=koruma", "notice", &done),
         Ok(Err(e)) => error(e),
-        Err(_) => flash("/cluster", "error", tx("İşlem başlatılamadı.")),
+        Err(_) => flash("/cluster?tab=koruma", "error", tx("İşlem başlatılamadı.")),
     }
 }

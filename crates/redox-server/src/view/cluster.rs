@@ -99,7 +99,7 @@ pub fn datacenter(p: &Page) -> String {
     layout(p, (tx("Genel Bakış")), &[((tx("Genel Bakış")), "/")], false, body)
 }
 
-pub fn node(p: &Page, n: &Node, updates: &(bool, Option<redox_core::health::UpdateRun>), networks: &[crate::state::hostnet::HostNetReport]) -> String {
+pub fn node(p: &Page, n: &Node, updates: &(bool, Option<redox_core::health::UpdateRun>)) -> String {
     let c = p.cluster;
     let q = p.q.to_lowercase();
     let all: Vec<&Guest> = c.guests_on(&n.id).collect();
@@ -126,7 +126,6 @@ pub fn node(p: &Page, n: &Node, updates: &(bool, Option<redox_core::health::Upda
             (usage_card(p, "node", n.cores as u64, n.cpu_pct, mp))
             @if p.real { (super::perf::perf_card(&crate::host::performance())) }
             @if let Some(health) = &c.host_health { (super::health::health_card(p, health, updates.0, updates.1.as_ref())) }
-            (super::hostnet::hostnet_card(p, networks))
             @if p.admin && !p.cluster.maintenance {
                 div class="card" {
                     header { h2 { (tx("Bakım")) } (tip("Sunucuyu güncellemeden önce konukları düzenli kapatır; bakım bitince yeniden başlatır.")) span class="note" { (tx("sunucuyu güncellemeden ya da yeniden başlatmadan önce")) } }
@@ -413,7 +412,67 @@ fn balance_card(p: &Page, b: &crate::state::balance::Balance) -> Markup {
 }
 
 /// Birleşik görünüm: bu sunucu ve eş sunucuların konukları tek sayfada, salt okunur.
-pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state::balance::Balance, switches: &[crate::state::vswitch::SwitchReport], shared: &(bool, Vec<crate::state::shared::SharedItem>)) -> String {
+/// Altyapı sayfasının bölümü.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Servers,
+    Network,
+    Protection,
+}
+
+impl Section {
+    pub fn parse(tab: &str) -> Section {
+        match tab {
+            "ag" => Section::Network,
+            "koruma" => Section::Protection,
+            _ => Section::Servers,
+        }
+    }
+
+    pub fn href(self) -> &'static str {
+        match self {
+            Section::Servers => "/cluster",
+            Section::Network => "/cluster?tab=ag",
+            Section::Protection => "/cluster?tab=koruma",
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn peers(p: &Page, section: Section, peers: &[crate::peers::PeerView], balance: &crate::state::balance::Balance, switches: &[crate::state::vswitch::SwitchReport], shared: &(bool, Vec<crate::state::shared::SharedItem>), networks: &[crate::state::hostnet::HostNetReport]) -> String {
+    if section == Section::Network {
+        let c = p.cluster;
+        let body = html! {
+            (page_head(html! { (tx("Ağ")) }, sub(vec![
+                html! { span { (networks.len()) (tx(" sunucu ağı")) } },
+                html! { span { (switches.len()) (tx(" dağıtık anahtar")) } },
+                html! { span { (c.fw_groups.len()) (tx(" güvenlik grubu")) } },
+            ]), html! {}, "hostnet list", &[]))
+            div class="stack" {
+                (super::hostnet::hostnet_card(p, networks))
+                (super::switches::switch_card(p, switches, !peers.is_empty()))
+                (super::fwsets::fw_card(p))
+            }
+        };
+        return layout(p, (tx("Ağ")), &[((tx("Ağ")), "/cluster?tab=ag")], false, body);
+    }
+    if section == Section::Protection {
+        let c = p.cluster;
+        let body = html! {
+            (page_head(html! { (tx("Koruma")) }, sub(vec![
+                html! { span { (c.replicas.len()) (tx(" çoğaltma")) } },
+                html! { span { (c.mirrors.len()) (tx(" yansıtma")) } },
+                html! { span { (c.protections.len()) (tx(" hata toleransı")) } },
+            ]), html! {}, "replica list", &[]))
+            div class="stack" {
+                (replicas_card(p, peers))
+                (super::mirrors::mirror_cards(p, peers))
+                (super::ft::ft_card(p, peers))
+                (super::shared::shared_card(p, &shared.1, shared.0, peers))
+            }
+        };
+        return layout(p, (tx("Koruma")), &[((tx("Koruma")), "/cluster?tab=koruma")], false, body);
+    }
     let c = p.cluster;
     let local = c.summary();
     let online = peers.iter().filter(|v| v.online()).count();
@@ -427,15 +486,9 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state:
         });
     }
     let body = html! {
-        (page_head(html! { (tx("Küme")) }, sub(facts), html! {}, "peer list", &[]))
+        (page_head(html! { (tx("Sunucular")) }, sub(facts), html! {}, "peer list", &[]))
         div class="stack" {
             (balance_card(p, balance))
-            (replicas_card(p, peers))
-            (super::shared::shared_card(p, &shared.1, shared.0, peers))
-            (super::mirrors::mirror_cards(p, peers))
-            (super::ft::ft_card(p, peers))
-            (super::switches::switch_card(p, switches, !peers.is_empty()))
-            (super::fwsets::fw_card(p))
             @if p.admin {
                 div class="card" {
                     header { h2 { (tx("Destek paketi")) } (tip("Sorun bildirirken gönderilecek durum dökümü.")) a class="btn sm end" href="/support" download { (icon("disk")) (tx("İndir")) } }
@@ -533,7 +586,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state:
             }
         }
     };
-    layout(p, (tx("Küme")), &[((tx("Küme")), "/cluster")], false, body)
+    layout(p, (tx("Sunucular")), &[((tx("Sunucular")), "/cluster")], false, body)
 }
 
 /// Görev günlüğü. `q` konuk kimliğine ya da komut metnine göre süzer.

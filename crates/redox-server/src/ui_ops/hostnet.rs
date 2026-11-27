@@ -46,7 +46,7 @@ fn parse(f: &HostNetForm) -> Result<HostNet, String> {
 }
 
 pub async fn host_net_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<HostNetForm>) -> Redirect {
-    let node = st.snapshot().nodes.first().map(|n| format!("/nodes/{}", n.id)).unwrap_or_else(|| "/".to_string());
+    let node = "/cluster?tab=ag".to_string();
     let (outcome, done) = match f.op.as_str() {
         "remove" => {
             let name = f.name.trim();

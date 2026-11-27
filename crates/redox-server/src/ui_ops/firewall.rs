@@ -15,7 +15,7 @@ pub struct FirewallForm {
 
 pub async fn firewall_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<FirewallForm>) -> Redirect {
     let name = f.name.trim().to_string();
-    let error = |message: String| flash("/cluster", "error", &message);
+    let error = |message: String| flash("/cluster?tab=ag", "error", &message);
     let outcome = match f.op.as_str() {
         "save-set" => {
             let set = IpSet { name: name.clone(), entries: f.entries.split([',', ' ', '\n']).map(str::trim).filter(|e| !e.is_empty()).map(str::to_string).collect() };
@@ -33,8 +33,8 @@ pub async fn firewall_action(State(st): State<AppState>, Extension(me): Extensio
         _ => return error(tx("Bilinmeyen işlem.").to_string()),
     };
     match outcome {
-        Ok(()) if f.op.starts_with("remove") => flash("/cluster", "notice", &tfmt(format!("{name} tanımı silindi."))),
-        Ok(()) => flash("/cluster", "notice", &tfmt(format!("{name} tanımı kaydedildi."))),
+        Ok(()) if f.op.starts_with("remove") => flash("/cluster?tab=ag", "notice", &tfmt(format!("{name} tanımı silindi."))),
+        Ok(()) => flash("/cluster?tab=ag", "notice", &tfmt(format!("{name} tanımı kaydedildi."))),
         Err(e) => error(capitalize(&e.to_string()) + "."),
     }
 }

@@ -158,6 +158,9 @@ fn rail(p: &Page) -> Markup {
                 img class="mark" src=(asset("logo.svg")) alt="" width="33" height="34";
                 img class="word" src=(asset("wordmark.svg")) alt="" width="113" height="40";
             }
+            // Dar ekranda menü bu kutuyla açılır (JavaScript'siz).
+            input class="navt sr" type="checkbox" id="navt" aria-label=(tx("Menüyü aç"));
+            label class="btn sm navb" for="navt" { (icon("menu")) (tx("Menü")) }
             nav class="nav" aria-label=(tx("Bölümler")) {
                 div class="eyebrow" { (tx("İşletim")) }
                 (item("/", "datacenter", (tx("Genel Bakış")), matches!(p.current, Current::Datacenter | Current::Node(_)), none()))
@@ -166,17 +169,19 @@ fn rail(p: &Page) -> Markup {
                 (item("/storage", "storage", (tx("Depolama")), p.current == Current::Storage, none()))
                 (item("/backups", "backup", (tx("Yedekler")), p.current == Current::Backups,
                     html! { @if !p.cluster.backups.is_empty() { span class="count" { (p.cluster.backups.len()) } } }))
+                div class="eyebrow" { (tx("Altyapı")) }
+                (item("/cluster?tab=ag", "network", (tx("Ağ")), at("/cluster?tab=ag"), none()))
+                (item("/cluster?tab=koruma", "guard", (tx("Koruma")), at("/cluster?tab=koruma"), none()))
+                (item("/cluster", "node", (tx("Sunucular")), p.current == Current::Peers && !at("/cluster?tab="), none()))
                 (item("/pools", "cpu", (tx("Havuzlar")), at("/pools"),
                     html! { @if !p.cluster.pools.is_empty() { span class="count" { (p.cluster.pools.len()) } } }))
-                (item("/cluster", "network", (tx("Küme")), p.current == Current::Peers, none()))
                 div class="eyebrow" { (tx("Yönetim")) }
                 (item("/tasks", "clock", (tx("Görevler")), p.current == Current::Tasks,
                     html! { @if running > 0 { span class="live" aria-label={ (running) (tx(" görev sürüyor")) } { (running) } } }))
                 @if p.admin {
                     (item("/users", "user", (tx("Kullanıcılar")), at("/users"), none()))
-                    (item("/audit", "shield", (tx("Denetim Günlüğü")), at("/audit"), none()))
+                    (item("/audit", "log", (tx("Denetim Günlüğü")), at("/audit"), none()))
                 }
-                (item("/account", "settings", (tx("Hesabım")), at("/account"), none()))
                 (item("/help", "terminal", (tx("Komut Satırı")), at("/help"), none()))
             }
             div class="host" aria-label=(tx("Sunucu durumu")) {
@@ -190,7 +195,7 @@ fn rail(p: &Page) -> Markup {
                 div class="row" { span { "Disk" } (bar(s.storage_pct, (tx("Depolama")), true)) span class="num" { (s.storage_pct) "%" } }
             }
             div class="me" {
-                a class="who" href="/account" { (icon("user")) (p.user) " " small { (role_note(p)) } }
+                a class="who" href="/account" aria-current=[cur(at("/account"))] title=(tx("Hesabım")) { (icon("user")) span class="id" { b { (p.user) } small { (role_note(p)) } } }
                 @let other = crate::i18n::current().other();
                 a class="btn quiet sm" href={ "/lang?to=" (other.code()) "&back=" (enc(&p.back)) } lang=(other.code())
                     aria-label={ @if other == crate::i18n::Lang::En { "Switch to English" } @else { "Türkçeye geç" } } { (other.code().to_uppercase()) }

@@ -284,7 +284,7 @@ pub(super) async fn the_cluster_page_manages_mirrors_and_held_copies() {
     source.state.peers().configure(redox_server::peers::parse_file(&format!("yedek http://127.0.0.1:{} {ADMIN_TOKEN}\n", target.port)).unwrap());
     let vmid = source.state.snapshot().guests.iter().find(|g| g.status == GuestStatus::Running && redox_core::mirror_blocker(g).is_none()).unwrap().vmid;
     let origin = redox_server::state::mirrors::origin_name(&source.state.snapshot());
-    assert!(page(&source.app, "/cluster").await.contains("Disk yansıtma"));
+    assert!(page(&source.app, "/cluster?tab=koruma").await.contains("Disk yansıtma"));
     for bad in ["op=add&vmid=abc&peer=yedek".to_string(), format!("op=add&vmid={vmid}&peer=yok"), format!("op=bilinmez&vmid={vmid}")] {
         assert!(post_ok(&source.app, "/cluster/mirror", &bad).await.contains("error="), "{bad}");
     }
@@ -292,9 +292,9 @@ pub(super) async fn the_cluster_page_manages_mirrors_and_held_copies() {
     tick(&source, 100).await;
     source.disks.set(1, true, 100, 100);
     tick(&source, 101).await;
-    let shown = page(&source.app, "/cluster").await;
+    let shown = page(&source.app, "/cluster?tab=koruma").await;
     assert!(shown.contains("pill ok") && shown.contains(">eşit<") || shown.contains("eşit"), "{shown}");
-    let held = page(&target.app, "/cluster").await;
+    let held = page(&target.app, "/cluster?tab=koruma").await;
     assert!(held.contains("Tutulan kopyalar") && held.contains(&origin) && held.contains("/cluster/mirror"), "{held}");
     // Kaynak yaşarken devralma formdan da reddedilir.
     assert!(post_ok(&target.app, "/cluster/mirror", &format!("op=promote&origin={origin}&vmid={vmid}")).await.contains("error="));
