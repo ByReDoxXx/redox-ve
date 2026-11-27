@@ -664,7 +664,10 @@ hizmet satırına bir webhook ekleyin (Slack, Discord, ntfy gibi `text`/`content
 ExecStart=/usr/local/bin/redox serve ... --alert-webhook https://hooks.example.com/…
 ```
 
-Adres hizmet dosyasında düz metin durur; dosyayı yalnızca kökün okuyabildiğinden emin olun.
+Adres gizlidir (bilen herkes o kanala ileti yollayabilir) ve komut satırı sunucudaki her hesaba görünür. Adresi bir
+dosyaya yazıp (`/etc/redox/webhook.url`, sahibi `redox`, izinleri 600) seçeneğe dosyanın yolunu verin:
+`--alert-webhook /etc/redox/webhook.url`. `--alert-ntfy` de aynı biçimde dosya yolu alır. Adres günlüklere ve hata
+iletilerine yazılmaz.
 Gönderim başarısız olursa olay yeniden denenmez, yalnızca günlüğe yazılır.
 
 **E-posta:** bir dosya yazıp hizmet satırına `--alert-email /var/lib/redox/mail.conf` ekleyin:

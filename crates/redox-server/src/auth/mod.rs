@@ -200,6 +200,10 @@ pub struct Auth {
     hashing: (Mutex<usize>, Condvar),
     /// TLS arkasında: çerezler `Secure` olur, HSTS gönderilir, X-Forwarded-For'a güvenilir.
     pub behind_tls_proxy: bool,
+    /// Vekilin her isteğe eklediği gizli değer (`--proxy-secret-file`). Verildiyse X-Forwarded-For yalnızca bu
+    /// değeri taşıyan istekte dikkate alınır: sunucudaki başka bir hesap, yerel adrese doğrudan bağlanıp
+    /// uydurma bir istemci adresiyle giriş kilidini aşamaz.
+    pub proxy_secret: Option<String>,
     /// Sunucu TLS'i kendisi sonlandırıyor: çerezler `Secure` olur (X-Forwarded-For'a güvenilmez).
     pub direct_tls: bool,
     /// Dizin sunucusu (`--ldap`); `ldap` işaretli kullanıcılar parolalarıyla yalnızca buradan doğrulanır.
@@ -262,6 +266,7 @@ impl Auth {
             attempts: Mutex::new(HashMap::new()),
             hashing: (Mutex::new(0), Condvar::new()),
             behind_tls_proxy,
+            proxy_secret: None,
             direct_tls: false,
             ldap: None,
             webauthn: None,

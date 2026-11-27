@@ -40,7 +40,8 @@ Arayüz `http://127.0.0.1:8006` adresindedir. Dışarı açmak için önüne TLS
 | `--incremental-backups` | Artımlı (parçalı) yedek. |
 | `--peers DOSYA` | Eş sunucular ([Birden çok sunucu](Birden-Cok-Sunucu.md)). |
 | `--firewall` | Konuk güvenlik duvarı ve ağ kartı koruması (nftables, CAP_NET_ADMIN). |
-| `--four-eyes` | Silme işlemleri ikinci yöneticinin onayını bekler. |
+| `--four-eyes` | Silme işlemleri ve yönetici yapma ikinci yöneticinin onayını bekler. |
+| `--proxy-secret-file DOSYA` | `--behind-tls-proxy` ile: istemci adresi yalnızca vekilin bu gizli değeri eklediği isteklerde vekilden alınır (`install.sh` kendisi kurar). |
 | `--lang en` | Çerezi olmayan ziyaretçiye İngilizce arayüz ([Dil](Dil.md)). |
 | `--alert-webhook`, `--alert-email`, `--alert-ntfy`, `--alert-telegram` | Uyarı kanalları. |
 | `--backup-report 07:30`, `--backup-age-days 7`, `--backup-test-every 7@03:00` | Yedek raporu, korumasız konuk eşiği, zamanlanmış sınama. |

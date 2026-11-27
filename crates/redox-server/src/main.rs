@@ -30,6 +30,8 @@ struct ServeOptions {
     state_file: Option<PathBuf>,
     task_delay: Duration,
     behind_tls_proxy: bool,
+    /// Vekilin isteklere eklediği gizli değeri tutan dosya.
+    proxy_secret_file: Option<PathBuf>,
     tls_cert: Option<PathBuf>,
     tls_key: Option<PathBuf>,
     webauthn_origin: Option<redox_server::webauthn::Relying>,
@@ -87,6 +89,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         state_file: None,
         task_delay: Duration::from_millis(1500),
         behind_tls_proxy: false,
+        proxy_secret_file: None,
         tls_cert: None,
         tls_key: None,
         webauthn_origin: None,
@@ -142,6 +145,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--users" => opts.users = PathBuf::from(value()?),
             "--state" => opts.state_file = Some(PathBuf::from(value()?)),
             "--behind-tls-proxy" => opts.behind_tls_proxy = true,
+            "--proxy-secret-file" => opts.proxy_secret_file = Some(PathBuf::from(value()?)),
             "--tls-cert" => opts.tls_cert = Some(PathBuf::from(value()?)),
             "--tls-key" => opts.tls_key = Some(PathBuf::from(value()?)),
             "--syslog" => opts.syslog = Some(value()?.clone()),
@@ -379,6 +383,16 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     };
     let mut auth = Auth::new(users, Some(opts.users.clone()), opts.behind_tls_proxy, Cost::Production);
     auth.direct_tls = tls.is_some();
+    if let Some(path) = &opts.proxy_secret_file {
+        if !opts.behind_tls_proxy {
+            return Err("--proxy-secret-file yalnızca --behind-tls-proxy ile kullanılır".to_string());
+        }
+        let secret = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?.trim().to_string();
+        if secret.len() < 16 {
+            return Err(format!("{}: vekil anahtarı en az 16 karakter olmalı", path.display()));
+        }
+        auth.proxy_secret = Some(secret);
+    }
     auth.webauthn = opts.webauthn_origin.clone();
     match &opts.syslog {
         Some(target) => {
@@ -422,7 +436,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         None => say!("Durum yalnızca bellekte; kalıcı olması için --state DOSYA verin."),
     }
     if let Some(url) = &opts.alert_webhook {
-        state.alerts().set_webhook(url)?;
+        state.alerts().set_webhook(&redox_server::alerts::url_or_file(url)?)?;
         say!("Uyarılar webhook'a gönderilecek.");
     }
     if let Some(code) = &opts.lang {
@@ -435,7 +449,7 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         say!("API hız sınırı: kullanıcı başına dakikada {rate} istek.");
     }
     if let Some(url) = &opts.alert_ntfy {
-        let channel = redox_server::alerts::Channel::ntfy(url)?;
+        let channel = redox_server::alerts::Channel::ntfy(&redox_server::alerts::url_or_file(url)?)?;
         say!("Uyarılar gönderilecek: {}", channel.describe());
         state.alerts().add_channel(channel);
     }
@@ -692,6 +706,9 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     }
     if opts.behind_tls_proxy {
         say!("TLS vekili arkasında: çerezler Secure, HSTS açık, X-Forwarded-For'a güveniliyor.");
+        if opts.proxy_secret_file.is_none() {
+            complain!("UYARI: --proxy-secret-file verilmedi; yerel adrese doğrudan bağlanan bir süreç istemci adresini uydurabilir.");
+        }
     } else if tls.is_some() {
         say!("TLS açık: panel https ile sunuluyor.");
     } else if !addr.ip().is_loopback() {

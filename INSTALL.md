@@ -552,6 +552,11 @@ For notifications add a webhook (Slack, Discord, ntfy, anything that reads a `te
 ExecStart=/usr/local/bin/redox serve ... --alert-webhook https://hooks.example.com/…
 ```
 
+The address is a secret (anyone who knows it can post to that channel) and a command line is visible to every account
+on the server. Put the address in a file (`/etc/redox/webhook.url`, owned by `redox`, mode 600) and give the option the
+path instead: `--alert-webhook /etc/redox/webhook.url`. `--alert-ntfy` takes a file path the same way. The address is
+not written to logs or error messages.
+
 **E-mail:** write a file and add `--alert-email /var/lib/redox/mail.conf`:
 
 ```

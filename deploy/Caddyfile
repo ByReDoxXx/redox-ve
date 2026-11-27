@@ -7,7 +7,14 @@ redox.example.com {
 
 	# Caddy istemci adresini X-Forwarded-For'a kendisi yazar ve istemcinin
 	# gönderdiği değeri atar; RedoX giriş sınırlayıcısı bu adrese güvenir.
-	reverse_proxy 127.0.0.1:8006
+	#
+	# Sunucuda başka hesaplar da varsa: /etc/redox/proxy.key içine uzun, rastgele bir değer yazın (root:redox,
+	# 0640), paneli --proxy-secret-file /etc/redox/proxy.key ile başlatın ve aşağıdaki satırı açın. Panel o zaman
+	# istemci adresini yalnızca bu değeri taşıyan isteklerde vekilden alır; yerel adrese doğrudan bağlanan bir
+	# süreç uydurma adresle giriş kilidini aşamaz. (Bu dosyayı da 0640 root:caddy yapın.)
+	reverse_proxy 127.0.0.1:8006 {
+		# header_up X-Redox-Proxy <proxy.key içindeki değer>
+	}
 
 	log {
 		output file /var/log/caddy/redox.log

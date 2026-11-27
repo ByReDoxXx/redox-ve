@@ -40,7 +40,8 @@ The interface is at `http://127.0.0.1:8006`. To expose it, put a TLS-terminating
 | `--incremental-backups` | Incremental (chunked) backups. |
 | `--peers FILE` | Peer servers ([Multiple servers](Multiple-Servers.md)). |
 | `--firewall` | Guest firewall and NIC protection (nftables, CAP_NET_ADMIN). |
-| `--four-eyes` | Deletions wait for a second administrator. |
+| `--four-eyes` | Deletions and making someone an administrator wait for a second administrator. |
+| `--proxy-secret-file FILE` | With `--behind-tls-proxy`: the client address is taken from the proxy only on requests carrying this secret (`install.sh` sets it up). |
 | `--lang en` | English interface for visitors without a language cookie ([Language](Language.md)). |
 | `--alert-webhook`, `--alert-email`, `--alert-ntfy`, `--alert-telegram` | Alert channels. |
 | `--backup-report 07:30`, `--backup-age-days 7`, `--backup-test-every 7@03:00` | Backup report, unprotected threshold, scheduled boot tests. |

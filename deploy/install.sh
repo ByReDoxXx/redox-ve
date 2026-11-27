@@ -107,6 +107,24 @@ else
     sed "s|--addr 127.0.0.1:8006|--addr $LISTEN|" "$HERE/redox-host.service" > "$UNIT"
 fi
 
+# Vekil anahtarı: Caddy her isteğe bu değeri ekler; panel istemci adresini (X-Forwarded-For) yalnızca bu değeri
+# taşıyan istekte vekilden alır. Böylece sunucudaki başka bir hesap yerel adrese doğrudan bağlanıp uydurma bir
+# adresle giriş kilidini aşamaz. Anahtarı yalnızca root, redox ve (Caddyfile içinde) caddy okur.
+PROXY_KEY="$ROOT/etc/redox/proxy.key"
+if [ "$TLS" = 1 ]; then
+    if [ "$DRY_RUN" = 1 ]; then
+        echo "+ write $PROXY_KEY; $UNIT += --proxy-secret-file"
+    else
+        mkdir -p "$(dirname "$PROXY_KEY")"
+        if [ ! -s "$PROXY_KEY" ]; then
+            (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$PROXY_KEY")
+        fi
+        chmod 0640 "$PROXY_KEY"
+        [ -n "$ROOT" ] || chown root:redox "$PROXY_KEY"
+        sed -i 's|--behind-tls-proxy$|--behind-tls-proxy --proxy-secret-file /etc/redox/proxy.key|' "$UNIT"
+    fi
+fi
+
 # Dağıtık anahtarlar: ağ aygıtlarını kuran root birimi ve tanım dosyasını izleyen birim. qemu-bridge-helper,
 # "include" edilen dosya yoksa bütün köprüleri reddeder; bu yüzden dosya önce oluşturulur.
 VDS_CONF="$ROOT/etc/qemu/redox-vds.conf"
@@ -145,6 +163,11 @@ if [ "$TLS" = 1 ]; then
 	auto_https disable_redirects
 	# Tarayıcı adrese IP ile bağlanınca sunucu adı göndermez; sertifika bu adla verilir.
 	default_sni redox.local
+	# Sertifika yalnızca sunucunun kendi adı ve adresleri için üretilir (panel yanıtlar): yoksa her bağlantıda
+	# uydurulan bir ad için yeni sertifika üretilip disk doldurulabilirdi.
+	on_demand_tls {
+		ask http://127.0.0.1:8005/tls-ask
+	}
 }
 
 https://:8006 {
@@ -152,9 +175,14 @@ https://:8006 {
 		on_demand
 	}
 	encode zstd gzip
-	reverse_proxy 127.0.0.1:8005
+	reverse_proxy 127.0.0.1:8005 {
+		header_up X-Redox-Proxy REDOX_PROXY_KEY
+	}
 }
 EOF
+        sed -i "s|REDOX_PROXY_KEY|$(cat "$PROXY_KEY")|" "$CADDY"
+        chmod 0640 "$CADDY"
+        if getent group caddy >/dev/null 2>&1; then chgrp caddy "$CADDY"; fi
     fi
 fi
 

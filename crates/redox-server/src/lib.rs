@@ -86,6 +86,7 @@ pub fn app(state: AppState) -> Router {
         .route("/login/oidc", get(ui::oidc_start))
         .route("/login/oidc/callback", get(ui::oidc_callback))
         .route("/healthz", get(|| async { "ok" }))
+        .route("/tls-ask", get(tls_ask))
         .route("/nodes/{id}", get(ui::node))
         .route("/guests", get(ui::guests).post(ui::create))
         .route("/tasks", get(ui::tasks))
@@ -269,12 +270,12 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
     if (!safe || upgrade) && is_cross_site(req) {
         return Err(Box::new((StatusCode::FORBIDDEN, "Başka bir siteden gelen istek reddedildi.").into_response()));
     }
-    let ip = client_ip(req, st.auth().behind_tls_proxy);
+    let ip = client_ip(req, st.auth().behind_tls_proxy, st.auth().proxy_secret.as_deref());
     req.extensions_mut().insert(ClientIp(ip));
 
     let path = req.uri().path().to_string();
     // Dil, giriş yapmadan da değiştirilebilir (giriş sayfasının kendisi için).
-    if path == "/lang" || path == "/login" || path == "/login/key" || path == "/login/oidc" || path == "/login/oidc/callback" || path == "/healthz" || path.starts_with("/assets/") {
+    if path == "/lang" || path == "/login" || path == "/login/key" || path == "/login/oidc" || path == "/login/oidc/callback" || path == "/healthz" || path == "/tls-ask" || path.starts_with("/assets/") {
         return Ok(());
     }
     let is_api = path.starts_with("/api/") || path == "/metrics";
@@ -389,8 +390,42 @@ pub fn identify(st: &AppState, headers: &HeaderMap) -> Option<Identity> {
     cookie(headers, SESSION_COOKIE).and_then(|t| st.auth().session(t, state::now()))
 }
 
-fn client_ip(req: &Request, trust_proxy: bool) -> String {
-    if trust_proxy {
+#[derive(serde::Deserialize)]
+struct TlsAsk {
+    #[serde(default)]
+    domain: String,
+}
+
+/// Bu ad, bu sunucunun kendi adı ya da adreslerinden biri mi? Vekil (Caddy) kendinden imzalı sertifikayı
+/// yalnızca bunlar için üretir; yoksa her bağlantıda uydurulan bir ad için yeni sertifika üretip diski doldururdu.
+pub fn own_name(domain: &str) -> bool {
+    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    if domain.is_empty() || domain.len() > 253 {
+        return false;
+    }
+    if let Ok(ip) = domain.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>() {
+        // Yerel bir adrese bağlanılabilir; başkasınınkine bağlanılamaz.
+        return std::net::UdpSocket::bind((ip, 0)).is_ok();
+    }
+    if domain == "localhost" || domain == "redox.local" {
+        return true;
+    }
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname").or_else(|_| std::env::var("COMPUTERNAME").map_err(std::io::Error::other)).unwrap_or_default().trim().to_ascii_lowercase();
+    !host.is_empty() && (domain == host || domain.strip_prefix(host.as_str()).is_some_and(|rest| rest.starts_with('.')))
+}
+
+async fn tls_ask(axum::extract::Query(q): axum::extract::Query<TlsAsk>) -> StatusCode {
+    if own_name(&q.domain) { StatusCode::OK } else { StatusCode::FORBIDDEN }
+}
+
+/// Vekilin kendini tanıttığı başlık.
+pub const PROXY_SECRET_HEADER: &str = "x-redox-proxy";
+
+fn client_ip(req: &Request, trust_proxy: bool, secret: Option<&str>) -> String {
+    use subtle::ConstantTimeEq;
+    // Anahtar tanımlıysa yalnızca onu taşıyan istek vekilden gelmiştir; öbürleri yerel bir süreçtir.
+    let from_proxy = secret.is_none_or(|secret| req.headers().get(PROXY_SECRET_HEADER).is_some_and(|sent| bool::from(sent.as_bytes().ct_eq(secret.as_bytes()))));
+    if trust_proxy && from_proxy {
         // Vekil kendi gördüğü adresi listenin sonuna ekler; öncekiler istemcinin beyanıdır.
         let forwarded = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok());
         if let Some(last) = forwarded.and_then(|v| v.rsplit(',').next()).map(str::trim).filter(|s| !s.is_empty()) {

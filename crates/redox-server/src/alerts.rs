@@ -166,10 +166,29 @@ impl std::fmt::Debug for Channel {
     }
 }
 
+/// Gönderim hatasının adres içermeyen özeti. Webhook ve ntfy adresleri gizlidir (adresi bilen uyarı yollayabilir
+/// ya da okuyabilir); kütüphanenin hata metni adresi içerdiği için günlüğe olduğu gibi yazılmaz.
+fn without_url(error: &ureq::Error) -> String {
+    match error {
+        ureq::Error::Status(code, _) => format!("sunucu {code} yanıtı verdi"),
+        ureq::Error::Transport(transport) => format!("bağlantı kurulamadı ({})", transport.kind()),
+    }
+}
+
+/// Uyarı adresi: doğrudan adres ya da adresi tutan dosyanın yolu. Dosya yeğlenir: komut satırı sunucudaki her
+/// hesaba görünür, dosya ise yalnızca okuma izni olana.
+pub fn url_or_file(value: &str) -> Result<String, String> {
+    if value.starts_with("http://") || value.starts_with("https://") {
+        return Ok(value.to_string());
+    }
+    let text = std::fs::read_to_string(value).map_err(|e| format!("{value} okunamadı: {e}"))?;
+    text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_string).ok_or_else(|| format!("{value} dosyasında adres yok"))
+}
+
 impl Channel {
     pub fn ntfy(url: &str) -> Result<Channel, String> {
         if !(url.starts_with("https://") || url.starts_with("http://")) || url.contains(char::is_whitespace) || !url.split_once("://").and_then(|(_, rest)| rest.split_once('/')).is_some_and(|(host, topic)| !host.is_empty() && !topic.trim_matches('/').is_empty()) {
-            return Err(format!("ntfy adresi konuyu da içermeli, örn. https://ntfy.sh/redox-uyarilari: {url}"));
+            return Err("ntfy adresi konuyu da içermeli, örn. https://ntfy.sh/redox-uyarilari".to_string());
         }
         Ok(Channel::Ntfy(url.to_string()))
     }
@@ -196,14 +215,15 @@ impl Channel {
 
     pub fn describe(&self) -> String {
         match self {
-            Channel::Ntfy(url) => format!("ntfy ({url})"),
+            // Konu adı gizlidir (bilen herkes uyarıları okuyabilir): yalnızca sunucu gösterilir.
+            Channel::Ntfy(url) => format!("ntfy ({})", url.split_once("://").map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""))),
             Channel::Telegram { chat, .. } => format!("Telegram (sohbet {chat})"),
         }
     }
 
     fn send(&self, agent: &ureq::Agent, text: &str) -> Result<(), String> {
         match self {
-            Channel::Ntfy(url) => agent.post(url).set("Title", "RedoX VE").send_string(text).map(|_| ()).map_err(|e| format!("ntfy bildirimi gönderilemedi: {e}")),
+            Channel::Ntfy(url) => agent.post(url).set("Title", "RedoX VE").send_string(text).map(|_| ()).map_err(|e| format!("ntfy bildirimi gönderilemedi: {}", without_url(&e))),
             // Hata iletisinde adres (ve içindeki bot anahtarı) yer almaz.
             Channel::Telegram { api, token, chat } => agent
                 .post(&format!("{api}/bot{token}/sendMessage"))
@@ -232,7 +252,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 impl Alerts {
     pub fn set_webhook(&self, url: &str) -> Result<(), String> {
         if !(url.starts_with("https://") || url.starts_with("http://")) || url.contains(char::is_whitespace) {
-            return Err(format!("webhook adresi http:// ya da https:// ile başlamalı: {url}"));
+            return Err("webhook adresi http:// ya da https:// ile başlamalı".to_string());
         }
         *lock(&self.webhook) = Some(url.to_string());
         Ok(())
@@ -364,7 +384,7 @@ impl Alerts {
             agent
                 .post(&url)
                 .send_json(json!({ "text": text, "content": text, "event": event.kind(), "cluster": cluster }))
-                .map_err(|e| format!("webhook gönderilemedi: {e}"))?;
+                .map_err(|e| format!("webhook gönderilemedi: {}", without_url(&e)))?;
         }
         Ok(events.len())
     }
@@ -373,6 +393,28 @@ impl Alerts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Webhook ve ntfy adresleri gizlidir: dosyadan okunabilir, günlüğe ve açılış çıktısına yazılmaz.
+    #[test]
+    fn alert_addresses_come_from_a_file_and_stay_out_of_messages() {
+        assert_eq!(url_or_file("https://hooks.example.com/gizli").unwrap(), "https://hooks.example.com/gizli");
+        let file = std::env::temp_dir().join(format!("redox-uyari-{}.conf", std::process::id()));
+        std::fs::write(&file, "# uyarı adresi\n\n  https://ntfy.example.com/gizli-konu-4821  \n").unwrap();
+        assert_eq!(url_or_file(file.to_str().unwrap()).unwrap(), "https://ntfy.example.com/gizli-konu-4821");
+        std::fs::write(&file, "# boş\n").unwrap();
+        assert!(url_or_file(file.to_str().unwrap()).unwrap_err().contains("adres yok"));
+        std::fs::remove_file(&file).unwrap();
+        assert!(url_or_file("/olmayan/dosya").is_err());
+
+        let channel = Channel::ntfy("https://ntfy.example.com/gizli-konu-4821").unwrap();
+        assert_eq!(channel.describe(), "ntfy (ntfy.example.com)", "konu adı gösterilmez");
+        // Kapalı bir kapıya gönderim: hata iletisinde adres ve konu yer almaz.
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(2)).build();
+        let failed = Channel::ntfy(&format!("http://127.0.0.1:{port}/gizli-konu-4821")).unwrap().send(&agent, "deneme").unwrap_err();
+        assert!(failed.contains("gönderilemedi") && !failed.contains("gizli-konu") && !failed.contains(&port.to_string()), "{failed}");
+        assert!(!Channel::ntfy("https://ntfy.example.com").unwrap_err().contains("ntfy.example.com"));
+    }
     use redox_core::Action;
 
     fn keys(alerts: &[Alert]) -> Vec<(&str, Severity)> {
