@@ -18,6 +18,8 @@ pub const GUEST_DELETE: &str = "guest-delete";
 pub const DISK_REMOVE: &str = "disk-remove";
 pub const JOB_REMOVE: &str = "job-remove";
 pub const USER_REMOVE: &str = "user-remove";
+/// Bir kullanıcıyı yönetici yapmak: yeni bir yönetici, başkasının isteğini onaylayabilen ikinci bir "göz"dür.
+pub const USER_PROMOTE: &str = "user-promote";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Approval {
@@ -43,6 +45,7 @@ impl Approval {
             },
             JOB_REMOVE => format!("{} yedek işini silmek", self.target),
             USER_REMOVE => format!("{} kullanıcısını silmek", self.target),
+            USER_PROMOTE => format!("{} kullanıcısını yönetici yapmak", self.target),
             other => format!("{other} {}", self.target),
         }
     }
@@ -109,6 +112,7 @@ mod tests {
         assert_eq!(text(DISK_REMOVE, "103:2"), "103 kimlikli konuğun 2 numaralı diskini silmek");
         assert_eq!(text(JOB_REMOVE, "gece"), "gece yedek işini silmek");
         assert_eq!(text(USER_REMOVE, "ayse"), "ayse kullanıcısını silmek");
+        assert_eq!(text(USER_PROMOTE, "ayse"), "ayse kullanıcısını yönetici yapmak");
 
         assert!(c.take_approval(first, "ayse", NOW).unwrap_err().to_string().contains("kendi isteğinizi onaylayamazsınız"));
         assert_eq!(c.take_approval(first, "mehmet", NOW).unwrap().target, "vm-103-1");

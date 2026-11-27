@@ -37,7 +37,11 @@ real provider).
 ## Four-eyes principle
 
 With `--four-eyes`, deleting a backup, a guest, an extra disk, a backup job or a user does not happen at once: it runs
-when **another** administrator approves.
+when **another** administrator approves. **Making someone an administrator** needs approval too (a new administrator
+added in the panel stays a viewer until approved); otherwise a single administrator could open a second account and
+approve their own request. For the same reason, while the rule is on an administrator cannot reset **another
+administrator's** password or second step in the panel, or create a token in their name; the recovery path is
+`redox user passwd` and `redox user totp-reset` on the server.
 
 ```bash
 redox approval list
@@ -77,4 +81,7 @@ actions for the account for 15 minutes.
 
 - A lifetime can be chosen when creating a token (**Valid for**, `--days N`).
 - *My Account* lists and closes open sessions; an administrator can close all sessions of a user on the *Users* page.
+- When adding an operator in the panel, or turning an account into one, permissions and scope are chosen in the same
+  form (the boxes start empty and at least one must be ticked): the account is never left with everything on every guest
+  until it is narrowed later.
 - An operator can be limited to some of power / console / snapshot / backup (`redox user permits <name> backup`).

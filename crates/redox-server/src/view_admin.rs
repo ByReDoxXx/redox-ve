@@ -125,11 +125,30 @@ pub fn user_new_page(p: &Page) -> String {
                     span class="help" { (tx("Yönetici her şeyi, operatör kapsamındaki konuklarda güç ve yedek işlemlerini yapar; izleyici yalnızca okur.")) } }
                 div class="field full" { label for="new-pw" { (tx("Parola")) } input id="new-pw" name="password" type="password" required autocomplete="new-password" minlength=(MIN_PASSWORD_CHARS);
                     span class="help" { (tx("En az ")) (MIN_PASSWORD_CHARS) (tx(" karakter. Kullanıcı ilk girişte Hesabım sayfasından değiştirebilir.")) } }
+                (operator_start("new"))
                 div class="btns field full" { button class="btn primary" type="submit" { (icon("plus")) (tx("Ekle")) } a class="btn" href="/users" { (tx("Vazgeç")) } }
             }
         }
     };
     layout(p, (tx("Kullanıcı ekle")), &[((tx("Kullanıcılar")), "/users"), ((tx("Kullanıcı ekle")), "")], true, body)
+}
+
+/// Operatör olacak hesabın başlangıç yetkileri ve kapsamı: rolle aynı formda seçilir, kutular boş gelir.
+fn operator_start(prefix: &str) -> Markup {
+    html! {
+        div class="field full" {
+            label { (tx("Operatör olacaksa yetkileri")) }
+            div class="opts" {
+                @for permit in crate::auth::Permit::ALL {
+                    label { input type="checkbox" name=(permit.name()) value="1"; b { (tx(permit.label())) } }
+                }
+            }
+            span class="help" { (tx("Operatör rolü için en az birini işaretleyin; öbür rollerde dikkate alınmaz. Konsol, konteynerlerde kök kabuğu da açar.")) }
+        }
+        div class="field full" { label for={ (prefix) "-scope" } { (tx("Operatörün yetkili etiketleri")) }
+            input id={ (prefix) "-scope" } name="scope" type="text" placeholder=(tx("etiketler: web, test")) autocomplete="off";
+            span class="help" { (tx("Operatör yalnızca bu etiketleri taşıyan konukları yönetir. Boş: bütün konuklar.")) } }
+    }
 }
 
 /// Tek kullanıcının yönetim sayfası: rol, yetkiler, parola, token'lar, oturumlar ve silme.
@@ -150,6 +169,7 @@ pub fn user_page(p: &Page, u: &User) -> String {
                             }
                             span class="help" { (tx("Yönetici her şeyi, operatör kapsamındaki konuklarda güç ve yedek işlemlerini yapar; izleyici yalnızca okur.")) }
                         }
+                        @if u.role != Role::Operator { (operator_start("role")) }
                         div class="btns field full" { button class="btn primary" type="submit" { (tx("Rolü Kaydet")) } }
                     }
                 }

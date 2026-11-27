@@ -81,18 +81,61 @@ pub async fn user_show(State(st): State<AppState>, Extension(me): Extension<Iden
     }
 }
 
-pub async fn user_add(State(st): State<AppState>, Form(f): Form<AdminForm>) -> Redirect {
+pub async fn user_add(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Redirect {
     let role = match f.role.parse::<Role>() {
         Ok(r) => r,
         Err(e) => return done("/users", Err(e)),
     };
     let (name, cost) = (f.name.trim().to_string(), st.auth().cost());
-    done("/users", st.auth().edit(|u| u.add_user(&name, &f.password, role, cost)).map(|()| format!("{name} eklendi.")))
+    // Dört göz ilkesi açıkken yeni yönetici izleyici olarak eklenir; yönetici olması ikinci bir yöneticinin onayını bekler.
+    let held = st.four_eyes() && role == Role::Admin;
+    let first = if held { Role::Viewer } else { role };
+    let added = st.auth().edit(|u| {
+        u.add_user(&name, &f.password, first, cost)?;
+        // Yeni operatör, formda seçilen yetki ve kapsamla başlar: sonradan daraltılana kadar her şeye yetkili kalmaz.
+        if first == Role::Operator {
+            u.set_scope(&name, redox_core::parse_tags(&f.scope))?;
+            u.set_permits(&name, chosen_permits(&f))?;
+        }
+        Ok(())
+    });
+    done(
+        "/users",
+        added.and_then(|()| {
+            if !held {
+                return Ok(format!("{name} eklendi."));
+            }
+            let n = st.request_user_role(&name, Role::Admin, &me.user).map_err(|e| e.to_string())?;
+            Ok(tfmt(format!("{name} izleyici olarak eklendi; yönetici olması için ikinci bir yöneticinin onayı bekleniyor (istek #{}).", n.unwrap_or_default())))
+        }),
+    )
 }
 
-pub async fn user_role(State(st): State<AppState>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
-    let result = f.role.parse::<Role>().and_then(|role| st.auth().edit(|u| u.set_role(&name, role)));
-    done("/users", result.map(|()| tfmt(format!("{name} için rol değiştirildi."))))
+pub async fn user_role(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
+    let becomes_operator = f.role == "operator" && st.auth().list().iter().any(|u| u.name == name && u.role != Role::Operator);
+    if becomes_operator {
+        // Operatör yapılan hesap, aynı formda seçilen yetki ve kapsamla başlar: her şeye yetkili bir ara durum olmaz.
+        let saved = st.auth().edit(|u| {
+            u.set_role(&name, Role::Operator)?;
+            u.set_scope(&name, redox_core::parse_tags(&f.scope))?;
+            u.set_permits(&name, chosen_permits(&f))
+        });
+        return done("/users", saved.map(|()| tfmt(format!("{name} için rol değiştirildi."))));
+    }
+    let result = f.role.parse::<Role>().and_then(|role| st.request_user_role(&name, role, &me.user).map_err(|e| e.to_string()));
+    done(
+        "/users",
+        result.map(|queued| match queued {
+            Some(n) => tfmt(format!("{name} yönetici yapılmadı: ikinci bir yöneticinin onayı bekleniyor (istek #{n}).")),
+            None => tfmt(format!("{name} için rol değiştirildi.")),
+        }),
+    )
+}
+
+fn chosen_permits(f: &AdminForm) -> Vec<crate::auth::Permit> {
+    use crate::auth::Permit;
+    let chosen = [(&f.power, Permit::Power), (&f.console, Permit::Console), (&f.snapshot, Permit::Snapshot), (&f.backup, Permit::Backup)];
+    chosen.into_iter().filter(|(ticked, _)| ticked.is_some()).map(|(_, p)| p).collect()
 }
 
 pub async fn user_scope(State(st): State<AppState>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
@@ -106,8 +149,11 @@ fn target(path_name: String, f: &AdminForm) -> String {
     if path_name == "-" { f.name.trim().to_string() } else { path_name }
 }
 
-pub async fn user_password(State(st): State<AppState>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
+pub async fn user_password(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
     let (name, cost) = (target(name, &f), st.auth().cost());
+    if let Err(e) = st.guard_other_admin(&name, &me.user) {
+        return done("/users", Err(e));
+    }
     done("/users", st.auth().edit(|u| u.set_password(&name, &f.password, cost)).map(|()| tfmt(format!("{name} için parola sıfırlandı."))))
 }
 
@@ -127,14 +173,15 @@ pub async fn user_delete(State(st): State<AppState>, Extension(me): Extension<Id
     )
 }
 
-pub async fn user_totp_reset(State(st): State<AppState>, Path(name): Path<String>) -> Redirect {
+pub async fn user_totp_reset(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> Redirect {
+    if let Err(e) = st.guard_other_admin(&name, &me.user) {
+        return done("/users", Err(e));
+    }
     done("/users", st.auth().edit(|u| u.reset_second_step(&name)).map(|()| tfmt(format!("{name} için iki adımlı doğrulama kapatıldı."))))
 }
 
 pub async fn user_permits(State(st): State<AppState>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
-    use crate::auth::Permit;
-    let chosen = [(&f.power, Permit::Power), (&f.console, Permit::Console), (&f.snapshot, Permit::Snapshot), (&f.backup, Permit::Backup)];
-    let permits: Vec<Permit> = chosen.into_iter().filter(|(ticked, _)| ticked.is_some()).map(|(_, p)| p).collect();
+    let permits = chosen_permits(&f);
     done("/users", st.auth().edit(|u| u.set_permits(&name, permits)).map(|()| tfmt(format!("{name} için operatör yetkileri kaydedildi."))))
 }
 
@@ -163,7 +210,11 @@ pub async fn user_token_create(
     Path(name): Path<String>,
     Form(f): Form<AdminForm>,
 ) -> Response {
-    create_token(&st, &me, &headers, &target(name, &f), &f, "/users")
+    let name = target(name, &f);
+    if let Err(e) = st.guard_other_admin(&name, &me.user) {
+        return done("/users", Err(e)).into_response();
+    }
+    create_token(&st, &me, &headers, &name, &f, "/users")
 }
 
 pub async fn user_token_revoke(State(st): State<AppState>, Path((name, label)): Path<(String, String)>) -> Redirect {

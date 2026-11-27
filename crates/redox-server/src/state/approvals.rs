@@ -69,6 +69,27 @@ impl AppState {
         self.mutate(|c| self.open_approval(c, redox_core::approvals::USER_REMOVE, name, user).map(Some))
     }
 
+    /// Rol değiştirme. Dört göz ilkesi açıkken birini yönetici yapmak onay ister: yoksa tek bir yönetici kendine
+    /// ikinci bir yönetici hesabı açıp kendi silme isteklerini onunla onaylayabilirdi.
+    pub fn request_user_role(&self, name: &str, role: crate::auth::Role, user: &str) -> Result<Option<u64>, Error> {
+        use crate::auth::Role;
+        let current = self.auth().list().iter().find(|u| u.name == name).map(|u| u.role).ok_or_else(|| Error::InvalidSpec(format!("kullanıcı bulunamadı: {name}")))?;
+        if !(self.four_eyes() && role == Role::Admin && current != Role::Admin) {
+            return self.auth().edit(|u| u.set_role(name, role)).map(|()| None).map_err(Error::InvalidSpec);
+        }
+        self.mutate(|c| self.open_approval(c, redox_core::approvals::USER_PROMOTE, name, user).map(Some))
+    }
+
+    /// Dört göz ilkesi açıkken bir yönetici, başka bir yöneticinin kimliğine panelden bürünemez: onun parolasını
+    /// ya da ikinci adımını sıfırlayamaz, onun adına token üretemez. (Kurtarma yolu sunucudaki `redox user` komutlarıdır.)
+    pub fn guard_other_admin(&self, target: &str, actor: &str) -> Result<(), String> {
+        let admin = self.auth().list().iter().any(|u| u.name == target && u.role == crate::auth::Role::Admin);
+        if self.four_eyes() && admin && target != actor {
+            return Err(format!("dört göz ilkesi açıkken başka bir yöneticinin ({target}) parolası, ikinci adımı ve token'ları panelden değiştirilemez; sunucuda redox user komutlarını kullanın"));
+        }
+        Ok(())
+    }
+
     pub(super) fn open_approval(&self, c: &mut Cluster, action: &str, target: &str, user: &str) -> Result<u64, Error> {
         let known = c.approvals.len();
         let id = c.request_approval(action, target, user, now())?;
@@ -98,6 +119,7 @@ impl AppState {
             redox_core::approvals::JOB_REMOVE => self.job_remove(&approval.target)?,
             // İkinci yönetici kendi hesabının silinmesini de onaylayabilir; son yöneticiyi silmeyi kullanıcı dosyası reddeder.
             redox_core::approvals::USER_REMOVE => self.auth().edit(|u| u.remove_user(&approval.target)).map_err(Error::InvalidSpec)?,
+            redox_core::approvals::USER_PROMOTE => self.auth().edit(|u| u.set_role(&approval.target, crate::auth::Role::Admin)).map_err(Error::InvalidSpec)?,
             other => return Err(Error::InvalidSpec(format!("bilinmeyen onay türü: {other}"))),
         }
         Ok(format!("onaylandı: {}", approval.describe()))

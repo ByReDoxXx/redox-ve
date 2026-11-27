@@ -37,7 +37,10 @@ sağlayıcıyla **denenmedi**).
 ## Dört göz ilkesi
 
 `--four-eyes` ile yedek, konuk, ek disk, yedek işi ve kullanıcı silme hemen yapılmaz: **başka** bir yönetici
-onaylayınca yürür.
+onaylayınca yürür. Birini **yönetici yapmak** da onay ister (panelden eklenen yeni yönetici, onaylanana kadar izleyici
+olarak durur); yoksa tek bir yönetici kendine ikinci bir hesap açıp kendi isteğini onaylayabilirdi. Aynı nedenle bu
+ilke açıkken bir yönetici, **başka bir yöneticinin** parolasını ya da ikinci adımını panelden sıfırlayamaz, onun adına
+token üretemez; kurtarma yolu sunucudaki `redox user passwd`, `redox user totp-reset` komutlarıdır.
 
 ```bash
 redox approval list
@@ -77,5 +80,7 @@ işlemlerini 15 dakika kilitler.
 - Token oluştururken **Geçerlilik** seçilebilir (`--days N`).
 - *Hesabım* sayfasında açık oturumlar görülür ve kapatılır; yönetici *Kullanıcılar* sayfasından bir kullanıcının tüm
   oturumlarını kapatabilir.
+- Panelden operatör eklerken ya da bir hesabı operatör yaparken yetkiler ve kapsam aynı formda seçilir (kutular boş
+  gelir, en az biri işaretlenmelidir): hesap, sonradan daraltılana kadar her konukta her şeye yetkili kalmaz.
 - Operatör, güç / konsol / anlık görüntü / yedek yetkilerinin yalnızca bir kısmıyla sınırlandırılabilir
   (`redox user permits <ad> backup`).
