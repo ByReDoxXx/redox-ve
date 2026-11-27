@@ -142,6 +142,9 @@ pub async fn account(State(st): State<AppState>, Extension(me): Extension<Identi
 }
 
 pub async fn account_password(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Response {
+    if st.auth().list().iter().any(|u| u.name == me.user && u.ldap) {
+        return done("/account", Err((tx("parolanız dizin sunucusunda (LDAP) yönetiliyor; oradan değiştirin")).to_string())).into_response();
+    }
     if !st.auth().check_password(&me.user, &f.current) {
         return done("/account", Err((tx("şimdiki parola hatalı")).to_string())).into_response();
     }

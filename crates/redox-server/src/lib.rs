@@ -12,6 +12,7 @@ pub mod firewall;
 pub mod fonts;
 pub mod guestfs;
 pub mod health;
+pub mod ldap;
 pub mod tls;
 pub mod ha;
 pub mod history;

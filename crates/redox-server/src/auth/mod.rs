@@ -94,6 +94,9 @@ pub struct User {
     /// Tek oturum açmada bu kullanıcıyla eşleşen kimlik (ör. e-posta adresi).
     #[serde(default)]
     pub sso: Option<String>,
+    /// Parolası LDAP / Active Directory'de doğrulanır; yerel parola özeti kullanılmaz.
+    #[serde(default)]
+    pub ldap: bool,
 }
 
 /// Doğrulanmış istek sahibi.
@@ -163,6 +166,8 @@ pub struct Auth {
     pub behind_tls_proxy: bool,
     /// Sunucu TLS'i kendisi sonlandırıyor: çerezler `Secure` olur (X-Forwarded-For'a güvenilmez).
     pub direct_tls: bool,
+    /// Dizin sunucusu (`--ldap`); `ldap` işaretli kullanıcılar parolalarıyla yalnızca buradan doğrulanır.
+    pub ldap: Option<crate::ldap::Config>,
     /// Var olmayan kullanıcıda da aynı süreyi harcamak için.
     dummy_hash: String,
     cost: Cost,
@@ -204,6 +209,7 @@ impl Auth {
             attempts: Mutex::new(HashMap::new()),
             behind_tls_proxy,
             direct_tls: false,
+            ldap: None,
             dummy_hash: hash_password("var-olmayan-kullanici-icin", cost),
         }
     }
@@ -237,7 +243,7 @@ impl Auth {
     }
 
     pub fn check_password(&self, name: &str, password: &str) -> bool {
-        self.users().find(name).is_some_and(|u| verify_password(&u.password_hash, password))
+        self.users().find(name).is_some_and(|u| self.password_ok(u, password))
     }
 
     /// Kullanıcı listesini değiştirir ve dosyaya yazar. Hata dönerse hiçbir şey değişmez.
@@ -275,6 +281,25 @@ impl Auth {
         true
     }
 
+    /// Kullanıcının parolası doğru mu? Dizin kullanıcısında yanıtı dizin verir; dizine ulaşılamazsa giriş yoktur.
+    fn password_ok(&self, user: &User, password: &str) -> bool {
+        if !user.ldap {
+            return verify_password(&user.password_hash, password);
+        }
+        let Some(directory) = &self.ldap else {
+            eprintln!("uyarı: {} dizin kullanıcısı ama sunucu --ldap olmadan çalışıyor", user.name);
+            return false;
+        };
+        match directory.bind(&user.name, password) {
+            Ok(()) => true,
+            Err(crate::ldap::BindError::Refused) => false,
+            Err(crate::ldap::BindError::Unavailable(why)) => {
+                eprintln!("uyarı: LDAP: {why}");
+                false
+            }
+        }
+    }
+
     pub fn login(&self, client: &str, name: &str, password: &str, now: u64) -> Result<String, LoginError> {
         self.login_with_code(client, name, password, "", now)
     }
@@ -289,9 +314,13 @@ impl Auth {
         }
 
         let user = self.users().find(name).cloned();
-        let hash = user.as_ref().map(|u| u.password_hash.as_str()).unwrap_or(&self.dummy_hash);
+        // Var olmayan kullanıcıda da özet hesaplanır: yanıt süresi kullanıcı adlarını ele vermesin.
+        let password_ok = match &user {
+            Some(user) => self.password_ok(user, password),
+            None => verify_password(&self.dummy_hash, password),
+        };
         // Hangi adımın yanlış olduğu bilerek söylenmez.
-        let ok = verify_password(hash, password) && user.is_some() && self.second_factor_ok(user.as_ref(), code, now);
+        let ok = password_ok && user.is_some() && self.second_factor_ok(user.as_ref(), code, now);
 
         let mut attempts = lock(&self.attempts);
         if !ok {

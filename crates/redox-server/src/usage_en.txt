@@ -115,6 +115,8 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox ft list | on <id> <twin-peer> <witness-peer> | off <id> | twins   (fault tolerance)
   redox mirror list | add <id> <peer> | off <id> [--delete-copy]   (synchronous disk mirroring)
   redox mirror copies | promote <origin> <id> | delete-copy <origin> <id>   (copies held here)
+  redox user ldap <name> on|off --users <file>  (password checked in LDAP/AD; on the server: serve --ldap <settings-file>)
+  redox ldap test <settings-file> <user>        (tries the LDAP settings)
   redox node perf | health | update      (performance hardware; disk health and pending updates; ask to install the updates)
   redox tls self-signed <name> --dir <dir>   (self-signed certificate; on the server: serve --tls-cert … --tls-key …)
   redox firewall set list | save <name> <address,address> | remove <name>     (address sets, used in rules as @name)

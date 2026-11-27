@@ -26,6 +26,7 @@ mod ha_shares;
 mod hardware;
 mod health;
 mod jobs;
+mod ldap;
 mod mirrors;
 mod network;
 mod pages;

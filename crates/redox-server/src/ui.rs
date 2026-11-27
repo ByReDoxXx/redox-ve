@@ -586,7 +586,10 @@ pub async fn login(
     let name = form.username.trim();
     let next = safe_back(&form.next);
     let audit = |action: &str, ok: bool| st.auth().audit.record(now(), name, &ip, action, ok);
-    match st.auth().login_with_code(&ip, name, &form.password, &form.code, now()) {
+    // Parola özeti ve dizin sunucusu beklenirken öbür istekler sürer.
+    let (worker, client, user, password, code) = (st.clone(), ip.clone(), name.to_string(), form.password.clone(), form.code.clone());
+    let attempt = tokio::task::spawn_blocking(move || worker.auth().login_with_code(&client, &user, &password, &code, now())).await.unwrap_or(Err(LoginError::Invalid));
+    match attempt {
         Ok(token) => {
             println!("giriş: {name} ({ip})");
             audit("giriş", true);

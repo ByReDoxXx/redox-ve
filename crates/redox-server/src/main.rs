@@ -33,6 +33,7 @@ struct ServeOptions {
     tls_cert: Option<PathBuf>,
     tls_key: Option<PathBuf>,
     health_dir: Option<PathBuf>,
+    ldap: Option<PathBuf>,
     allow_plain_http: bool,
     driver: String,
     data_dir: PathBuf,
@@ -82,6 +83,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         tls_cert: None,
         tls_key: None,
         health_dir: None,
+        ldap: None,
         allow_plain_http: false,
         driver: "sim".to_string(),
         data_dir: PathBuf::from("redox-data"),
@@ -164,6 +166,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--peers" => opts.peers = Some(PathBuf::from(value()?)),
             "--offsite" => opts.offsite = Some(PathBuf::from(value()?)),
             "--oidc" => opts.oidc = Some(PathBuf::from(value()?)),
+            "--ldap" => opts.ldap = Some(PathBuf::from(value()?)),
             "--guestfish-bin" => opts.guestfish_bin = Some(value()?.clone()),
             "--backup-test-secs" => opts.backup_test_secs = Some(number(value()?)?),
             "--backup-test-every" => opts.backup_test_every = Some(value()?.clone()),
@@ -342,6 +345,12 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     };
     let mut auth = Auth::new(users, Some(opts.users.clone()), opts.behind_tls_proxy, Cost::Production);
     auth.direct_tls = tls.is_some();
+    if let Some(path) = &opts.ldap {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?;
+        let directory = redox_server::ldap::Config::parse(&text)?;
+        say!("LDAP girişi açık: {}", directory.describe());
+        auth.ldap = Some(directory);
+    }
 
     let (driver, mut cluster, state_file, images) = prepare(&opts)?;
     let recovered = recover(&mut cluster, now());
@@ -663,6 +672,7 @@ fn manage_users(args: &[String]) -> Result<(), String> {
         ["user", "scope", name] => file.set_scope(name, Vec::new())?,
         ["user", "scope", name, tags] => file.set_scope(name, redox_core::parse_tags(tags))?,
         ["user", "sso", name, subject] => file.set_sso(name, subject)?,
+        ["user", "ldap", name, state @ ("on" | "off")] => file.set_ldap(name, *state == "on")?,
         ["user", "passwd", name] => file.set_password(name, &read_new_password()?, Cost::Production)?,
         ["user", "remove", name] => file.remove_user(name)?,
         ["user", "totp-reset", name] => file.disable_totp(name)?,
@@ -711,6 +721,24 @@ fn net_sync(file: &str, rest: &[&str]) -> Result<(), String> {
         redox_server::vswitch::write_bridge_conf(std::path::Path::new(path), &switches)?;
     }
     if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
+}
+
+/// Ayar dosyasını bir kullanıcıyla dener. Parola `REDOX_PASSWORD` değişkeninden ya da gizli istemden okunur.
+fn ldap_test(file: &str, user: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{file} okunamadı: {e}"))?;
+    let directory = redox_server::ldap::Config::parse(&text)?;
+    let password = match std::env::var("REDOX_PASSWORD") {
+        Ok(p) => p,
+        Err(_) => rpassword::prompt_password("Parola: ").map_err(|e| format!("parola okunamadı: {e}"))?,
+    };
+    match directory.bind(user, &password) {
+        Ok(()) => {
+            println!("bağlanma başarılı: {}", directory.describe());
+            Ok(())
+        }
+        Err(redox_server::ldap::BindError::Refused) => Err("dizin bu kullanıcı adı ve parolayı kabul etmedi".to_string()),
+        Err(redox_server::ldap::BindError::Unavailable(why)) => Err(format!("LDAP: {why}")),
+    }
 }
 
 /// Kök olarak çalışan kısa ömürlü yardımcılar (redox-health.service, redox-update.service).
@@ -773,6 +801,10 @@ fn main() -> ExitCode {
         }),
         Some("user" | "token") => manage_users(&args),
         Some("tty") => redox_server::tty::run(&args[1..]),
+        Some("ldap") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+            ["ldap", "test", file, user] => ldap_test(file, user),
+            _ => Err("kullanım: redox ldap test <ayar-dosyası> <kullanıcı>".to_string()),
+        },
         Some("host") => host_helper(&args.iter().map(String::as_str).collect::<Vec<_>>()),
         Some("tls") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
             ["tls", "self-signed", name, "--dir", dir] => redox_server::tls::self_signed("openssl", name, std::path::Path::new(dir)).map(|(cert, key)| println!("{}\n{}", cert.display(), key.display())),

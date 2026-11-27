@@ -132,6 +132,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox ft list | on <kimlik> <ikiz-eş> <hakem-eş> | off <kimlik> | twins   (hata toleransı)
   redox mirror list | add <kimlik> <eş> | off <kimlik> [--delete-copy]   (eşzamanlı disk yansıtma)
   redox mirror copies | promote <kaynak> <kimlik> | delete-copy <kaynak> <kimlik>   (burada tutulan kopyalar)
+  redox user ldap <ad> on|off --users <dosya>   (parola LDAP/AD'de doğrulanır; sunucuya: serve --ldap <ayar-dosyası>)
+  redox ldap test <ayar-dosyası> <kullanıcı>    (LDAP ayarını dener)
   redox node perf | health | update      (performans donanımı; disk sağlığı ve bekleyen güncellemeler; güncellemeleri kurma isteği)
   redox tls self-signed <ad> --dir <dizin>   (kendinden imzalı sertifika; sunucuya: serve --tls-cert … --tls-key …)
   redox firewall set list | save <ad> <adres,adres> | remove <ad>             (kurallarda @ad olarak kullanılan adres kümeleri)

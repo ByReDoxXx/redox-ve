@@ -42,6 +42,7 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
                             (role_label(u.role))
                             @if u.role == Role::Operator { " " span class="mono dim" { @if u.scope.is_empty() { (tx("(bütün konuklar)")) } @else { "(" (u.scope.join(", ")) ")" } } }
                             @if let Some(sso) = &u.sso { br; span class="mono dim" { "SSO: " (sso) } }
+                            @if u.ldap { br; span class="tag" { "LDAP" } }
                         }
                         td {
                             @if u.totp_secret.is_some() { span class="pill ok" { (icon("check")) (tx("Açık")) } }

@@ -44,6 +44,7 @@ impl UserFile {
         }
         check_password_policy(password)?;
         self.users.push(User {
+            ldap: false,
             name: name.to_string(),
             password_hash: hash_password(password, cost),
             role,
@@ -100,6 +101,16 @@ impl UserFile {
     }
 
     /// Tek oturum açma kimliğini belirler; boş değer eşleşmeyi kaldırır.
+    /// Kullanıcının parolasının dizinde (LDAP) doğrulanmasını açar ya da kapatır.
+    pub fn set_ldap(&mut self, name: &str, on: bool) -> Result<(), String> {
+        // En az bir yönetici yerel parolayla girebilmelidir: dizin erişilemezse sunucu yönetilebilir kalsın.
+        if on && !self.users.iter().any(|u| u.name != name && u.role == Role::Admin && !u.ldap) {
+            return Err("yerel parolalı en az bir başka yönetici kalmalı: dizin sunucusuna ulaşılamazsa panele girilebilsin".to_string());
+        }
+        self.find_mut(name)?.ldap = on;
+        Ok(())
+    }
+
     pub fn set_sso(&mut self, name: &str, subject: &str) -> Result<(), String> {
         let subject = subject.trim();
         if subject.len() > 254 || subject.chars().any(|c| c.is_control() || c.is_whitespace()) {
