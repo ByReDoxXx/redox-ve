@@ -193,12 +193,14 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         }
     }
     // Geçersiz ad buraya ulaşmamalı (çekirdek doğrular); yine de yol kaçışına karşı yoksayılır.
+    // Biçim sabittir (`format=raw`): kalıp diye yüklenmiş bir qcow2, arkalığı olarak sunucudaki bir dosyayı
+    // gösterip içeriğini konuğa okutamaz.
     // İki CD sürücüsü; adları (`cd0`, `cd1`) çalışırken kalıp değiştirmek içindir.
     let cds = [g.iso.as_deref(), g.hw.iso2.as_deref()];
     let mut bootable_cd = false;
     for (i, iso) in cds.iter().enumerate() {
         let Some(iso) = iso.filter(|n| valid_iso_name(n)) else { continue };
-        push(&["-drive", &format!("file={},media=cdrom,readonly=on,id=cd{i}", opt(&cfg.iso_dir().join(iso)))]);
+        push(&["-drive", &format!("file={},format=raw,media=cdrom,readonly=on,id=cd{i}", opt(&cfg.iso_dir().join(iso)))]);
         bootable_cd = true;
     }
     if bootable_cd {

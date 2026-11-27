@@ -139,7 +139,7 @@ fn disk_limits_are_applied_to_every_disk() {
 fn args_fall_back_to_tcg_and_attach_iso() {
     let a = args(&QemuConfig { kvm: false, ..cfg() }, &guest(Some("debian-12.iso"))).join(" ");
     assert!(a.contains("-machine q35,accel=tcg -cpu max"), "{a}");
-    assert!(a.contains("-drive file=/var/lib/redox/iso/debian-12.iso,media=cdrom,readonly=on,id=cd0 -boot order=c,once=d"), "{a}");
+    assert!(a.contains("-drive file=/var/lib/redox/iso/debian-12.iso,format=raw,media=cdrom,readonly=on,id=cd0 -boot order=c,once=d"), "{a}");
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn compatibility_devices_replace_virtio_only_where_asked() {
     g.hw.disks = vec![redox_core::hw::ExtraDisk { id: 1, size_gb: 5, serial: 1 }];
     let a = args(&cfg(), &g).join(" ");
     assert!(a.contains("vm-150-disk-0.qcow2,if=none,id=sys0,format=qcow2,discard=unmap -device ide-hd,drive=sys0,bus=ide.4"), "{a}");
-    assert!(a.contains("iso/win.iso,media=cdrom,readonly=on,id=cd0 -drive file=/var/lib/redox/iso/virtio-win.iso,media=cdrom,readonly=on,id=cd1 -boot order=c,once=d"), "{a}");
+    assert!(a.contains("iso/win.iso,format=raw,media=cdrom,readonly=on,id=cd0 -drive file=/var/lib/redox/iso/virtio-win.iso,format=raw,media=cdrom,readonly=on,id=cd1 -boot order=c,once=d"), "{a}");
     assert_eq!(a.matches("-boot").count(), 1);
     assert!(a.contains("-device e1000e,netdev=net0,mac=") && a.contains("-device e1000e,netdev=net1,mac=") && !a.contains("virtio-net"), "{a}");
     assert!(a.contains("virtio-blk-pci,drive=xd1"), "ek diskler virtio kalır");
