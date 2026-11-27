@@ -113,6 +113,17 @@ pub(super) fn cloud_image_guests_are_copied_resized_and_seeded() {
     assert!(matches!(state.create_guest(&cloud("yok.qcow2"), "admin"), Err(Error::InvalidSpec(m)) if m.contains("bulut imajı bulunamadı")));
     assert!(state.snapshot().guests.is_empty());
 
+    // Başka bir dosyaya bağlanan imaj (arkalığı sunucudaki bir dosyayı gösteren qcow2) dönüştürülmez: yoksa o
+    // dosyanın içeriği konuğun diskine kopyalanırdı. Konuk da yarım disk de kalmaz.
+    std::fs::write(cfg.cloud_dir().join("tuzak.qcow2"), "arkalikli").unwrap();
+    let trapped = state.create_guest(&cloud("tuzak.qcow2"), "admin");
+    let after = state.snapshot();
+    let why = format!("{trapped:?} {:?}", after.tasks.first().map(|t| &t.message));
+    assert!(why.contains("başka bir dosyaya bağlı"), "{why}");
+    assert!(after.guests.is_empty(), "konuk oluşmadı");
+    assert!(std::fs::read_dir(cfg.disk_path(100).parent().unwrap()).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".qcow2")), "disk kalmadı");
+    std::fs::remove_file(cfg.cloud_dir().join("tuzak.qcow2")).unwrap();
+
     let id = state.create_guest(&cloud("debian-12.qcow2"), "admin").unwrap();
     assert_eq!(std::fs::read_to_string(cfg.disk_path(id)).unwrap(), "bulut-imaji", "disk imajdan kopyalanır");
     assert_eq!(std::fs::read_to_string(format!("{}.size", cfg.disk_path(id).display())).unwrap().trim(), "20G", "ve istenen boyuta büyütülür");

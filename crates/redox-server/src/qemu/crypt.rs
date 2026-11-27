@@ -80,10 +80,10 @@ impl QemuDriver {
     }
 
     /// Şifresiz bir kaynağı (bulut imajı) şifreli diske çevirir.
-    pub(super) fn convert_encrypted(&self, source: &Path, target: &Path, what: &str) -> Result<(), String> {
+    pub(super) fn convert_encrypted(&self, source: &Path, format: &str, target: &Path, what: &str) -> Result<(), String> {
         let object = self.key_object()?;
         let options = format!("encrypt.format=luks,encrypt.key-secret={SECRET_ID}");
-        self.img(&["convert".as_ref(), "--object".as_ref(), object.as_ref(), "-O".as_ref(), "qcow2".as_ref(), "-o".as_ref(), options.as_ref(), source.as_os_str(), target.as_os_str()], what)
+        self.img(&["convert".as_ref(), "--object".as_ref(), object.as_ref(), "-f".as_ref(), format.as_ref(), "-O".as_ref(), "qcow2".as_ref(), "-o".as_ref(), options.as_ref(), source.as_os_str(), target.as_os_str()], what)
     }
 
     /// İmaj şifreli mi? (`qemu-img info` anahtarsız okur.)

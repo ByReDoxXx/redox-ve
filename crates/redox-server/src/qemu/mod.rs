@@ -424,11 +424,15 @@ impl Hypervisor for QemuDriver {
                 })?;
                 source = temp.clone();
             }
-            let converted = if guest.hw.encrypted {
-                self.convert_encrypted(&source, &disk, "bulut imajı kopyalanamadı")
-            } else {
-                self.convert(&source, &disk, false, "bulut imajı kopyalanamadı")
-            };
+            // İmaj dışarıdan gelir (indirilen bulut imajı, OVA, eş sunucudan aktarılan disk): biçimi burada
+            // saptanır ve başka bir dosyaya bağlanmadığı doğrulanır; dönüştürme o biçimle sınırlanır.
+            let converted = self.foreign_format(&source).and_then(|format| {
+                if guest.hw.encrypted {
+                    self.convert_encrypted(&source, &format, &disk, "bulut imajı kopyalanamadı")
+                } else {
+                    self.img(&["convert".as_ref(), "-f".as_ref(), format.as_ref(), "-O".as_ref(), "qcow2".as_ref(), source.as_os_str(), disk.as_os_str()], "bulut imajı kopyalanamadı")
+                }
+            });
             if let Some(temp) = &unpacked {
                 let _ = std::fs::remove_file(temp);
             }
@@ -1219,7 +1223,7 @@ impl Hypervisor for QemuDriver {
                             if self.is_encrypted_image(&source)? {
                                 std::fs::copy(&source, &staging).map(|_| ()).map_err(|e| format!("yedek geri yüklenemedi: {e}"))
                             } else {
-                                self.convert_encrypted(&source, &staging, "yedek geri yüklenemedi")
+                                self.convert_encrypted(&source, "qcow2", &staging, "yedek geri yüklenemedi")
                             }
                         } else if self.is_encrypted_image(&source)? {
                             Err("yedek şifreli ama konuk şifreli değil: şifreli bir konuk olarak geri yükleyin".to_string())
@@ -1694,6 +1698,25 @@ impl QemuDriver {
             return Err("yedek dosyası başka bir dosyaya bağlı (arkalıklı imaj); güvenlik nedeniyle geri yüklenmedi".to_string());
         }
         Ok(())
+    }
+
+    /// Dışarıdan gelen bir imajın biçimini döndürür; imaj başka bir dosyaya bağlanıyorsa (arkalık, dış veri
+    /// dosyası, parçalı VMDK) reddeder. Böyle bir imaj dönüştürülürse bağlandığı dosyanın, yani sunucudaki
+    /// herhangi bir dosyanın içeriği konuğun diskine kopyalanırdı.
+    fn foreign_format(&self, path: &Path) -> Result<String, String> {
+        let info = self.img_json(&["info".as_ref(), "--output=json".as_ref(), path.as_os_str()], "imaj okunamadı")?;
+        let format = info["format"].as_str().unwrap_or_default();
+        if !["qcow2", "raw", "vmdk", "vdi", "vhdx", "vpc"].contains(&format) {
+            return Err(format!("desteklenmeyen imaj biçimi: {}", if format.is_empty() { "bilinmiyor" } else { format }));
+        }
+        let data = &info["format-specific"]["data"];
+        let linked = ["backing-filename", "full-backing-filename", "backing-filename-format"].iter().any(|key| info.get(*key).is_some()) || data.get("data-file").is_some();
+        // Tek dosyalı VMDK türleri; öbürleri (düz, parçalı) içeriği adını kendileri verdikleri dosyalardan okur.
+        let split = format == "vmdk" && !matches!(data["create-type"].as_str(), Some("monolithicSparse" | "streamOptimized"));
+        if linked || split {
+            return Err("imaj başka bir dosyaya bağlı (arkalıklı ya da parçalı imaj); güvenlik nedeniyle kullanılmadı".to_string());
+        }
+        Ok(format.to_string())
     }
 
     /// Konuğun `n` numaralı diski (0: asıl disk).
