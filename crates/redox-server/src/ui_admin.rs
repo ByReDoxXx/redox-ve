@@ -225,3 +225,20 @@ pub async fn font(Path(file): Path<String>) -> Response {
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
+
+/// Destek paketini dosya olarak indirir (yalnızca yönetici).
+pub async fn support_bundle(State(st): State<AppState>, Extension(me): Extension<Identity>) -> Response {
+    if !me.can_write() {
+        return (StatusCode::FORBIDDEN, (tx("Destek paketini yalnızca yönetici alabilir."))).into_response();
+    }
+    let body = serde_json::to_string_pretty(&st.support_bundle()).unwrap_or_default();
+    (
+        [
+            (CONTENT_TYPE, "application/json; charset=utf-8".to_string()),
+            (axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"redox-destek-{}.json\"", now())),
+            (CACHE_CONTROL, "no-store".to_string()),
+        ],
+        body,
+    )
+        .into_response()
+}

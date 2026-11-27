@@ -384,6 +384,12 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
         (page_head(html! { (tx("Küme")) }, sub(facts), html! {}, "peer list", &[]))
         div class="stack" {
             (replicas_card(p, peers))
+            @if p.admin {
+                div class="card" {
+                    header { h2 { (tx("Destek paketi")) } (tip("Sorun bildirirken gönderilecek durum dökümü.")) a class="btn sm end" href="/support" download { (icon("disk")) (tx("İndir")) } }
+                    footer { (tx("Sürüm, sürücünün yetenekleri, ayarlar, konukların donanımı ve son görevler tek bir dosyada. Parola, token ve denetim günlüğü içermez; konuk adları ve ağ adresleri içerir: göndermeden önce göz atın.")) }
+                }
+            }
             div class="card" {
                 header { h2 { (tx("Sunucular")) } (tip("Bu sunucu ve tanımlı eş sunucular. Her sunucu kendi konuklarını yönetir.")) }
                 div class="tw" { table {

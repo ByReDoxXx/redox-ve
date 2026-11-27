@@ -52,6 +52,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - A running VM's disks can be moved to another storage without stopping it (`redox vm move 103 fast`).
 - Maintenance mode can evacuate a server: its running VMs are live-migrated to a peer (`redox maintenance on --evacuate <peer>`).
 - CPU shares and memory reservation per VM (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): who gets the CPU when the server runs short, and memory that is not taken back; both can be changed while the guest runs.
+- A support bundle (`redox support > bundle.json`, or *Cluster* page): version, capabilities, settings, guest hardware and recent tasks in one file, without passwords, tokens or the audit log.
 - A status screen on the server's own console: name, addresses, where the web interface is, whether the service answers and how many guests run; Enter logs in.
 - Import `vmdk`, `vdi`, `vhdx` disks and OVA archives; export a guest as OVA.
 - Templates, full clones and linked clones (a linked clone is ready in under a second).
@@ -309,6 +310,7 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 | `GET /pools`, `POST /pools`, `DELETE /pools/{name}` | Resource pools and quotas |
 | `GET /storage`, `GET /media`, `PUT /media/{name}`, `POST /media/fetch` | Storage, ISO and image upload |
 | `GET /peers`, `POST /peers/{name}/import/{vmid}`, `POST /peers/{name}/migrate/{vmid}` | Other servers, VM import, live migration |
+| `GET /support` | Support bundle (administrators only) |
 | `GET /tasks`, `GET /tasks/{id}` | Task log |
 
 `GET /metrics` (outside `/api/v1`) serves Prometheus metrics with the same token.
@@ -431,7 +433,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-556 tests pass on Linux and 470 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+558 tests pass on Linux and 472 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 

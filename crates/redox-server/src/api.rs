@@ -81,6 +81,7 @@ pub fn routes() -> Router<AppState> {
         .route("/media/catalog/{key}", post(media_catalog_fetch))
         .route("/media/{name}", axum::routing::put(media_put).delete(media_delete))
         .route("/peers", get(peers))
+        .route("/support", get(support_bundle))
         .route("/peers/{name}/import/{vmid}", post(peer_import))
         .route("/peers/{name}/migrate/{vmid}", post(peer_migrate))
         .route("/guests/{vmid}/migrate/prepare", post(migrate_prepare))
@@ -139,6 +140,14 @@ async fn cluster(State(st): State<AppState>) -> Json<ClusterSummary> {
 async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
     st.import_from_peer(&name, vmid, &me.user)?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// Destek paketi: sorun bildirimi için durum dökümü (parola, token ve denetim günlüğü içermez). Yalnızca yönetici.
+async fn support_bundle(State(st): State<AppState>, Extension(me): Extension<Identity>) -> Response {
+    if !me.can_write() {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "destek paketini yalnızca yönetici alabilir", "code": "forbidden" }))).into_response();
+    }
+    Json(st.support_bundle()).into_response()
 }
 
 /// Eş sunucudaki çalışan sanal makineyi kapatmadan bu sunucuya taşır; sonuç görev günlüğünde görünür.

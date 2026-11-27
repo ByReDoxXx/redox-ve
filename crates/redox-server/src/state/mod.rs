@@ -22,6 +22,7 @@ mod remote;
 mod replica;
 mod schedule;
 mod snapshots;
+mod support;
 mod transfer;
 
 /// Grafiklerde tutulan örnek sayısı (5 sn aralıkla 10 dakika).

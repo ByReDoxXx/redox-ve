@@ -38,3 +38,14 @@ replica.
 ([Language](Language.md)).
 
 For anything else, the service log: `journalctl -u redox -e`.
+
+## Support bundle
+
+When you report a problem, attach a support bundle: `redox support > bundle.json`, or *Download* under *Support bundle*
+on the *Cluster* page (administrators only). It is one JSON file with the version, what the driver can do on this
+server, the settings, nodes and storage, every guest's hardware, the last 200 tasks and a few host facts (kernel, load,
+memory, addresses).
+
+It contains **no** users, passwords, tokens, peer tokens or audit log, and the commands that run before and after
+backups and the SSH keys of guests are masked. It does contain guest names, network addresses and task messages, so
+read it before you send it. The management service's own log is not in it; get that with `journalctl -u redox`.

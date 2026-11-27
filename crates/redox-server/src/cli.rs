@@ -116,6 +116,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox media fetch <https-adresi> [sha256]    (sunucu dosyayı kendisi indirir)
         OVA dışa aktarma: curl -H 'Authorization: Bearer TOKEN' -o vm.ova REDOX_URL/api/v1/guests/KIMLIK/export
         yüklemek için: curl -T debian.iso -H 'Authorization: Bearer TOKEN' REDOX_URL/api/v1/media/debian.iso
+  redox support > destek.json     (destek paketi: sorun bildirimi için durum dökümü; parola ve token içermez)
   redox tty [--once]              (sunucunun konsolundaki durum ekranı: adres, hizmet, konuklar; Enter ile oturum açılır)
   redox peer list                 (birleşik görünümdeki eş sunucular)
   redox peer import <eş> <kimlik> (eşteki kapalı sanal makineyi bu sunucuya kopyalar)
@@ -155,6 +156,8 @@ pub enum View {
     Replicas,
     /// Bakım kipi durumu ya da değişikliği.
     Maintenance,
+    /// Yanıt olduğu gibi (girintili JSON) yazılır.
+    Json,
     /// Hazır imaj kataloğu.
     Catalog,
     /// Konuğun içindeki dosya sistemleri.
@@ -457,6 +460,7 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["job", "remove", name] => req("DELETE", format!("/jobs/{name}"), None, View::Done("yedek işi silindi")),
         ["storage", "list"] => get("/storage", View::Storage),
         ["peer", "list"] => get("/peers", View::Peers),
+        ["support"] => get("/support", View::Json),
         ["peer", "migrate", peer, id] => req("POST", format!("/peers/{peer}/migrate/{}", vmid(id)?), None, View::Done("canlı taşıma başladı; sonuç: redox task list")),
         ["peer", "import", peer, id] => req("POST", format!("/peers/{peer}/import/{}", vmid(id)?), None, View::Done("kopyalama başladı; sonuç: redox task list")),
         ["task", "list"] => get("/tasks", View::Tasks),
@@ -619,6 +623,7 @@ pub fn render(view: View, v: &Value) -> String {
             }),
             "çoğaltma yok",
         ),
+        View::Json => serde_json::to_string_pretty(v).unwrap_or_default(),
         View::Maintenance => match (v["on"].as_bool() == Some(true), v["guests"].as_u64(), v["resume"].as_array().map(Vec::len)) {
             (true, _, _) if v["evacuating"].is_u64() => format!("bakım kipi açık; {} sanal makine kapatılmadan {} sunucusuna taşınıyor (sonuç: redox task list)", v["evacuating"], s(v, "peer")),
             (true, Some(stopped), _) => format!("bakım kipi açık; {stopped} konuk kapatılıyor"),
@@ -838,6 +843,8 @@ mod tests {
         assert!(peers.contains("1 düğüm, 2 konuk") && peers.contains("HATA: token reddedildi") && peers.contains("bekleniyor"), "{peers}");
         assert!(render(View::Peers, &json!([])).contains("tanımlı değil"));
         assert_eq!(parse(&["peer".to_string(), "list".to_string()]).unwrap().path, "/peers");
+        assert_eq!(parse(&args("support")).unwrap().path, "/support");
+        assert_eq!(render(View::Json, &json!({"a": 1})), "{\n  \"a\": 1\n}");
         let migrate = parse(&args("peer migrate ankara 103")).unwrap();
         assert_eq!((migrate.method, migrate.path.as_str(), migrate.body), ("POST", "/peers/ankara/migrate/103", None));
         assert!(parse(&args("peer migrate ankara yuz")).is_err());

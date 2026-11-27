@@ -290,3 +290,31 @@ pub(super) async fn maintenance_evacuation_needs_a_known_peer_and_an_admin() {
     let (status, v) = api(&app, post_json("/api/v1/maintenance", &json!({ "on": true }))).await;
     assert_eq!((status, v["on"].as_bool(), state.in_maintenance()), (StatusCode::OK, Some(true), true), "{v}");
 }
+
+// ---------- Destek paketi ----------
+
+#[tokio::test]
+pub(super) async fn the_support_bundle_is_for_admins_and_carries_no_secrets() {
+    let (app, state) = setup_real();
+    state.mutate(|c| {
+        let g = c.guest_mut_for_import(103).unwrap();
+        g.hw.backup_pre = "/usr/bin/dump --password=cok-gizli".into();
+    });
+    let (status, v) = api(&app, get("/api/v1/support")).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!((v["version"].as_str(), v["driver"]["real"].as_bool()), (Some(env!("CARGO_PKG_VERSION")), Some(true)));
+    assert!(v["guests"].as_array().unwrap().len() >= 5 && v["nodes"].is_array() && v["storages"].is_array() && v["tasks"].is_array() && v["settings"]["migrate"]["ports"].is_array(), "{v}");
+    let text = v.to_string();
+    for secret in ["cok-gizli", "es-sunucu", "dogru-at-pil", "password_hash", "\"token\"", "\"hash\"", "Bearer"] {
+        assert!(!text.contains(secret), "pakette gizli bilgi olmamalı: {secret}");
+    }
+    assert!(text.contains("(gizlendi)"), "maskelenen alan belli edilir");
+    // Dosya olarak indirme ve yetki.
+    let (status, headers, body) = send(&app, get("/support")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers["content-disposition"].to_str().unwrap().starts_with("attachment; filename=\"redox-destek-") && body.contains("\"version\""));
+    assert!(page(&app, "/cluster").await.contains(r#"href="/support" download"#));
+    for path in ["/api/v1/support", "/support"] {
+        assert_eq!(send(&app, as_viewer(Method::GET, path).body(Body::empty()).unwrap()).await.0, StatusCode::FORBIDDEN, "{path}");
+    }
+}

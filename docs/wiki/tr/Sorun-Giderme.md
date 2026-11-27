@@ -34,3 +34,14 @@ iç içe sanal makine) konuşuyorsa çerçeveleri düşürülür; o konukta koru
 **Arayüz yanlış dilde.** Üst çubuktaki EN / TR düğmesi; ya da tarayıcıdaki `lang` çerezini silin ([Dil](Dil.md)).
 
 Çözülmeyen sorunlar için hizmet günlüğü: `journalctl -u redox -e`.
+
+## Destek paketi
+
+Sorun bildirirken bir destek paketi ekleyin: `redox support > destek.json` ya da *Küme* sayfasında *Destek paketi*
+altındaki *İndir* (yalnızca yönetici). Tek bir JSON dosyasıdır: sürüm, sürücünün bu sunucuda yapabildikleri, ayarlar,
+düğümler ve depolama, her konuğun donanımı, son 200 görev ve sunucuya dair birkaç ölçüm (çekirdek, yük, bellek,
+adresler).
+
+İçinde kullanıcılar, parolalar, token'lar, eş sunucuların token'ları ve denetim günlüğü **yoktur**; yedek öncesi ve
+sonrası çalışan komutlar ile konukların SSH anahtarları maskelenir. Konuk adları, ağ adresleri ve görev iletileri ise
+vardır: göndermeden önce okuyun. Yönetim hizmetinin kendi günlüğü pakette yoktur; onu `journalctl -u redox` ile alın.
