@@ -131,3 +131,9 @@ bind = uid={user},ou=people,dc=ornek,dc=com
 ```
 
 `redox ldap test ayar.conf ali` ile deneyin, sunucuyu `--ldap ayar.conf` ile başlatın, `redox user ldap ali on --users …` ile kullanıcıyı işaretleyin. En az bir yönetici yerel parolayla kalır.
+
+## Syslog ve Let's Encrypt
+
+`--syslog tls://ad:6514` denetim kayıtlarının kopyasını dışarı gönderir. `redox acme issue ... --agree-tos`
+Let's Encrypt sertifikası alır, `redox acme renew` yeniler. İkisi de gerçek dış hizmetlerle henüz denenmedi;
+ayrıntılar `KURULUM.md`, 15. bölüm.

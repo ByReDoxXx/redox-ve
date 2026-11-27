@@ -110,7 +110,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # all must pass (686 tests on Linux; with Node installed the browser scripts' tests run too)
+cargo test --workspace          # all must pass (713 tests on Linux; with Node installed the browser scripts' tests run too)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -801,6 +801,59 @@ private registry passwords, device nodes and extended attributes (file capabilit
 downloaded part is verified against its digest and layers cannot write outside the root directory. Tested against a
 fake registry; **a real registry and starting such a container with real LXC were not tried.**
 
+## 15. Token lifetime, sessions, operator permissions, syslog, Let's Encrypt, hot removal
+
+### 15.1 Lifetime of API tokens
+
+Choose 30, 90 or 365 days in **Valid for** in the panel, or on the command line
+`redox token create <user> <label> --days 90 --users FILE`. An expired token is refused like a wrong one. A token
+without a lifetime never expires, as before.
+
+### 15.2 Open sessions
+
+**My Account** lists open sessions (address, browser, last use); close one or all others. An administrator can close
+every session of a user on the **Users** page, also in lockdown. API tokens are not sessions; revoke them separately.
+
+### 15.3 Operator permissions
+
+An operator can be limited to some of four permissions: power, console, snapshot, backup. Use the **Users** page or
+`redox user permits <name> backup --users FILE` (`all`: no restriction). The tag scope still applies. An open live
+console session does not close at once when the permission is removed (a terminal does).
+
+### 15.4 Sending the audit log to syslog
+
+```bash
+redox serve ... --syslog tls://log.example.net:6514 --syslog-ca /etc/redox/log-ca.pem
+```
+
+`udp://`, `tcp://` and `tls://` are supported (RFC 5424; octet-counted framing on TCP and TLS). `--syslog-ca` is only
+needed for a private certificate authority. Sending never blocks the panel; if the queue is full, records are dropped
+and their number reported. **Delivery is not guaranteed**; the local `audit.log` stays the primary record. Not tried
+with a real collector such as rsyslog.
+
+### 15.5 A Let's Encrypt certificate
+
+The domain must point to this server and port 80 must be reachable from the internet and free.
+
+```bash
+sudo redox acme issue --domain panel.example.net --dir /etc/redox/tls --agree-tos --email you@example.net --staging
+```
+
+`--staging` gives a test certificate; when all is well, run it again without the option. `--agree-tos` means you accept
+the provider's terms. Start the server with `--tls-cert /etc/redox/tls/tls.crt --tls-key /etc/redox/tls/tls.key`; the
+service user must be able to read them. For renewal set up a daily timer running
+`redox acme renew --dir /etc/redox/tls` (it renews when fewer than 30 days are left; the server uses the new files
+without a restart). Renewed files belong to the user who ran the command. Tested against a fake ACME server; **not
+tried with Let's Encrypt.**
+
+### 15.6 Removing cores and memory from a running VM
+
+`redox vm cores <id> <count>` and `redox vm memory <id> <MB>` (and the same forms on the Hardware tab) remove when
+given a smaller value. Only memory added while running can be removed, newest part first. The guest operating system
+has to release it. **For reliable memory removal a Linux guest must online new memory as movable:** kernel option
+`memhp_default_state=online_movable`. Tested on real QEMU with a Linux guest: with the guest's default policy one part
+could not be released, with the movable policy all could. Not tried with Windows.
+
 ## Known gaps
 
 - **Two-factor login is optional.** Each administrator should turn it on; protect the panel with a VPN or an IP
@@ -814,8 +867,8 @@ fake registry; **a real registry and starting such a container with real LXC wer
   reading them again. Verify important backups now and then.
 - **A multi-disk restore is not atomic:** disks are put in place one by one after all are prepared.
 - **Not done:** LVM/ZFS/Ceph/iSCSI storage pools, a shared-state cluster, SPICE, live migration of guests with UEFI or
-  a TPM, clipboard and microphone in the live console, removing CPU and memory from a running guest, live migration of
-  containers.
+  a TPM, clipboard and microphone in the live console, live migration of containers and
+  moving them to another storage.
 - **The QEMU unit** (`redox-qemu.service`) uses a looser sandbox than the simulation unit; the file says why.
 - **What was verified where.** The systemd units and the Caddy configuration were not tried on a real server.
   Code and tests ran on Linux (WSL, Ubuntu). On real KVM with NAT networking: snapshots, rollback and backups of

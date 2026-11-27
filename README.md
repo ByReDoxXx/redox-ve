@@ -136,6 +136,8 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Security keys (WebAuthn) as a second sign-in step.
 - A container terminal in the browser; a sound card for VMs, heard in the live console.
 - Containers from OCI / Docker images. Details and what was not tested: [INSTALL.md](INSTALL.md), section 14.
+- API tokens with a lifetime, session management, partial operator permissions, audit forwarding to syslog, a built-in
+  Let's Encrypt client, and removing cores / memory from a running VM ([INSTALL.md](INSTALL.md), section 15).
 - Live graphical console in the browser, with keyboard and mouse.
 - Roles (admin, operator, viewer), tag-based operator scopes, TOTP two-factor login, OpenID Connect.
 - Audit log, task log, resource alerts by webhook or e-mail, Prometheus metrics.
@@ -467,7 +469,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-686 tests pass on Linux and 577 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+713 tests pass on Linux and 598 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the browser scripts' own
 tests (console, terminal, security key) run as well.
 
@@ -503,9 +505,9 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
 - Automatic failover exists only for replicated guests and needs a witness server; there is no fencing and no shared-state cluster. It has not been tried in a real outage.
 - Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
 - Restoring a file into a running guest goes through the guest agent, so the guest needs `qemu-guest-agent` and the agent must allow its file commands (some distributions, such as RHEL, block them by default). A single file is written as the agent's user and does not keep its owner or permissions; a folder is unpacked with the guest's own `tar` and must already exist in the guest. Containers are not covered. Writing into the guest (single file and folder) is tested with the driver's own code against a real guest agent (qemu-ga 10.2 in a Linux guest); reading the file out of the backup is still tested only with a fake `guestfish`, and the whole path has not been tried with a Windows guest.
-- Cores and memory can be added to a running VM but not removed, and only up to the "maximum cores" and "maximum memory" set while it was stopped. Memory is added in steps of 128 MB, at most 8 times per start (a stop and start makes the added memory ordinary memory and frees the slots); to lower memory while running there is only the balloon. A snapshot with memory state taken before cores or memory were added can only be rolled back to with the guest stopped. Both are tested with the driver's own code on real QEMU with a Linux guest, including suspend and resume afterwards; bringing new cores and memory online through the guest agent is tested against a real agent (qemu-ga 10.2) as well. Neither was tried with a Windows guest.
+- Cores and memory can be added to and removed from a running VM (memory only in the parts added later; a Linux guest must online memory as movable for reliable removal). They can be added only up to the "maximum cores" and "maximum memory" set while it was stopped. Memory is added in steps of 128 MB, at most 8 times per start (a stop and start makes the added memory ordinary memory and frees the slots); to lower the boot memory while running there is only the balloon. A snapshot with memory state taken before cores or memory were added can only be rolled back to with the guest stopped. Both are tested with the driver's own code on real QEMU with a Linux guest, including suspend and resume afterwards; bringing new cores and memory online through the guest agent is tested against a real agent (qemu-ga 10.2) as well. Neither was tried with a Windows guest.
 - Moving a running VM to another storage mirrors only the current content of its disks, so a guest that has snapshots (or a disk that depends on a backup) must be stopped first; stopped guests are moved by copying the files, snapshots included. If a multi-disk guest's switch-over fails part-way, the error says so and the move must be retried before the guest is stopped. Tested on real QEMU with a guest that keeps writing; not tried with large disks or a slow target.
-- Containers cannot be moved to another storage or to another server.
+- Containers cannot be moved to another storage. They can be **copied** from a peer server through a backup (the copy arrives stopped, the source stays); not tried with real LXC.
 - The live console has no clipboard or microphone (text can be typed in as keystrokes).
 - The interface is in Turkish and English only.
 - There is no Ceph, iSCSI or built-in ZFS/LVM-thin management, no shared cluster state, no SPICE, no Terraform provider, no Ansible modules and no direct import from ESXi/vCenter.

@@ -104,7 +104,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # hepsi geçmeli (Linux'ta 686 test; Node kuruluysa tarayıcı betiklerinin testleri de çalışır)
+cargo test --workspace          # hepsi geçmeli (Linux'ta 713 test; Node kuruluysa tarayıcı betiklerinin testleri de çalışır)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -966,6 +966,60 @@ geçidi** verin (LXC'nin NAT köprüsünde ör. `10.0.3.50/24` ve `10.0.3.1`). Y
 İndirilen her parça özetiyle doğrulanır; katmanlar kök dizinin dışına yazamaz. Sahte kayıt sunucusuyla sınandı;
 **gerçek bir kayıt sunucusu ve böyle bir konteyneri gerçek LXC ile başlatma denenmedi.**
 
+## 15. Token süresi, oturumlar, operatör yetkileri, syslog, Let's Encrypt, çalışırken çıkarma
+
+### 15.1 API token'larına süre
+
+Panelde **Geçerlilik** alanından 30, 90 ya da 365 gün seçin; komut satırında
+`redox token create <kullanıcı> <etiket> --days 90 --users DOSYA`. Süresi dolan token yanlış token gibi reddedilir.
+Süre verilmeyen token eskisi gibi süresizdir.
+
+### 15.2 Açık oturumlar
+
+**Hesabım** sayfasında açık oturumlar (adres, tarayıcı, son kullanım) görünür; tek tek ya da diğerlerinin tümü
+kapatılabilir. Yönetici **Kullanıcılar** sayfasından bir kullanıcının bütün oturumlarını kilit kipinde de kapatabilir.
+API token'ları oturum değildir; onları ayrıca iptal edin.
+
+### 15.3 Operatör yetkileri
+
+Bir operatör dört yetkinin yalnızca bir kısmıyla sınırlandırılabilir: güç, konsol, anlık görüntü, yedek.
+**Kullanıcılar** sayfasından ya da `redox user permits <ad> backup --users DOSYA` (`all`: kısıt yok). Etiket kapsamı
+ayrıca uygulanır. Açık bir canlı konsol oturumu yetki geri alınınca hemen kapanmaz (terminal kapanır).
+
+### 15.4 Denetim günlüğünü syslog'a gönderme
+
+```bash
+redox serve ... --syslog tls://log.ornek.net:6514 --syslog-ca /etc/redox/log-ca.pem
+```
+
+`udp://`, `tcp://` ve `tls://` desteklenir (RFC 5424; TCP ve TLS'te uzunluk önekli çerçeve). `--syslog-ca` yalnızca
+özel bir sertifika otoritesi için gerekir. Gönderim paneli bekletmez; sıra dolarsa kayıtlar düşer ve sayısı
+bildirilir. **Teslim garantisi yoktur**; yerel `audit.log` asıl kayıttır. rsyslog gibi gerçek bir toplayıcıyla
+denenmedi.
+
+### 15.5 Let's Encrypt sertifikası
+
+Alan adı bu sunucuyu göstermeli ve 80 numaralı kapı internetten erişilebilir, boş olmalıdır.
+
+```bash
+sudo redox acme issue --domain panel.ornek.net --dir /etc/redox/tls --agree-tos --email siz@ornek.net --staging
+```
+
+`--staging` deneme sertifikası verir; her şey yolundaysa bu seçeneği kaldırıp yeniden çalıştırın. `--agree-tos`
+sağlayıcının kullanım koşullarını kabul ettiğiniz anlamına gelir. Sunucuyu `--tls-cert /etc/redox/tls/tls.crt
+--tls-key /etc/redox/tls/tls.key` ile başlatın; hizmet kullanıcısının bu dosyaları okuyabilmesi gerekir. Yenileme
+için günde bir `redox acme renew --dir /etc/redox/tls` çalıştıran bir zamanlayıcı kurun (30 günden az kalınca
+yeniler; sunucu yeni dosyaları yeniden başlamadan kullanır). Yenilenen dosyaların sahibi komutu çalıştıran
+kullanıcıdır. Sahte bir ACME sunucusuyla sınandı; **Let's Encrypt ile denenmedi.**
+
+### 15.6 Çalışan sanal makineden çekirdek ve bellek çıkarma
+
+`redox vm cores <kimlik> <sayı>` ve `redox vm memory <kimlik> <MB>` (ve Donanım sekmesindeki aynı formlar) daha küçük
+bir değer verilince çıkarır. Bellekte yalnızca çalışırken eklenen parçalar, sondan başlayarak çıkar. Konuk işletim
+sistemi kaynağı bırakmalıdır. **Linux konukta bellek çıkarmanın güvenilir olması için yeni bellek "taşınabilir"
+açılmalıdır:** çekirdek seçeneği `memhp_default_state=online_movable`. Gerçek QEMU'da Linux konukla sınandı: konuğun
+olağan ayarıyla bir parça bırakılamadı, "taşınabilir" ayarıyla hepsi çıktı. Windows konukla denenmedi.
+
 ## Bilinen eksikler
 
 - **İki adımlı doğrulama isteğe bağlıdır.** Her yönetici Hesabım sayfasından açmalıdır; mümkünse paneli VPN ya da IP kısıtıyla da koruyun.
@@ -982,7 +1036,7 @@ geçidi** verin (LXC'nin NAT köprüsünde ör. `10.0.3.50/24` ve `10.0.3.1`). Y
   okunur. `--changed-block-tracking` ile çalışan konukta yalnızca değişen bloklar okunur. Dış hedefe yalnızca yeni
   parçalar gider.
 - **Yapılmayanlar:** LVM/ZFS/Ceph/iSCSI depolama havuzları, ortak durumlu küme, SPICE, UEFI/TPM'li konukların canlı
-  taşınması, canlı konsolda pano ve mikrofon, çalışan konuktan işlemci ve bellek çıkarma, konteynerlerin canlı taşınması.
+  taşınması, canlı konsolda pano ve mikrofon, konteynerlerin canlı taşınması ve başka depolama alanına taşınması.
 - **QEMU birimi** (`redox-qemu.service`) simülasyon birimine göre daha gevşek bir sandbox kullanır; nedenleri dosyada yazılı.
 - Bu kılavuzdaki systemd birimleri ve Caddy ayarı gerçek bir sunucuda denenmedi. Kod ve testler Linux'ta (WSL, Ubuntu) çalıştırıldı.
   QEMU sürücüsü NAT ağıyla gerçek KVM üzerinde denendi (çalışan konukta anlık görüntü, geri dönüş ve yedek dahil);

@@ -65,3 +65,11 @@ ekleyebilir. Girişte parolaya ek olarak anahtar (ya da açıksa uygulama kodu) 
 
 Hesap sayfası (parola, ikinci adım, token üretme) yalnızca tarayıcıda oturum açarak kullanılır; API token'ıyla
 yapılan istekler reddedilir.
+
+## Token süresi, oturumlar ve operatör yetkileri
+
+- Token oluştururken **Geçerlilik** seçilebilir (`--days N`).
+- *Hesabım* sayfasında açık oturumlar görülür ve kapatılır; yönetici *Kullanıcılar* sayfasından bir kullanıcının tüm
+  oturumlarını kapatabilir.
+- Operatör, güç / konsol / anlık görüntü / yedek yetkilerinin yalnızca bir kısmıyla sınırlandırılabilir
+  (`redox user permits <ad> backup`).

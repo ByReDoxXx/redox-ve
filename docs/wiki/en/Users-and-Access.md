@@ -66,3 +66,9 @@ administrator resets the second step on the *Users* page or runs `redox user key
 
 The account page (password, second step, creating tokens) works only with a browser sign-in; requests made with an
 API token are refused.
+
+## Token lifetime, sessions and operator permissions
+
+- A lifetime can be chosen when creating a token (**Valid for**, `--days N`).
+- *My Account* lists and closes open sessions; an administrator can close all sessions of a user on the *Users* page.
+- An operator can be limited to some of power / console / snapshot / backup (`redox user permits <name> backup`).

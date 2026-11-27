@@ -132,3 +132,9 @@ bind = uid={user},ou=people,dc=example,dc=com
 ```
 
 Try it with `redox ldap test ldap.conf ali`, start the server with `--ldap ldap.conf`, and mark the user with `redox user ldap ali on --users …`. At least one administrator keeps a local password.
+
+## Syslog and Let's Encrypt
+
+`--syslog tls://host:6514` sends a copy of the audit records elsewhere. `redox acme issue ... --agree-tos` obtains a
+Let's Encrypt certificate and `redox acme renew` renews it. Neither has been tried against the real external
+services yet; see `INSTALL.md`, section 15.
