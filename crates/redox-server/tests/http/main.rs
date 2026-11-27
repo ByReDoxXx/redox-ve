@@ -196,6 +196,12 @@ async fn api(app: &Router, req: Request<Body>) -> (StatusCode, Value) {
     (status, serde_json::from_str(&body).unwrap_or(Value::Null))
 }
 
+/// Sunucunun kendi ürettiği gibi imzalanmış bildirim sorgusu (`notice=…` ya da `error=…`).
+fn signed_flash(kind: &str, text: &str) -> String {
+    let at = now();
+    format!("{kind}={}&ft={at}&fs={}", redox_server::view::enc(text), redox_server::flash::sign(kind, text, at))
+}
+
 fn location(headers: &HeaderMap) -> &str {
     headers.get(LOCATION).expect("Location başlığı").to_str().unwrap()
 }

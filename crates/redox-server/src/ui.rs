@@ -23,6 +23,9 @@ pub struct PageQuery {
     pub(crate) q: String,
     notice: Option<String>,
     error: Option<String>,
+    /// Bildirimin anı ve imzası: yalnızca bu sunucunun ürettiği bildirim gösterilir (bkz. `flash`).
+    ft: u64,
+    fs: String,
     pub(crate) tab: String,
     kind: String,
     /// Grafik aralığı: boş (10 dakika), `24s`, `30g`.
@@ -53,8 +56,12 @@ pub(crate) struct Ctx {
 }
 
 impl Ctx {
-    pub(crate) fn new(st: &AppState, headers: &HeaderMap, query: PageQuery, me: &Identity) -> Self {
+    pub(crate) fn new(st: &AppState, headers: &HeaderMap, mut query: PageQuery, me: &Identity) -> Self {
         let range = crate::history::Range::parse(&query.range);
+        // Adres satırına elle yazılmış (imzasız ya da bayat) bildirim gösterilmez.
+        let at = now();
+        query.notice = query.notice.take().filter(|text| crate::flash::valid("notice", text, query.ft, &query.fs, at));
+        query.error = query.error.take().filter(|text| crate::flash::valid("error", text, query.ft, &query.fs, at));
         Ctx {
             cluster: st.snapshot(),
             theme: theme_of(headers),
@@ -352,7 +359,8 @@ pub async fn not_found(State(st): State<AppState>,
 
 pub(crate) fn flash(path: &str, key: &str, message: &str) -> Redirect {
     let sep = if path.contains('?') { '&' } else { '?' };
-    Redirect::to(&format!("{path}{sep}{key}={}", enc(message)))
+    let at = now();
+    Redirect::to(&format!("{path}{sep}{key}={}&ft={at}&fs={}", enc(message), crate::flash::sign(key, message, at)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -571,8 +579,10 @@ pub(crate) fn safe_back(back: &str) -> &str {
 #[serde(default)]
 pub struct LoginQuery {
     next: String,
-    /// Tek oturum açma dönüşünde gösterilecek hata.
+    /// Tek oturum açma dönüşünde gösterilecek hata (imzalı; bkz. `flash`).
     error: Option<String>,
+    ft: u64,
+    fs: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -588,7 +598,8 @@ pub async fn login_form(State(st): State<AppState>, headers: HeaderMap, Query(qu
     if crate::identify(&st, &headers).is_some() {
         return Redirect::to(safe_back(&query.next)).into_response();
     }
-    Html(view::login(theme_of(&headers), safe_back(&query.next), "", query.error.as_deref(), st.oidc().is_some())).into_response()
+    let error = query.error.as_deref().filter(|text| crate::flash::valid("error", text, query.ft, &query.fs, now()));
+    Html(view::login(theme_of(&headers), safe_back(&query.next), "", error, st.oidc().is_some())).into_response()
 }
 
 pub async fn login(
@@ -638,7 +649,8 @@ fn oidc_cookie(st: &AppState, value: &str, max_age: u64) -> String {
 }
 
 fn login_error(message: &str) -> Response {
-    Redirect::to(&format!("/login?error={}", enc(message))).into_response()
+    let at = now();
+    Redirect::to(&format!("/login?error={}&ft={at}&fs={}", enc(message), crate::flash::sign("error", message, at))).into_response()
 }
 
 /// Tek oturum açmayı başlatır: tarayıcıyı kimlik sağlayıcıya yollar.

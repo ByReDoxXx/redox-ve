@@ -10,6 +10,7 @@ pub mod auth;
 pub mod cli;
 pub mod console;
 pub mod firewall;
+pub mod flash;
 pub mod fonts;
 pub mod guestfs;
 pub mod health;

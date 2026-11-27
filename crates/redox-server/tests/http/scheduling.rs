@@ -695,8 +695,12 @@ pub(super) async fn single_sign_on_maps_the_provider_identity_to_a_local_user() 
         assert_eq!(status, StatusCode::SEE_OTHER);
         assert!(location(&headers).starts_with("/login?error=") && headers.get(SET_COOKIE).is_none(), "oturum açılmaz");
     }
-    let shown = page_anon(&app, "/login?error=Bu+kimlik+hi%C3%A7bir+kullan%C4%B1c%C4%B1yla+e%C5%9Fle%C5%9Fmiyor.").await;
-    assert!(shown.contains("Bu kimlik hiçbir kullanıcıyla eşleşmiyor."), "hata giriş sayfasında gösterilir");
+    // Hata giriş sayfasında gösterilir; ama yalnızca sunucunun imzaladığı metin: elle yazılmış bağlantı ileti gösteremez.
+    let text = "/login?error=Bu+kimlik+hi%C3%A7bir+kullan%C4%B1c%C4%B1yla+e%C5%9Fle%C5%9Fmiyor.";
+    let at = now();
+    let signed = format!("{text}&ft={at}&fs={}", redox_server::flash::sign("error", "Bu kimlik hiçbir kullanıcıyla eşleşmiyor.", at));
+    assert!(page_anon(&app, &signed).await.contains("Bu kimlik hiçbir kullanıcıyla eşleşmiyor."), "hata giriş sayfasında gösterilir");
+    assert!(!page_anon(&app, text).await.contains("eşleşmiyor"), "imzasız metin gösterilmez");
 }
 
 pub(super) async fn page_anon(app: &Router, uri: &str) -> String {

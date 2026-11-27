@@ -96,11 +96,23 @@ pub(super) async fn filter_narrows_tree_and_table() {
 pub(super) async fn user_input_is_escaped() {
     let (app, _) = setup();
     let attack = "%3Cscript%3Ealert(1)%3C%2Fscript%3E";
-    for uri in [format!("/guests?q={attack}"), format!("/tasks?q={attack}"), format!("/?notice={attack}"), format!("/guests/102?error={attack}"), format!("/guests/{attack}")] {
+    let script = "<script>alert(1)</script>";
+    for uri in [format!("/guests?q={attack}"), format!("/tasks?q={attack}"), format!("/?{}", signed_flash("notice", script)), format!("/guests/102?{}", signed_flash("error", script)), format!("/guests/{attack}")] {
         let (_, _, body) = send(&app, get(&uri)).await;
         assert!(!body.contains("<script>alert"), "{uri}: kaçışsız çıktı");
         assert!(body.contains("&lt;script&gt;alert(1)"), "{uri}: girdi kaçışlı olarak görünmeli");
     }
+    // Bildirim kutusu yalnızca sunucunun imzaladığı metni gösterir: hazırlanmış bir bağlantı panelde ileti gösteremez.
+    let forged = "Oturumunuz askıya alındı";
+    let (signed, at) = (signed_flash("error", forged), now());
+    let stale = format!("error={}&ft={}&fs={}", redox_server::view::enc(forged), at - 3600, redox_server::flash::sign("error", forged, at - 3600));
+    for query in [format!("error={}", redox_server::view::enc(forged)), format!("notice={}", redox_server::view::enc(forged)), signed.replace("error=", "notice="), signed.replace("ask%C4%B1ya", "iptal"), stale] {
+        for path in ["/", "/guests/102", "/tasks"] {
+            let body = page(&app, &format!("{path}?{query}")).await;
+            assert!(!body.contains("askıya alındı") && !body.contains("iptal alındı"), "{path}?{query}");
+        }
+    }
+    assert!(page(&app, &format!("/?{signed}")).await.contains(forged), "imzalı bildirim gösterilir");
 }
 
 // ---------- Eylemler ----------

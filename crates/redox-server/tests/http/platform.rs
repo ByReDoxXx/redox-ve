@@ -186,7 +186,7 @@ async fn the_interface_and_messages_follow_the_chosen_language() {
     assert!(headers[SET_COOKIE].to_str().unwrap().starts_with("lang=en;") && headers[LOCATION] == "/guests");
 
     // Bildirimler ve hata iletileri: Türkçe üretilmiş ileti gösterilirken çevrilir (değişkenler korunur).
-    let flash = |text: &str| format!("/guests?error={}", redox_server::view::enc(text));
+    let flash = |text: &str| format!("/guests?{}", signed_flash("error", text));
     let (_, _, shown) = send(&app, english(&flash("103 silinmeden önce kapatılmalı"))).await;
     assert!(shown.contains("103 must be stopped before it is deleted"), "değişkenli ileti");
     let (_, _, nested) = send(&app, english(&flash("Sürücü hatası: 100 çalışırken yapılamaz: donanım ayarlarını değiştirmek için önce konuğu kapatın"))).await;
