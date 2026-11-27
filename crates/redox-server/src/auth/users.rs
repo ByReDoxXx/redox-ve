@@ -2,6 +2,8 @@
 
 use super::*;
 
+pub const MAX_TOKEN_DAYS: u64 = 3650;
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserFile {
     pub users: Vec<User>,
@@ -165,6 +167,18 @@ impl UserFile {
         Ok(plain)
     }
 
+    /// `days` > 0 ise token o kadar gün sonra geçmez olur.
+    pub fn create_token_for(&mut self, user: &str, label: &str, read_only: bool, days: u64, now: u64) -> Result<String, String> {
+        if days > MAX_TOKEN_DAYS {
+            return Err(format!("token süresi en çok {MAX_TOKEN_DAYS} gün olabilir (0: süresiz)"));
+        }
+        let plain = self.create_token_as(user, label, read_only)?;
+        if let Some(token) = self.find_mut(user)?.tokens.iter_mut().find(|t| t.name == label) {
+            token.expires = (days > 0).then(|| now + days * 86_400);
+        }
+        Ok(plain)
+    }
+
     pub fn add_token(&mut self, user: &str, label: &str, plain: &str) -> Result<(), String> {
         if label.is_empty() || label.len() > 64 {
             return Err("token etiketi 1-64 karakter olmalı".to_string());
@@ -173,7 +187,7 @@ impl UserFile {
         if user.tokens.iter().any(|t| t.name == label) {
             return Err(format!("\"{label}\" etiketli bir token zaten var"));
         }
-        user.tokens.push(ApiToken { name: label.to_string(), sha256: sha256_hex(plain), read_only: false });
+        user.tokens.push(ApiToken { name: label.to_string(), sha256: sha256_hex(plain), read_only: false, expires: None });
         Ok(())
     }
 

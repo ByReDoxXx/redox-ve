@@ -74,6 +74,15 @@ pub struct ApiToken {
     /// Salt okunur token: sahibi yönetici olsa da yalnızca okuma yapabilir (izleme araçları için).
     #[serde(default)]
     pub read_only: bool,
+    /// Bu andan (Unix saniyesi) sonra token geçmez; `None` süresizdir.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<u64>,
+}
+
+impl ApiToken {
+    pub fn expired(&self, now: u64) -> bool {
+        self.expires.is_some_and(|end| now >= end)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -455,14 +464,18 @@ impl Auth {
         self.save_sessions(&sessions, now);
     }
 
-    /// `Authorization: Bearer` token'ını doğrular (sabit zamanlı karşılaştırma).
+    /// `Authorization: Bearer` token'ını doğrular (sabit zamanlı karşılaştırma). Süresi dolan token geçmez.
     pub fn bearer(&self, token: &str) -> Option<Identity> {
+        self.bearer_at(token, crate::state::now())
+    }
+
+    pub fn bearer_at(&self, token: &str, now: u64) -> Option<Identity> {
         let digest = sha256_hex(token);
         let users = self.users();
         let mut found = None;
         for u in &users.users {
             for t in &u.tokens {
-                if bool::from(t.sha256.as_bytes().ct_eq(digest.as_bytes())) {
+                if bool::from(t.sha256.as_bytes().ct_eq(digest.as_bytes())) && !t.expired(now) {
                     // Salt okunur token, sahibinin rolünü izleyiciye indirir.
                     let role = if t.read_only { Role::Viewer } else { u.role };
                     found = Some(Identity { user: u.name.clone(), role, scope: u.scope.clone() });

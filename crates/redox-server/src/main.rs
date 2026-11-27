@@ -725,6 +725,20 @@ fn read_new_password() -> Result<String, String> {
     Ok(first)
 }
 
+/// `[--read-only] [--days N]`, herhangi bir sırada.
+fn token_flags(flags: &[&str]) -> Result<(bool, u64), String> {
+    let (mut read_only, mut days) = (false, 0);
+    let mut rest = flags.iter();
+    while let Some(flag) = rest.next() {
+        match *flag {
+            "--read-only" => read_only = true,
+            "--days" => days = rest.next().and_then(|d| d.parse::<u64>().ok()).filter(|d| *d > 0).ok_or("--days bir gün sayısı ister")?,
+            other => return Err(format!("anlaşılmayan seçenek: {other}")),
+        }
+    }
+    Ok((read_only, days))
+}
+
 fn manage_users(args: &[String]) -> Result<(), String> {
     let (path, rest) = split_users_flag(args)?;
     let mut file = UserFile::load(&path)?;
@@ -734,7 +748,12 @@ fn manage_users(args: &[String]) -> Result<(), String> {
                 say!("{} içinde kullanıcı yok.", path.display());
             }
             for u in &file.users {
-                let tokens: Vec<&str> = u.tokens.iter().map(|t| t.name.as_str()).collect();
+                let now = redox_server::state::now();
+                let tokens: Vec<String> = u.tokens.iter().map(|t| match t.expires {
+                    None => t.name.clone(),
+                    Some(_) if t.expired(now) => format!("{} (süresi doldu)", t.name),
+                    Some(end) => format!("{} ({} gün kaldı)", t.name, (end - now).div_ceil(86_400)),
+                }).collect();
                 say!("{:<20} {:<9} token: {}", u.name, u.role.label(), if tokens.is_empty() { "-".to_string() } else { tokens.join(", ") });
             }
             return Ok(());
@@ -750,18 +769,16 @@ fn manage_users(args: &[String]) -> Result<(), String> {
         ["user", "remove", name] => file.remove_user(name)?,
         ["user", "totp-reset", name] => file.disable_totp(name)?,
         ["user", "keys-reset", name] => file.clear_keys(name)?,
-        ["token", "create", user, label, "--read-only"] => {
-            let plain = file.create_token_as(user, label, true)?;
+        ["token", "create", user, label, flags @ ..] => {
+            let (read_only, days) = token_flags(flags)?;
+            let plain = file.create_token_for(user, label, read_only, days, redox_server::state::now())?;
             file.save(&path)?;
             say!("{plain}");
-            complain!("Salt okunur token. Bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
-            return Ok(());
-        }
-        ["token", "create", user, label] => {
-            let plain = file.create_token(user, label)?;
-            file.save(&path)?;
-            say!("{plain}");
-            complain!("Bu token bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
+            if read_only {
+                complain!("Salt okunur token. Bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
+            } else {
+                complain!("Bu token bir daha gösterilmez; şimdi güvenli bir yere kaydedin.");
+            }
             return Ok(());
         }
         ["token", "revoke", user, label] => file.revoke_token(user, label)?,

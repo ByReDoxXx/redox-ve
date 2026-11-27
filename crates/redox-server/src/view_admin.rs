@@ -16,12 +16,27 @@ fn role_label(r: Role) -> &'static str {
     }
 }
 
+fn token_days(id: &str) -> Markup {
+    html! {
+        select id=(id) name="days" {
+            option value="0" { (tx("Süresiz")) }
+            option value="30" { (tx("30 gün")) }
+            option value="90" { (tx("90 gün")) }
+            option value="365" { (tx("1 yıl")) }
+        }
+    }
+}
+
 fn token_list(action_base: &str, user: &User) -> Markup {
     html! {
         @if user.tokens.is_empty() { span class="dim" { "-" } }
         @for t in &user.tokens {
             form method="post" action={ (action_base) "/tokens/" (t.name) "/revoke" } {
-                span class="tag" { (t.name) @if t.read_only { (tx(" · salt okunur")) } }
+                span class="tag" { (t.name) @if t.read_only { (tx(" · salt okunur")) }
+                    @if let Some(end) = t.expires {
+                        @if t.expired(crate::state::now()) { (tx(" · süresi doldu")) } @else { (tx(" · son gün ")) (datetime(end)) }
+                    }
+                }
                 button class="btn sm danger" type="submit" aria-label={ (t.name) (tx(" token'ını iptal et")) } { (tx("İptal")) }
             }
         }
@@ -104,6 +119,7 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
                         div class="form" {
                             div class="field" { label for="tk-user" { (tx("Kullanıcı")) } select id="tk-user" name="name" { @for u in users { option value=(u.name) { (u.name) } } } }
                             div class="field" { label for="tk-label" { (tx("Etiket")) } input id="tk-label" name="label" type="text" required autocomplete="off" placeholder=(tx("örn. dizustu")); span class="hint" tabindex="0" role="note" { (tx("Token'ı tanımanız için bir ad (ör. betik, izleme).")) } }
+                            div class="field" { label for="tk-days" { (tx("Geçerlilik")) } (token_days("tk-days")) }
                             div class="btns field full" { button class="btn" type="submit" { (tx("Oluştur")) } }
                         }
                     }
@@ -189,6 +205,8 @@ pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>, keys_ready
                     form class="inline flat" method="post" action="/account/tokens" {
                         label for="label" { (tx("Yeni token etiketi")) }
                         input id="label" name="label" type="text" required autocomplete="off" placeholder=(tx("örn. dizustu"));
+                        label for="days" { (tx("Geçerlilik")) }
+                        (token_days("days"))
                         button class="btn" type="submit" { (tx("Oluştur")) }
                     }
                     p class="hint" { (tx("Token, ")) span class="mono" { "redox" } (tx(" komut satırının ve betiklerin sizin adınıza bağlanmasını sağlar; rolünüzün yetkilerini taşır.")) }

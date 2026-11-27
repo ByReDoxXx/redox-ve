@@ -24,6 +24,8 @@ pub struct AdminForm {
     role: String,
     scope: String,
     label: String,
+    /// Token'ın gün olarak ömrü; boş ya da 0 süresiz.
+    days: String,
     code: String,
     confirm: Option<String>,
 }
@@ -99,8 +101,16 @@ pub async fn user_totp_reset(State(st): State<AppState>, Path(name): Path<String
     done("/users", st.auth().edit(|u| u.reset_second_step(&name)).map(|()| tfmt(format!("{name} için iki adımlı doğrulama kapatıldı."))))
 }
 
-fn create_token(st: &AppState, me: &Identity, headers: &HeaderMap, user: &str, label: &str, back: &str) -> Response {
-    match st.auth().edit(|u| u.create_token(user, label)) {
+fn create_token(st: &AppState, me: &Identity, headers: &HeaderMap, user: &str, f: &AdminForm, back: &str) -> Response {
+    let label = f.label.trim();
+    let days = match f.days.trim() {
+        "" => 0,
+        text => match text.parse::<u64>() {
+            Ok(days) => days,
+            Err(_) => return done(back, Err((tx("token süresi bir sayı olmalı")).to_string())).into_response(),
+        },
+    };
+    match st.auth().edit(|u| u.create_token_for(user, label, false, days, now())) {
         Ok(token) => {
             let ctx = Ctx::new(st, headers, PageQuery::default(), me);
             Html(view_admin::token_created(&ctx.page(Current::Other, back), user, label, &token, back)).into_response()
@@ -116,7 +126,7 @@ pub async fn user_token_create(
     Path(name): Path<String>,
     Form(f): Form<AdminForm>,
 ) -> Response {
-    create_token(&st, &me, &headers, &target(name, &f), f.label.trim(), "/users")
+    create_token(&st, &me, &headers, &target(name, &f), &f, "/users")
 }
 
 pub async fn user_token_revoke(State(st): State<AppState>, Path((name, label)): Path<(String, String)>) -> Redirect {
@@ -173,7 +183,7 @@ pub async fn totp_disable(State(st): State<AppState>, Extension(me): Extension<I
 }
 
 pub async fn account_token_create(State(st): State<AppState>, Extension(me): Extension<Identity>, headers: HeaderMap, Form(f): Form<AdminForm>) -> Response {
-    create_token(&st, &me, &headers, &me.user, f.label.trim(), "/account")
+    create_token(&st, &me, &headers, &me.user, &f, "/account")
 }
 
 pub async fn account_token_revoke(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(label): Path<String>) -> Redirect {

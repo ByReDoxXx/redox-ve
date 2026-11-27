@@ -21,7 +21,7 @@ Users (edits the user file directly; --users FILE or REDOX_USERS):
   redox user totp-reset <name>    (turns two-step verification off)
   redox user keys-reset <name>    (removes the security keys)
   redox user list
-  redox token create <user> <label> [--read-only]
+  redox token create <user> <label> [--read-only] [--days <n>]
   redox token revoke <user> <label>
 
 Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an API token, REDOX_LANG=en for English output):

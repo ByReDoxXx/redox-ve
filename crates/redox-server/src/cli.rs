@@ -36,7 +36,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox user totp-reset <ad>      (iki adımlı doğrulamayı kapatır)
   redox user keys-reset <ad>      (güvenlik anahtarlarını kaldırır)
   redox user list
-  redox token create <kullanıcı> <etiket>
+  redox token create <kullanıcı> <etiket> [--read-only] [--days <gün>]   (süre verilmezse süresiz)
   redox token revoke <kullanıcı> <etiket>
 
 İstemci (çalışan sunucuya bağlanır; REDOX_URL adresi, REDOX_TOKEN API token'ı):

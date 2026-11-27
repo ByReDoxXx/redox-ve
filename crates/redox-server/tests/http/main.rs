@@ -41,6 +41,7 @@ mod oci;
 mod permissions;
 mod security_key;
 mod terminal;
+mod token_expiry;
 mod ui_v3;
 mod users;
 
