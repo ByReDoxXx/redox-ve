@@ -194,6 +194,11 @@ impl Cluster {
         if fold {
             self.guest_mut(vmid)?.hw.dimms.clear();
         }
+        // Başka sunucuya taşınmış konuğun burada kalan kopyası elle başlatılıyorsa artık asıl konuk odur:
+        // "geride kalan kopya" işareti kalkar (geri taşıma onu bayat sayıp yerine geçmesin).
+        if action == Action::Start {
+            self.guest_mut(vmid)?.tags.retain(|t| t != crate::MIGRATED_TAG);
+        }
         let id = self.push_task(
             &node,
             user,

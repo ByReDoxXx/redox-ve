@@ -73,6 +73,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
         (eş sunucudaki sanal makinenin buradaki yedek kopyasını düzenli tazeler; varsayılan 60 dakikada bir)
   redox maintenance status | on [--drain] | off   (bakım kipi: konuk başlatılmaz, zamanlanmış işler durur;
         --drain çalışan konukları sırayla kapatır, off onları yeniden başlatır)
+  redox maintenance on --evacuate <eş> [--as <ad>] [--drain]   (çalışan sanal makineleri kapatmadan eşe taşır;
+        --as bu sunucunun eşteki adı, --drain taşınamayanları kapatır)
   redox approval list | approve <no> | reject <no>   (dört göz ilkesi: bekleyen silme istekleri; kendi isteğinizi onaylayamazsınız)
   redox backup ack <yedek>               (olağan dışı değişim uyarısını kapatır: baktınız, sorun yok)
   redox backup archive | recover <yedek>   (yerelde silinmiş ama kopya hedefinde saklanan yedekler; recover listeye geri getirir)
@@ -379,6 +381,18 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["maintenance", "status"] => get("/maintenance", View::Maintenance),
         ["maintenance", "on"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": true })), View::Maintenance),
         ["maintenance", "on", "--drain"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": true, "drain": true })), View::Maintenance),
+        ["maintenance", "on", "--evacuate", peer, rest @ ..] => {
+            let mut body = json!({ "on": true, "evacuate": peer });
+            let mut rest = rest.iter();
+            while let Some(flag) = rest.next() {
+                match *flag {
+                    "--drain" => body["drain"] = json!(true),
+                    "--as" => body["as"] = json!(rest.next().ok_or("--as bu sunucunun eşteki adını ister")?),
+                    other => return Err(format!("bilinmeyen seçenek: {other}")),
+                }
+            }
+            req("POST", "/maintenance".to_string(), Some(body), View::Maintenance)
+        }
         ["maintenance", "off"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": false })), View::Maintenance),
         ["approval", "list"] => get("/approvals", View::Approvals),
         ["approval", "approve", id] => req("POST", format!("/approvals/{}/approve", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Approved),
@@ -606,6 +620,7 @@ pub fn render(view: View, v: &Value) -> String {
             "çoğaltma yok",
         ),
         View::Maintenance => match (v["on"].as_bool() == Some(true), v["guests"].as_u64(), v["resume"].as_array().map(Vec::len)) {
+            (true, _, _) if v["evacuating"].is_u64() => format!("bakım kipi açık; {} sanal makine kapatılmadan {} sunucusuna taşınıyor (sonuç: redox task list)", v["evacuating"], s(v, "peer")),
             (true, Some(stopped), _) => format!("bakım kipi açık; {stopped} konuk kapatılıyor"),
             (false, Some(started), _) => format!("bakım kipi kapalı; {started} konuk yeniden başlatılıyor"),
             (true, None, waiting) => format!("bakım kipi açık; bakım bitince başlatılacak konuk: {}", waiting.unwrap_or(0)),
@@ -862,6 +877,9 @@ mod tests {
         assert_eq!(render(View::Replicas, &json!([{"peer": "ankara", "source": 500, "every_min": 60, "standby": 103, "last_ok": 5, "error": null}])), "ankara         500    her    60 dk   yedek kopya: 103");
         assert_eq!(parsed("maintenance on --drain"), ("POST", "/maintenance".into(), Some(json!({"on": true, "drain": true})), View::Maintenance));
         assert_eq!(parsed("maintenance off").2, Some(json!({"on": false})));
+        assert_eq!(parsed("maintenance on --evacuate ankara").2, Some(json!({"on": true, "evacuate": "ankara"})));
+        assert_eq!(parsed("maintenance on --evacuate ankara --as istanbul --drain").2, Some(json!({"on": true, "evacuate": "ankara", "as": "istanbul", "drain": true})));
+        assert!(parse(&args("maintenance on --evacuate ankara --as")).is_err() && parse(&args("maintenance on --evacuate ankara --hizli")).is_err());
         assert_eq!(render(View::Maintenance, &json!({"on": true, "guests": 3})), "bakım kipi açık; 3 konuk kapatılıyor");
         assert_eq!(render(View::Maintenance, &json!({"on": false, "resume": []})), "bakım kipi kapalı");
         assert_eq!(parsed("approval approve 7"), ("POST", "/approvals/7/approve".into(), None, View::Approved));

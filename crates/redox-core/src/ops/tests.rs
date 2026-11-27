@@ -1221,3 +1221,15 @@ fn a_running_vm_moves_between_storages_only_without_snapshots() {
         assert!(c.check_storage_move_live(ct, "hizli").unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
     }
 }
+
+#[test]
+fn a_migrated_copy_that_is_started_again_is_no_longer_a_leftover() {
+    let mut c = cluster();
+    c.guest_mut(103).unwrap().status = GuestStatus::Running;
+    c.after_migrated_out(103);
+    assert!(c.guest(103).unwrap().tags.iter().any(|t| t == crate::MIGRATED_TAG));
+    // Durdurma gibi işlemler işareti kaldırmaz; başlatma kaldırır.
+    let task = c.begin_action(103, Action::Start, "u", NOW).unwrap();
+    assert!(!c.guest(103).unwrap().tags.iter().any(|t| t == crate::MIGRATED_TAG));
+    c.complete_task(task, Ok(()), NOW).unwrap();
+}

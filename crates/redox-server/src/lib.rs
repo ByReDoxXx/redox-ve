@@ -105,6 +105,7 @@ pub fn app(state: AppState) -> Router {
         .route("/guests/{vmid}/cores", post(ui_ops::cores_add))
         .route("/guests/{vmid}/memory", post(ui_ops::memory_add))
         .route("/approvals/{id}/{op}", post(ui_ops::approval_action))
+        .route("/maintenance/evacuate", post(ui_ops::maintenance_evacuate))
         .route("/maintenance/{op}", post(ui_ops::maintenance_action))
         .route("/guests/{vmid}/move", post(ui_ops::storage_move))
         .route("/guests/{vmid}/detach", post(ui_ops::guest_detach))

@@ -272,3 +272,21 @@ pub(super) async fn cpu_shares_and_memory_reservation_are_set_on_the_options_tab
     let shown = page(&app, "/guests/103?tab=secenekler").await;
     assert!(shown.contains(r#"name="cpu_shares" type="text" inputmode="numeric" value="50""#), "{shown}");
 }
+
+// ---------- Bakım kipinde boşaltma ----------
+
+#[tokio::test]
+pub(super) async fn maintenance_evacuation_needs_a_known_peer_and_an_admin() {
+    let (app, state) = setup_real();
+    // Tanımsız eş: bakıma girilmez.
+    let (status, v) = api(&app, post_json("/api/v1/maintenance", &json!({ "on": true, "evacuate": "yok" }))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("tanımlı değil"), "{status} {v}");
+    assert!(post_ok(&app, "/maintenance/evacuate", "peer=yok").await.contains("error="));
+    assert!(!state.in_maintenance());
+    let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, "/maintenance/evacuate"), "peer=yok")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(redox_server::operator_target("/maintenance/evacuate"), None);
+    // Boşaltma istenmeyen bakım eskisi gibi çalışır.
+    let (status, v) = api(&app, post_json("/api/v1/maintenance", &json!({ "on": true }))).await;
+    assert_eq!((status, v["on"].as_bool(), state.in_maintenance()), (StatusCode::OK, Some(true), true), "{v}");
+}

@@ -50,6 +50,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Selectable CPU model per VM, and a memory balloon whose target can be changed while the VM runs.
 - Cores and memory can be added to a running VM (`redox vm cores 103 6`, `redox vm memory 103 8192`), up to a per-VM maximum.
 - A running VM's disks can be moved to another storage without stopping it (`redox vm move 103 fast`).
+- Maintenance mode can evacuate a server: its running VMs are live-migrated to a peer (`redox maintenance on --evacuate <peer>`).
 - CPU shares and memory reservation per VM (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): who gets the CPU when the server runs short, and memory that is not taken back; both can be changed while the guest runs.
 - A status screen on the server's own console: name, addresses, where the web interface is, whether the service answers and how many guests run; Enter logs in.
 - Import `vmdk`, `vdi`, `vhdx` disks and OVA archives; export a guest as OVA.
@@ -430,7 +431,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-553 tests pass on Linux and 468 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+556 tests pass on Linux and 470 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 

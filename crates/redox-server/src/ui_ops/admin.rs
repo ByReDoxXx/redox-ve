@@ -66,6 +66,23 @@ pub async fn maintenance_action(State(st): State<AppState>, Extension(me): Exten
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct EvacuateForm {
+    peer: String,
+}
+
+/// Küme sayfasındaki "Konuklarımı Buraya Taşı ve Bakıma Al" düğmesi.
+pub async fn maintenance_evacuate(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<EvacuateForm>) -> Redirect {
+    let (st2, peer, user) = (st.clone(), f.peer.trim().to_string(), me.user.clone());
+    let started = tokio::task::spawn_blocking(move || st2.maintenance_evacuate(&peer, None, false, &user)).await;
+    match started {
+        Ok(Ok(n)) => flash("/cluster", "notice", &tfmt(format!("Bakım kipi açıldı; {n} sanal makine kapatılmadan {} sunucusuna taşınıyor. Sonuç görevlerde görünecek.", f.peer.trim()))),
+        Ok(Err(e)) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
+        Err(_) => flash("/cluster", "error", (tx("İşlem başlatılamadı."))),
+    }
+}
+
 /// Dört göz ilkesi: bekleyen isteği onaylar ya da reddeder (`op`: `approve` / `reject`).
 pub async fn approval_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((id, op)): Path<(u64, String)>) -> Redirect {
     let result = match op.as_str() {

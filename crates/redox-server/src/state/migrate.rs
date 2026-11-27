@@ -148,10 +148,17 @@ impl AppState {
         if remote.cores.max(remote.hw.max_cores) > node.cores || remote.mem_total_mb.max(remote.hw.max_mem_mb) > node.mem_total_mb {
             return Err(early(format!("canlı taşınan konuk aynı işlemci ve bellekle açılmalı ({} çekirdek, {} MB); bu sunucu yetmiyor", remote.cores.max(remote.hw.max_cores), remote.mem_total_mb.max(remote.hw.max_mem_mb))));
         }
-        if local.guest(vmid).is_ok() {
-            return Err(early(format!("bu sunucuda {vmid} kimliği dolu; canlı taşınan konuk aynı kimlikle gelir (ağ kartının adresi kimlikten türetilir)")));
-        }
+        // Aynı kimlik burada doluysa konuk gelemez; tek istisna, bu konuğun buradan taşınırken geride kalan
+        // kapalı kopyasıdır: konuk geri geliyorsa bayat kopyanın yerini alır (yedekleri kimliğe bağlı kalır).
+        let leftover = match local.guest(vmid) {
+            Err(_) => false,
+            Ok(here) if here.kind == redox_core::GuestKind::Vm && here.status == redox_core::GuestStatus::Stopped && here.lock.is_none() && here.tags.iter().any(|t| t == redox_core::MIGRATED_TAG) => true,
+            Ok(_) => return Err(early(format!("bu sunucuda {vmid} kimliği dolu; canlı taşınan konuk aynı kimlikle gelir (ağ kartının adresi kimlikten türetilir)"))),
+        };
         let layout = peer.migrate_prepare(vmid).map_err(early)?;
+        if leftover {
+            self.delete_guest(vmid, user).map_err(|e| early(format!("burada kalan eski kopya kaldırılamadı: {e}")))?;
+        }
         // Sunucuya özgü ayarlar taşınmaz: köprü burada yoksa NAT'a düşülür (konuğun kartı aynı kalır, bağlandığı ağ değişir).
         let known = self.driver().bridges();
         let here = |bridge: &String| if known.contains(bridge) { bridge.clone() } else { redox_core::NAT.to_string() };

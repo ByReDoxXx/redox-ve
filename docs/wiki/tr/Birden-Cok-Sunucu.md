@@ -27,6 +27,8 @@ tanıtırsınız (`--peers DOSYA`, her satır `AD ADRES TOKEN`); *Küme* sayfas�
 
 Her konuk canlı taşınamaz: UEFI ya da sanal TPM, takılı kurulum kalıbı, cloud-init sürücüsü, paylaşılan klasör, aktarılmış sunucu aygıtı ve bir şablona ya da yedeğe bağlı disk taşımayı engeller (ileti hangisi olduğunu söyler); aynı kimlik hedefte boş olmalı, iki sunucuda aynı QEMU sürümü ve uyumlu bir işlemci modeli bulunmalıdır. Gerçek QEMU 10.2 ile, bir Linux konukla, tek makinede (iki sunucu, yerel ağ arayüzü) sınandı; iki fiziksel makine arasında, Windows konukla ya da büyük ve yoğun konuklarla denenmedi.
 
+**Sunucuyu bakım için boşaltma:** `redox maintenance on --evacuate <eş>` (ya da *Küme* sayfasında eşin yanındaki *Konuklarımı Buraya Boşalt*) bu sunucuyu bakım kipine alır ve çalışan sanal makinelerini teker teker, kapatmadan eşe taşır. Canlı taşınamayan konuklar yerinde kalır; onları kapatmak için `--drain` ekleyin (bakım bitince yeniden başlatılırlar). Taşımayı eş yürüttüğü için eşin kendi `--peers` dosyasında bu sunucu tanımlı olmalıdır; adresinden tanınamıyorsa oradaki adını `--as` ile verin. Taşınan konuklar bakım bitince eşte çalışmayı sürdürür. Birini geri getirmek için bu sunucudan *Canlı Taşı* kullanın: konuk aynı kimlikle döner ve geride kalan kapalı kopyanın yerini alır (yedekleri ona bağlı kalır). Elle başlatılmış bir kopya ise kendi başına bir konuk sayılır ve üzerine yazılmaz. İki sunucu arasında sahte QEMU ile sınandı; alttaki taşıma, gerçek QEMU'da sınananla aynıdır.
+
 Kendiliğinden devralma için aşağıya bakın.
 
 ## Çoğaltma (yedek kopya)

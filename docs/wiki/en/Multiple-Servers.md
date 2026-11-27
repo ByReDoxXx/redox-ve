@@ -27,6 +27,8 @@ The two QEMU processes connect to each other directly: the source must be able t
 
 Not every guest can be moved live: UEFI or virtual TPM, an attached installation image, a cloud-init drive, shared folders, passed-through host devices and disks that depend on a template or backup block it (the message says which); the same ID must be free on the target, and both servers need the same QEMU version and a compatible CPU model. Tested on real QEMU 10.2 with a Linux guest on one machine (two servers, loopback network); not tried between two physical machines, with a Windows guest, or with large and busy guests.
 
+**Evacuating a server for maintenance:** `redox maintenance on --evacuate <peer>` (or *Evacuate My Guests Here* next to the peer on the *Cluster* page) puts this server into maintenance mode and moves its running virtual machines to the peer one by one, without stopping them. Guests that cannot be migrated live stay where they are; add `--drain` to stop those instead (they start again when maintenance ends). The peer does the pulling, so it must list this server in its own `--peers` file; if it cannot be recognised by address, give the name it has there with `--as`. The moved guests keep running on the peer when maintenance ends. To bring one back, use *Migrate Live* from this server: the guest returns with the same ID and replaces the stopped copy that was left behind (its backups stay attached). A left-behind copy that has been started by hand is treated as a guest in its own right and is never replaced. Tested with fake QEMU between two servers; the migration underneath is the same one tested on real QEMU.
+
 For automatic failover see below.
 
 ## Replication (standby copy)

@@ -143,7 +143,9 @@ async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Identi
 
 /// Eş sunucudaki çalışan sanal makineyi kapatmadan bu sunucuya taşır; sonuç görev günlüğünde görünür.
 async fn peer_migrate(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
-    st.migrate_from_peer(&name, vmid, &me.user)?;
+    // Eşle konuşan iş, istek iş parçacığını tutmaz.
+    let user = me.user.clone();
+    tokio::task::spawn_blocking(move || st.migrate_from_peer(&name, vmid, &user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -173,7 +175,8 @@ async fn migrate_out(
     Json(body): Json<MigrateBody>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
     let host = body.host.as_deref().map(str::trim).filter(|h| !h.is_empty()).unwrap_or(&ip).to_string();
-    let task = st.migrate_out(vmid, &host, body.nbd_port, body.ram_port, &body.key, &me.user)?;
+    let (st2, user) = (st.clone(), me.user.clone());
+    let task = tokio::task::spawn_blocking(move || st2.migrate_out(vmid, &host, body.nbd_port, body.ram_port, &body.key, &user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
     accepted(&st, task)
 }
 
@@ -721,11 +724,23 @@ struct MaintenanceBody {
     /// Bakıma girerken çalışan konukları kapat (bakım bitince yeniden başlatılırlar).
     #[serde(default)]
     drain: bool,
+    /// Bakıma girerken çalışan sanal makineleri kapatmadan bu eş sunucuya taşı.
+    #[serde(default)]
+    evacuate: Option<String>,
+    /// Bu sunucunun o eşteki adı; verilmezse eşin eş listesinden bulunur.
+    #[serde(default, rename = "as")]
+    as_name: Option<String>,
 }
 
-async fn maintenance_set(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<MaintenanceBody>) -> Json<serde_json::Value> {
+async fn maintenance_set(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<MaintenanceBody>) -> ApiResult<serde_json::Value> {
+    if let Some(peer) = body.evacuate.as_deref().filter(|_| body.on) {
+        let (st2, peer2, as_name, drain, user) = (st.clone(), peer.to_string(), body.as_name.clone(), body.drain, me.user.clone());
+        // Eşe sorulur (ağ çağrısı): istek iş parçacığını tutmaz.
+        let moving = tokio::task::spawn_blocking(move || st2.maintenance_evacuate(&peer2, as_name.as_deref(), drain, &user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
+        return Ok(Json(json!({ "on": true, "evacuating": moving, "peer": peer })));
+    }
     let guests = if body.on { st.maintenance_on(body.drain, &me.user) } else { st.maintenance_off(&me.user) };
-    Json(json!({ "on": body.on, "guests": guests }))
+    Ok(Json(json!({ "on": body.on, "guests": guests })))
 }
 
 /// Hazır bulut imajı kataloğu.

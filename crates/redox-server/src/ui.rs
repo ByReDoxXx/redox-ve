@@ -252,9 +252,11 @@ pub async fn peer_migrate(State(st): State<AppState>, Extension(me): Extension<I
     let Some(vmid) = parse_vmid(&f.vmid) else {
         return flash("/cluster", "error", (tx("Geçersiz konuk kimliği.")));
     };
-    match st.migrate_from_peer(f.peer.trim(), vmid, &me.user) {
-        Ok(()) => flash("/cluster", "notice", &tfmt(format!("{} sunucusundaki {vmid} kapatılmadan buraya taşınıyor; sonuç görevlerde görünecek.", f.peer.trim()))),
-        Err(e) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
+    let (st2, peer, user) = (st.clone(), f.peer.trim().to_string(), me.user.clone());
+    match tokio::task::spawn_blocking(move || st2.migrate_from_peer(&peer, vmid, &user)).await {
+        Ok(Ok(())) => flash("/cluster", "notice", &tfmt(format!("{} sunucusundaki {vmid} kapatılmadan buraya taşınıyor; sonuç görevlerde görünecek.", f.peer.trim()))),
+        Ok(Err(e)) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
+        Err(_) => flash("/cluster", "error", (tx("İşlem başlatılamadı."))),
     }
 }
 

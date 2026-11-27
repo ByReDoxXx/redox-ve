@@ -428,7 +428,15 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
             }
             @for v in peers.iter().filter(|v| v.online()) {
                 div class="card" {
-                    header { h2 { (v.name) } span class="note mono" { (v.url) } }
+                    header {
+                        h2 { (v.name) } span class="note mono" { (v.url) }
+                        @if p.admin && p.real && !p.cluster.maintenance {
+                            form class="end" method="post" action="/maintenance/evacuate" {
+                                input type="hidden" name="peer" value=(v.name);
+                                button class="btn sm" type="submit" title=(tx("Bu sunucu bakıma alınır; çalışan sanal makineleri kapatılmadan bu eşe taşınır. Canlı taşınamayan konuklar yerinde kalır.")) { (icon("migrate")) (tx("Konuklarımı Buraya Boşalt")) }
+                            }
+                        }
+                    }
                     @if v.guests.is_empty() {
                         p class="empty" { (tx("Bu sunucuda konuk yok.")) }
                     } @else {

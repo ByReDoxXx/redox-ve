@@ -45,6 +45,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Sanal makine başına seçilebilen işlemci modeli ve hedefi çalışırken değişen bellek balonu.
 - Çalışan sanal makineye çekirdek ve bellek ekleme (`redox vm cores 103 6`, `redox vm memory 103 8192`); üst sınır konuk başına verilir.
 - Çalışan sanal makinenin diskleri, konuk durdurulmadan başka depolama alanına taşınır (`redox vm move 103 hizli`).
+- Bakım kipi sunucuyu boşaltabilir: çalışan sanal makineler eşe canlı taşınır (`redox maintenance on --evacuate <eş>`).
 - Sanal makine başına işlemci payı ve bellek garantisi (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): sunucu sıkışınca işlemciyi kimin alacağı ve geri alınmayacak bellek; ikisi de konuk çalışırken değişir.
 - Sunucunun kendi konsolunda durum ekranı: ad, adresler, panelin adresi, hizmetin yanıt verip vermediği ve çalışan konuk sayısı; Enter ile oturum açılır.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
@@ -432,7 +433,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 553, Windows'ta 468 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 556, Windows'ta 470 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 

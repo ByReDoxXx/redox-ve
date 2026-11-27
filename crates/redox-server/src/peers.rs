@@ -352,6 +352,18 @@ impl Peer {
         }
     }
 
+    /// Eşe, bu sunucudaki konuğu kendine canlı taşımasını söyler (`me`: bu sunucunun eşteki adı). İş eşte arka
+    /// planda yürür; sonucu `task_by_command` ile izlenir.
+    pub fn migrate_pull(&self, me: &str, vmid: redox_core::VmId) -> Result<(), String> {
+        self.request("POST", &format!("/api/v1/peers/{me}/migrate/{vmid}"), Duration::from_secs(30)).call().map(|_| ()).map_err(peer_error)
+    }
+
+    /// Eşin görev günlüğünde bu komutun en yeni kaydı: `(numara, durum, ileti)`.
+    pub fn task_by_command(&self, command: &str) -> Result<Option<(u64, String, String)>, String> {
+        let tasks = self.json("GET", "/api/v1/tasks")?;
+        Ok(tasks.as_array().and_then(|list| list.iter().find(|t| t["command"] == command)).and_then(|t| Some((t["id"].as_u64()?, t["status"].as_str()?.to_string(), t["message"].as_str().unwrap_or_default().to_string()))))
+    }
+
     /// Eşteki çalışan konuğu askıya alır ve askıya alınmasını bekler.
     pub fn suspend_and_wait(&self, vmid: redox_core::VmId, timeout: Duration) -> Result<(), String> {
         self.json("POST", &format!("/api/v1/guests/{vmid}/suspend"))?;

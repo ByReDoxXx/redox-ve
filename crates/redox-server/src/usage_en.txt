@@ -91,6 +91,8 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
         (refreshes a standby copy of a peer server's virtual machine here; every 60 minutes by default)
   redox maintenance status | on [--drain] | off   (maintenance mode: no guest is started, scheduled work is paused;
         --drain stops the running guests in order, off starts them again)
+  redox maintenance on --evacuate <peer> [--as <name>] [--drain]   (moves the running virtual machines to the peer
+        without stopping them; --as is this server's name on the peer, --drain stops the ones that cannot move)
   redox approval list | approve <n> | reject <n>   (four-eyes principle: pending delete requests; you cannot approve your own)
   redox storage list
   redox media list | delete <file>             (installation media and disk images)
