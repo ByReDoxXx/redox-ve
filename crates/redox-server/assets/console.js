@@ -84,9 +84,9 @@
     pixelFormat() {
       return Uint8Array.from([0, 0, 0, 0, 32, 24, 0, 1, ...u16(255), ...u16(255), ...u16(255), 16, 8, 0, 0, 0, 0]);
     },
-    // CopyRect, Raw, masaüstü boyutu ve QEMU'nun tarama kodlu tuş olayı.
-    encodings() {
-      const list = [1, 0, -223, -258];
+    // CopyRect, Raw, masaüstü boyutu, QEMU'nun tarama kodlu tuş olayı ve (ses kartı varsa) QEMU'nun ses uzantısı.
+    encodings(sound) {
+      const list = sound ? [1, 0, -223, -258, -259] : [1, 0, -223, -258];
       return Uint8Array.from([2, 0, ...u16(list.length), ...list.flatMap((e) => u32(e))]);
     },
     updateRequest(incremental, w, h) {
@@ -101,7 +101,25 @@
     pointer(mask, x, y) {
       return Uint8Array.from([5, mask & 0xff, ...u16(x), ...u16(y)]);
     },
+    // QEMU ses uzantısı: biçim (16 bit işaretli, iki kanal) ve akışı açma / kapama.
+    audioFormat() {
+      return Uint8Array.from([255, 1, ...u16(2), 3, CHANNELS, ...u32(RATE)]);
+    },
+    audio(on) {
+      return Uint8Array.from([255, 1, ...u16(on ? 0 : 1)]);
+    },
   };
+
+  const RATE = 44100;
+  const CHANNELS = 2;
+  const MAX_AUDIO = 1 << 20;
+
+  // İç içe geçmiş 16 bit küçük uçlu örnekler → kanal başına [-1, 1) aralığında diziler. Yarım kare atılır.
+  function toChannels(bytes) {
+    const frames = Math.floor(bytes.length / (2 * CHANNELS));
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return Array.from({ length: CHANNELS }, (_, channel) => Float32Array.from({ length: frames }, (_, i) => view.getInt16((i * CHANNELS + channel) * 2, true) / 32768));
+  }
 
   // Ham piksel (B, G, R, boş) → tuval pikseli (R, G, B, 255), yerinde.
   function toRgba(pixels) {
@@ -161,8 +179,10 @@
   // `send(Uint8Array)`: sunucuya yazar. `display`: { resize(w, h), draw(x, y, w, h, rgba), copy(sx, sy, w, h, dx, dy) }.
   // `onState(durum, ayrıntı)`: "bağlanıyor", "bağlı", "kapandı".
   class Session {
-    constructor(send, display, onState) {
+    // `sound`: konukta ses kartı var; { ready(), play(bytes) } verilir.
+    constructor(send, display, onState, sound) {
       this.send = send; this.display = display; this.onState = onState || (() => {});
+      this.sound = sound || null; this.hasAudio = false;
       this.reader = new Reader();
       this.width = 0; this.height = 0; this.ready = false; this.extendedKeys = false; this.name = "";
     }
@@ -187,7 +207,7 @@
         this.resize(be16(init, 0), be16(init, 2));
         this.name = new TextDecoder().decode(await r.read(be32(init, 20)));
         this.send(msg.pixelFormat());
-        this.send(msg.encodings());
+        this.send(msg.encodings(this.sound !== null));
         this.send(msg.updateRequest(false, this.width, this.height));
         this.ready = true;
         this.onState("bağlı", this.name);
@@ -220,6 +240,7 @@
           const encoding = be32(head, 8) | 0;
           if (encoding === -223) { this.resize(w, h); continue; }
           if (encoding === -258) { this.extendedKeys = true; continue; }
+          if (encoding === -259) { if (this.sound) { this.hasAudio = true; this.sound.ready(); } continue; }
           if (x + w > this.width || y + h > this.height) throw new Error("ekranın dışına çizim");
           if (encoding === 0) {
             if (w && h) this.display.draw(x, y, w, h, toRgba(await r.read(w * h * 4)));
@@ -237,9 +258,26 @@
         // zil
       } else if (type === 3) {
         await r.read(be32(await r.read(7), 3)); // konuğun panosu: kullanılmıyor
+      } else if (type === 255 && this.hasAudio) {
+        const head = await r.read(3);
+        const operation = be16(head, 1);
+        if (head[0] !== 1 || operation > 2) throw new Error("bilinmeyen ses iletisi");
+        if (operation === 2) {
+          const length = be32(await r.read(4), 0);
+          if (length > MAX_AUDIO) throw new Error("ses parçası çok büyük");
+          this.sound.play(await r.read(length));
+        }
       } else {
         throw new Error("bilinmeyen ileti " + type);
       }
+    }
+
+    // Sunucudan ses akışını ister ya da durdurur.
+    listen(on) {
+      if (!this.ready || !this.hasAudio) return false;
+      if (on) this.send(msg.audioFormat());
+      this.send(msg.audio(on));
+      return true;
     }
 
     // Tuş olayı. Konum biliniyorsa ve sunucu destekliyorsa tarama kodu, değilse karakter gönderilir.
@@ -284,7 +322,7 @@
     }
   }
 
-  const api = { XT, keysymOf, typedKey, buttonMask, msg, toRgba, Reader, Session };
+  const api = { XT, keysymOf, typedKey, buttonMask, msg, toRgba, toChannels, Reader, Session };
   if (typeof module !== "undefined" && module.exports) { module.exports = api; return; }
   root.RedoxConsole = api;
 
@@ -302,6 +340,29 @@
   const scheme = location.protocol === "https:" ? "wss://" : "ws://";
   const socket = new WebSocket(scheme + location.host + canvas.dataset.ws);
   socket.binaryType = "arraybuffer";
+  // Tarayıcı sesi ancak bir tıklamadan sonra çalar: ses düğmeyle açılır.
+  const soundButton = document.getElementById("console-sound");
+  let player = null;
+  let playhead = 0;
+  const sound = canvas.dataset.sound ? {
+    ready() { if (soundButton) soundButton.disabled = false; },
+    play(bytes) {
+      if (!player) return;
+      const [left, right] = toChannels(bytes);
+      if (!left.length) return;
+      // Birikme yarım saniyeyi geçerse parça atılır: ses görüntüden geride kalmasın.
+      if (playhead - player.currentTime > 0.5) return;
+      const buffer = player.createBuffer(CHANNELS, left.length, RATE);
+      buffer.copyToChannel(left, 0);
+      buffer.copyToChannel(right, 1);
+      const source = player.createBufferSource();
+      source.buffer = buffer;
+      source.connect(player.destination);
+      playhead = Math.max(player.currentTime + 0.05, playhead);
+      source.start(playhead);
+      playhead += buffer.duration;
+    },
+  } : null;
   const session = new Session(
     (bytes) => { if (socket.readyState === WebSocket.OPEN) socket.send(bytes); },
     display,
@@ -310,7 +371,19 @@
       else if (state === "bağlanıyor") say("Bağlanıyor…", false);
       else say("Bağlantı kapandı" + (detail ? ": " + detail : ""), true);
     },
+    sound,
   );
+  if (soundButton) {
+    soundButton.addEventListener("click", () => {
+      const on = !player;
+      if (!session.listen(on)) return;
+      if (on) { player = new AudioContext({ sampleRate: RATE }); playhead = 0; }
+      else { player.close(); player = null; }
+      soundButton.textContent = on ? soundButton.dataset.on : soundButton.dataset.off;
+      soundButton.setAttribute("aria-pressed", String(on));
+      canvas.focus();
+    });
+  }
   socket.onopen = () => session.run();
   socket.onmessage = (e) => session.feed(new Uint8Array(e.data));
   socket.onclose = () => session.end();

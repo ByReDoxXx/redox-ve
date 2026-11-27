@@ -35,6 +35,7 @@ impl Cluster {
             || patch.apply_cloud_init(&mut guest.hw.clone())
             || patch.cpu_type.as_ref().is_some_and(|c| *c != guest.hw.cpu_type)
             || patch.balloon.is_some_and(|b| b != guest.hw.balloon)
+            || patch.sound.is_some_and(|s| s != guest.hw.sound)
             || patch.max_cores.is_some_and(|m| m != guest.hw.max_cores)
             || patch.max_memory_mb.is_some_and(|m| m != guest.hw.max_mem_mb)
             || patch.nested.is_some_and(|n| n != guest.hw.nested);
@@ -138,7 +139,7 @@ impl Cluster {
                 return Err(Error::InvalidSpec(format!("çekirdek numarası sunucuda yok: {} düğümünde 0 ile {} arasındaki çekirdekler var", node.id, node.cores.saturating_sub(1))));
             }
         }
-        if patch.cpu_affinity.is_some() || patch.numa_node.is_some() || patch.hugepages.is_some() || patch.disk_bus.is_some() || patch.nic_model.is_some() || patch.iso2.is_some() || patch.test_port.is_some() || patch.test_cmd.is_some() || patch.nested.is_some() || patch.nic_guard.is_some() || patch.firewall.is_some() || patch.fw_rules.is_some() || patch.fw_out.is_some() || patch.fw_out_restrict.is_some() || patch.fw_groups.is_some() || patch.firmware.is_some() || patch.secure_boot.is_some() || patch.tpm.is_some() || patch.nics.is_some() || patch.usb.is_some() || patch.pci.is_some() || patch.boot_order.is_some() || patch.boot_delay.is_some() || patch.schedules.is_some() || patch.disk_mbps.is_some() || patch.disk_iops.is_some() || patch.net_mbps.is_some() || patch.vlan.is_some() || patch.shares.is_some() || patch.bridge.is_some() || patch.max_memory_mb.is_some() || patch.apply_cloud_init(&mut guest.hw.clone()) || patch.cpu_type.is_some() || patch.balloon.is_some() || patch.backup_pre.is_some() || patch.backup_post.is_some() {
+        if patch.cpu_affinity.is_some() || patch.numa_node.is_some() || patch.hugepages.is_some() || patch.disk_bus.is_some() || patch.nic_model.is_some() || patch.iso2.is_some() || patch.test_port.is_some() || patch.test_cmd.is_some() || patch.nested.is_some() || patch.nic_guard.is_some() || patch.firewall.is_some() || patch.fw_rules.is_some() || patch.fw_out.is_some() || patch.fw_out_restrict.is_some() || patch.fw_groups.is_some() || patch.firmware.is_some() || patch.secure_boot.is_some() || patch.tpm.is_some() || patch.nics.is_some() || patch.usb.is_some() || patch.pci.is_some() || patch.boot_order.is_some() || patch.boot_delay.is_some() || patch.schedules.is_some() || patch.disk_mbps.is_some() || patch.disk_iops.is_some() || patch.net_mbps.is_some() || patch.vlan.is_some() || patch.shares.is_some() || patch.bridge.is_some() || patch.max_memory_mb.is_some() || patch.apply_cloud_init(&mut guest.hw.clone()) || patch.cpu_type.is_some() || patch.balloon.is_some() || patch.sound.is_some() || patch.backup_pre.is_some() || patch.backup_post.is_some() {
             let mut hw = guest.hw.clone();
             hw.backup_pre = patch.backup_pre.clone().map(|c| c.trim().to_string()).unwrap_or(hw.backup_pre);
             hw.backup_post = patch.backup_post.clone().map(|c| c.trim().to_string()).unwrap_or(hw.backup_post);
@@ -154,6 +155,7 @@ impl Cluster {
             hw.iso2 = patch.iso2.clone().map(|i| Some(i).filter(|i| !i.is_empty())).unwrap_or(hw.iso2);
             hw.balloon = patch.balloon.unwrap_or(hw.balloon);
             hw.nic_guard = patch.nic_guard.unwrap_or(hw.nic_guard);
+            hw.sound = patch.sound.unwrap_or(hw.sound);
             hw.nested = patch.nested.unwrap_or(hw.nested);
             hw.test_port = patch.test_port.unwrap_or(hw.test_port);
             hw.test_cmd = patch.test_cmd.clone().map(|c| c.trim().to_string()).unwrap_or(hw.test_cmd);
@@ -359,6 +361,9 @@ impl Cluster {
         }
         if let Some(balloon) = patch.balloon {
             g.hw.balloon = balloon;
+        }
+        if let Some(sound) = patch.sound {
+            g.hw.sound = sound;
         }
         if let Some(max) = patch.max_cores {
             g.hw.max_cores = max;

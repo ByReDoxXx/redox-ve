@@ -265,6 +265,23 @@ fn cpu_model_and_balloon_device_follow_the_guest() {
 }
 
 #[test]
+fn a_sound_card_goes_last_and_is_heard_over_the_console_socket() {
+    let mut g = guest(None);
+    g.hw.balloon = true;
+    let quiet = args(&cfg(), &g);
+    assert!(!quiet.join(" ").contains("audiodev") && !quiet.join(" ").contains("hda"));
+    g.hw.sound = true;
+    let loud = args(&cfg(), &g);
+    let joined = loud.join(" ");
+    assert!(joined.contains("-audiodev none,id=snd0") && joined.contains("q35,pcspk-audiodev=snd0,accel="), "{joined}");
+    assert!(loud.iter().any(|a| a.starts_with("unix:") && a.ends_with(",audiodev=snd0")), "{joined}");
+    assert!(joined.ends_with("-device ich9-intel-hda,id=sound0 -device hda-duplex,bus=sound0.0,audiodev=snd0"), "ses kartı en sondadır: {joined}");
+    // Kart dışında kalan aygıtların sırası değişmez.
+    let devices = |a: &[String]| a.iter().enumerate().filter(|(i, _)| *i > 0 && a[i - 1] == "-device").map(|(_, d)| d.clone()).collect::<Vec<_>>();
+    assert_eq!(devices(&loud)[..devices(&quiet).len()], devices(&quiet)[..]);
+}
+
+#[test]
 fn cloud_init_guests_get_a_cidata_drive_and_seed_files() {
     const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxvcmVtaXBzdW1kb2xvcnNpdGFtZXRjb25zZWN0 ben@dizustu";
     let mut g = guest(None);

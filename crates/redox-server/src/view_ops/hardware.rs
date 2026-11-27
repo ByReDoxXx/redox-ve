@@ -57,6 +57,7 @@ pub struct EditForm {
     pub pci: String,
     pub cpu_type: String,
     pub balloon: Option<String>,
+    pub sound: Option<String>,
     pub max_cores: String,
     pub max_memory_mb: String,
     pub nested: Option<String>,
@@ -112,6 +113,7 @@ impl EditForm {
             pci: g.hw.pci.join(", "),
             cpu_type: g.hw.cpu_type.clone(),
             balloon: g.hw.balloon.then(|| "1".to_string()),
+            sound: g.hw.sound.then(|| "1".to_string()),
             max_cores: g.hw.max_cores.to_string(),
             max_memory_mb: g.hw.max_mem_mb.to_string(),
             nested: g.hw.nested.then(|| "1".to_string()),
@@ -204,6 +206,11 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                             label for="max_memory_mb" { (tx("En fazla bellek (MB)")) }
                             input id="max_memory_mb" form="hw" name="max_memory_mb" type="text" inputmode="numeric" value=(f.max_memory_mb) disabled[off];
                             span class="hint" tabindex="0" role="note" { (tx("Çalışırken çıkılabilecek bellek; 0 ise çalışan konuğa bellek eklenmez. Konuk boş bellek yuvalarıyla açılır, eklenmemiş bellek sunucuda yer tutmaz.")) }
+                        }
+                        div class="field" {
+                            span class="label" { (tx("Ses")) }
+                            label class="check" { input type="checkbox" form="hw" name="sound" value="1" checked[f.sound.is_some()] disabled[off]; (tx("Ses kartı tak")) }
+                            span class="hint" tabindex="0" role="note" { (tx("Konuğa Intel HD Audio kartı takılır. Ses canlı konsoldan “Sesi Aç” ile dinlenir; mikrofon taşınmaz.")) }
                         }
                         div class="field" {
                             span class="label" { (tx("Bellek balonu")) }

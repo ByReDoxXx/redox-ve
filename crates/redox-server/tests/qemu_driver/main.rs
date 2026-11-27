@@ -30,6 +30,7 @@ mod real_ft;
 mod real_mirror;
 mod real_perf;
 mod real_qemu;
+mod real_sound;
 mod suspend_hotplug_net;
 
 #[allow(unused_imports)]

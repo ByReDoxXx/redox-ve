@@ -178,6 +178,9 @@ pub fn live_console_page(p: &Page, g: &Guest, available: bool) -> String {
                             (crate::view::tip("Metni konuğa tuş vuruşları olarak gönderir. Pano yerine geçer; konukta ajan gerekmez. Yalnızca ABD klavyesindeki karakterler yazılır; konuğun klavye düzeni ABD İngilizcesi olmalıdır."))
                             span class="vsep" aria-hidden="true" {}
                             span class="group" {
+                                @if g.hw.sound {
+                                    button id="console-sound" class="btn sm" type="button" aria-pressed="false" data-off=(tx("Sesi Aç")) data-on=(tx("Sesi Kapat")) disabled { (tx("Sesi Aç")) }
+                                }
                                 button id="console-cad" class="btn sm" type="button" { "Ctrl+Alt+Del" }
                                 button id="console-full" class="btn sm" type="button" { (tx("Tam ekran")) }
                                 button id="console-blur" class="btn sm" type="button" title=(tx("Klavye odağını konuktan geri alır")) { (tx("Odağı bırak")) }
@@ -187,7 +190,7 @@ pub fn live_console_page(p: &Page, g: &Guest, available: bool) -> String {
                 }
                 main id="main" {
                     @if available {
-                        canvas id="screen" tabindex="0" width="640" height="400" data-ws={ (base) "/vnc" }
+                        canvas id="screen" tabindex="0" width="640" height="400" data-ws={ (base) "/vnc" } data-sound=[g.hw.sound.then_some("1")]
                             aria-label={ (g.name) (tx(" konuğunun ekranı; tıklayınca klavye ve fare konuğa gider")) } {}
                         noscript { p class="empty" { (tx("Canlı konsol JavaScript gerektirir. JavaScript'siz ekran için ")) a class="link" href={ (base) "?tab=konsol" } { (tx("konsol sekmesini")) } (tx(" kullanın.")) } }
                         p class="hint" { (tx("Ekrana tıklayınca klavye ve fare konuğa gider; tuşlar konuğun kendi klavye düzeniyle yorumlanır. Bu sayfada yalnızca bu sunucunun kendi betiği çalışır.")) }

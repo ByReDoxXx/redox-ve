@@ -117,6 +117,9 @@ pub fn ft_blocker(g: &Guest) -> Option<&'static str> {
     if g.hw.max_cores > 0 || g.hw.max_mem_mb > 0 || g.hw.balloon || g.hw.balloon_mb > 0 || g.hw.mem_min_mb > 0 {
         return Some("hata toleransında çalışırken çekirdek ya da bellek ekleme ve bellek balonu kullanılamaz");
     }
+    if g.hw.sound {
+        return Some("hata toleransında ses aygıtı kullanılamaz");
+    }
     if g.hw.firmware == crate::hw::Firmware::Uefi || g.hw.tpm || !g.hw.usb.is_empty() || !g.hw.pci.is_empty() || !g.hw.shares.is_empty() {
         return Some("hata toleransında UEFI, sanal TPM, aygıt aktarımı ve paylaşılan klasör kullanılamaz");
     }
@@ -249,6 +252,7 @@ mod tests {
             ("köprüye bağlı tek ağ kartı", changed(&|g| g.bridge = NAT.to_string())),
             ("VLAN etiketi", changed(&|g| g.hw.vlan = 5)),
             ("bellek balonu", changed(&|g| g.hw.balloon = true)),
+            ("ses aygıtı", changed(&|g| g.hw.sound = true)),
             ("bellek balonu", changed(&|g| g.hw.max_cores = 8)),
             ("UEFI", changed(&|g| g.hw.tpm = true)),
             ("kurulum kalıbı", changed(&|g| g.iso = Some("a.iso".into()))),

@@ -2,7 +2,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { XT, keysymOf, typedKey, buttonMask, msg, toRgba, Reader, Session } = require("../assets/console.js");
+const { XT, keysymOf, typedKey, buttonMask, msg, toRgba, toChannels, Reader, Session } = require("../assets/console.js");
 
 const bytes = (...parts) => Uint8Array.from(parts.flatMap((p) => Array.from(p)));
 const u16 = (v) => [v >> 8, v & 0xff];
@@ -190,4 +190,51 @@ test("metin tuş vuruşları olarak yazdırılır", async () => {
     [1, XT.ShiftLeft], [1, XT.KeyB], [0, XT.KeyB], [0, XT.ShiftLeft],
     [1, XT.Enter], [0, XT.Enter],
   ]);
+});
+
+test("ses uzantısı: yalnızca ses kartlı konukta istenir, açılır ve gelen parçalar çalıcıya verilir", async () => {
+  assert.deepEqual(Array.from(msg.audioFormat()), [255, 1, 0, 2, 3, 2, 0, 0, 0xac, 0x44]);
+  assert.deepEqual([Array.from(msg.audio(true)), Array.from(msg.audio(false))], [[255, 1, 0, 0], [255, 1, 0, 1]]);
+  assert.ok(!Array.from(msg.encodings(false)).join().includes("255,255,254,253"));
+  assert.ok(Array.from(msg.encodings(true)).join().endsWith("255,255,254,253"), "-259 istenir");
+
+  const heard = [];
+  let ready = 0;
+  const sent = [];
+  const states = [];
+  const display = { resize() {}, draw() {}, copy() {} };
+  const session = new Session((b) => sent.push(Array.from(b)), display, (s, d) => states.push([s, d]), { ready: () => ready++, play: (b) => heard.push(Array.from(b)) });
+  session.run();
+  session.feed(serverHello(2, 2, ""));
+  await tick();
+  assert.equal(session.listen(true), false, "sunucu onaylamadan ses istenmez");
+  session.feed(bytes([0, 0], u16(1), u16(0), u16(0), u16(2), u16(2), u32(-259 >>> 0)));
+  await tick();
+  assert.equal(ready, 1);
+  sent.length = 0;
+  assert.equal(session.listen(true), true);
+  assert.deepEqual(sent, [Array.from(msg.audioFormat()), Array.from(msg.audio(true))]);
+  // Başlangıç, iki veri parçası (WebSocket sınırları ortadan bölse de) ve bitiş.
+  const stream = bytes([255, 1, 0, 1], [255, 1, 0, 2], u32(4), [1, 0, 255, 127], [255, 1, 0, 2], u32(2), [9, 9], [255, 1, 0, 0]);
+  for (const byte of stream) session.feed(Uint8Array.of(byte));
+  await tick();
+  assert.deepEqual(heard, [[1, 0, 255, 127], [9, 9]]);
+  assert.ok(!states.some(([s]) => s === "kapandı"), JSON.stringify(states));
+  // Aşırı büyük parça bağlantıyı kapatır.
+  session.feed(bytes([255, 1, 0, 2], u32(1 << 24)));
+  await tick();
+  assert.equal(states.at(-1)[0], "kapandı");
+});
+
+test("ses uzantısı istenmeden gelen ses iletisi kabul edilmez", async () => {
+  const h = harness();
+  h.session.feed(serverHello(2, 2, ""));
+  h.session.feed(bytes([255, 1, 0, 1]));
+  await tick();
+  assert.equal(h.states.at(-1)[0], "kapandı");
+});
+
+test("örnekler kanallara ayrılır; yarım kare atılır", () => {
+  const [left, right] = toChannels(bytes([0, 0x40, 0, 0xc0, 0xff, 0x7f, 0, 0x80, 5]));
+  assert.deepEqual([Array.from(left), Array.from(right)], [[0.5, 32767 / 32768], [-0.5, -1]]);
 });

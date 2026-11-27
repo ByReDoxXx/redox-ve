@@ -101,6 +101,8 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     // Hata toleransında eski "pc" (i440fx) makinesi kullanılır: QEMU 10.2'de q35 ile COLO'nun ilk denetim
     // noktasında ikiz çöker (memory_region_add_subregion_common doğrulaması).
     let machine = if g.hw.ft { "pc" } else { "q35" };
+    // PC hoparlörünün sesi de aynı ses aygıtına gider.
+    let machine = if g.hw.sound { format!("{machine},pcspk-audiodev=snd0") } else { machine.to_string() };
     if cfg.kvm {
         push(&["-machine", &format!("{machine},accel=kvm{smm}"), "-cpu", &cpu]);
     } else {
@@ -281,12 +283,19 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     // Ekran penceresi açılmaz; görüntü konsol için QMP ekran dökümüyle alınır.
     push(&["-vga", "std", "-display", "none"]);
     // Canlı konsol: ekran ve giriş, hizmetin köprülediği bir Unix soketinden (VNC) sunulur. Ağa açılmaz.
-    push(&["-vnc", &format!("unix:{}", opt(&cfg.vnc_path(g.vmid)))]);
+    let heard = if g.hw.sound { ",audiodev=snd0" } else { "" };
+    push(&["-vnc", &format!("unix:{}{heard}", opt(&cfg.vnc_path(g.vmid)))]);
     push(&["-qmp", &format!("unix:{},server=on,wait=off", opt(&cfg.qmp_path(g.vmid)))]);
     push(&["-pidfile", &cfg.pid_path(g.vmid).display().to_string(), "-daemonize"]);
     // Bellek balonu en sona eklenir: öbür aygıtların veri yolundaki yeri değişmez.
     if g.hw.balloon {
         push(&["-device", "virtio-balloon-pci,id=balloon0"]);
+    }
+    // Ses kartı balondan da sonra gelir: kartı takıp çıkarmak öbür aygıtların yerini oynatmaz. Sunucuda ses
+    // aygıtı gerekmez; ses yalnızca canlı konsoldan dinleyene VNC üzerinden gönderilir.
+    if g.hw.sound {
+        push(&["-audiodev", "none,id=snd0"]);
+        push(&["-device", "ich9-intel-hda,id=sound0", "-device", "hda-duplex,bus=sound0.0,audiodev=snd0"]);
     }
     a
 }

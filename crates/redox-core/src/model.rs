@@ -486,6 +486,8 @@ pub struct GuestPatch {
     pub mem_reserve_mb: Option<u64>,
     /// Bellek balonu aygıtı.
     pub balloon: Option<bool>,
+    /// Ses kartı.
+    pub sound: Option<bool>,
     /// İç içe sanallaştırma.
     pub nested: Option<bool>,
     /// Kaynak havuzu; boş metin konuğu havuzdan çıkarır.

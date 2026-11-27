@@ -77,6 +77,8 @@ pub struct Hardware {
     /// dahildir; askıya alınan konuk aynı parçalarla döner. Konuk sıfırdan açılırken liste boşaltılır:
     /// eklenen bellek artık açılış belleğinin parçasıdır.
     pub dimms: Vec<u64>,
+    /// Ses kartı (Intel HD Audio) takılı mı? Ses, canlı konsoldan dinlenir.
+    pub sound: bool,
     /// Bellek balonu aygıtı takılı mı? Takılıysa konuğun belleği çalışırken küçültülüp büyütülebilir.
     pub balloon: bool,
     /// Balonla hedeflenen bellek (MB); 0 ise konuk belleğinin tamamını kullanır.
@@ -365,6 +367,9 @@ impl Hardware {
         }
         if (!self.cpu_type.is_empty() || self.balloon) && kind != GuestKind::Vm {
             return Err("işlemci türü ve bellek balonu yalnızca sanal makinelerde kullanılır".to_string());
+        }
+        if self.sound && kind != GuestKind::Vm {
+            return Err("ses aygıtı yalnızca sanal makinelerde kullanılır".to_string());
         }
         if self.test_port > 0 || !self.test_cmd.is_empty() {
             if kind != GuestKind::Vm {

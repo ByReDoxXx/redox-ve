@@ -66,6 +66,36 @@ pub(super) async fn live_console_needs_permission_and_a_same_site_page() {
     assert!(state.auth().audit.recent("console", 10).is_empty());
 }
 
+#[tokio::test]
+async fn the_sound_button_appears_only_for_a_guest_with_a_sound_card() {
+    let (app, state) = setup_real();
+    assert!(!page(&app, "/guests/102/console").await.contains("console-sound"));
+    // Kart yalnızca konuk kapalıyken takılır.
+    let patch = |body: Value| request(Method::PATCH, "/api/v1/guests/102").header(CONTENT_TYPE, "application/json").body(Body::from(body.to_string())).unwrap();
+    assert_eq!(send(&app, patch(json!({ "sound": true }))).await.0, StatusCode::CONFLICT);
+    assert!(!state.snapshot().guest(102).unwrap().hw.sound);
+
+    let base = "name=db&tags=&notes=&iso=&boot=disk&backup_interval=24h&keep=0&forwards=&hardware=1&cores=4&memory_mb=16384&bridge=nat";
+    assert!(settings(&app, "/guests/103").await.contains(r#"name="sound" value="1""#));
+    let done = post_ok(&app, "/guests/103/edit", &format!("{base}&sound=1")).await;
+    assert!(done.contains("notice="), "{done}");
+    assert!(state.snapshot().guest(103).unwrap().hw.sound);
+    assert!(post_ok(&app, "/guests/103/edit", base).await.contains("notice="));
+    assert!(!state.snapshot().guest(103).unwrap().hw.sound);
+
+    // Çalışan konukta kart varsa konsol sayfası düğmeyi ve işareti taşır.
+    assert!(post_ok(&app, "/guests/103/edit", &format!("{base}&sound=1")).await.contains("notice="));
+    assert!(post_ok(&app, "/guests/103/action", "action=start").await.contains("notice="));
+    for _ in 0..200 {
+        if state.snapshot().guest(103).unwrap().status == redox_core::GuestStatus::Running {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let console = page(&app, "/guests/103/console").await;
+    assert!(console.contains(r#"id="console-sound""#) && console.contains(r#"data-sound="1""#) && console.contains("Sesi Aç"), "{console}");
+}
+
 #[test]
 pub(super) fn console_client_logic_passes_its_node_tests() {
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/console.test.js");

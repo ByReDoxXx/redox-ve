@@ -96,6 +96,7 @@ pub async fn edit(
             net_mbps: number(&f.net_mbps, (tx("Ağ hız sınırı")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
             cpu_type: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.cpu_type.trim().to_string()),
             balloon: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.balloon.is_some()),
+            sound: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.sound.is_some()),
             max_cores: number(&f.max_cores, (tx("En fazla çekirdek")))?.map(|v| v.min(u32::MAX as u64) as u32).filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
             max_memory_mb: number(&f.max_memory_mb, (tx("En fazla bellek")))?.filter(|_| hardware_sent && guest.kind == redox_core::GuestKind::Vm),
             nested: (hardware_sent && guest.kind == redox_core::GuestKind::Vm).then(|| f.nested.is_some()),

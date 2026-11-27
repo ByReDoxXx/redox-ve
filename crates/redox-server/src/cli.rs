@@ -56,6 +56,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
                     test-port=22 test-cmd=/usr/local/bin/saglik.sh   (yedek sınamasında denetlenecek TCP kapısı ve konukta çalıştırılacak komut)
                     rpo=24   (yedek yaşı hedefi, saat: son yedek bundan eskiyse konuk korumasız sayılır; 0 genel ayar)
                     nested=true   (iç içe sanallaştırma: konuğa VT-x / AMD-V gösterilir)
+                    sound=true    (ses kartı; ses canlı konsoldan dinlenir)
                     cpu=Haswell   (işlemci modeli; cpu=host sunucunun kendi işlemcisi)   balloon=true   (bellek balonu aygıtı)
                     ci-user=ali ci-key='ssh-ed25519 AAAA…' ci-ip=10.0.0.5/24 ci-gw=10.0.0.1 ci-dns=1.1.1.1,9.9.9.9
                                            (cloud-init; ci-key= boş verilirse kapanır, ci-ip= boşsa DHCP)
@@ -279,7 +280,7 @@ pub fn patch_body(pairs: &[&str]) -> Result<Value, String> {
             "test-port" => ("test_port", number()?),
             "test-cmd" => ("test_cmd", Value::from(value)),
             "backup-post" => ("backup_post", Value::from(value)),
-            "onboot" | "firewall" | "tpm" | "restart" | "balloon" | "nic-guard" | "nested" => (
+            "onboot" | "firewall" | "tpm" | "restart" | "balloon" | "sound" | "nic-guard" | "nested" => (
                 if key == "nic-guard" { "nic_guard" } else { key },
                 Value::from(match value {
                     "true" | "1" | "evet" => true,
