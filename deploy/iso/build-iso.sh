@@ -99,7 +99,9 @@ if extract /isolinux/spkgtk.cfg "$WORK/spkgtk.cfg"; then
     grep -Ev '^(timeout|ontimeout|menu autoboot)' "$WORK/spkgtk.cfg" > "$WORK/spkgtk.new" && mv "$WORK/spkgtk.new" "$WORK/spkgtk.cfg"
     MAPS="$MAPS -map $WORK/spkgtk.cfg /isolinux/spkgtk.cfg"
 fi
-if extract /boot/grub/grub.cfg "$WORK/grub.cfg"; then
+# Taban olarak daha önce üretilmiş bir RedoX VE kalıbı da verilebilir (yeni sürümü Debian kalıbını yeniden
+# indirmeden koymak için): menü girdisi zaten varsa ikinci kez eklenmez.
+if extract /boot/grub/grub.cfg "$WORK/grub.cfg" && ! grep -q 'RedoX VE kur' "$WORK/grub.cfg"; then
     chmod u+w "$WORK/grub.cfg"
     # Var olan menünün başına RedoX girdisi eklenir; yazı tipi ve tema satırları korunur.
     awk '
