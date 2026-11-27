@@ -45,13 +45,44 @@ pub fn os_name(info: &Value) -> Option<String> {
 #[cfg(unix)]
 mod imp {
     use super::Value;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufReader, Write};
     use std::os::unix::net::UnixStream;
     use std::path::Path;
     use std::time::Duration;
 
     /// Ajan çalışıyorsa eşitleme yanıtı hemen gelir; gelmezse konukta ajan yoktur.
     const SYNC_TIMEOUT: Duration = Duration::from_millis(400);
+    /// Eşitlemenin toplam süresi: konuk, kanala durmadan veri yazarak çağrıyı sonsuza dek oyalayamasın.
+    const SYNC_DEADLINE: Duration = Duration::from_secs(5);
+    /// Tek yanıt satırının en büyük boyu. Kanalın öbür ucu konuktur: satır sonu göndermeyen bir konuk
+    /// sunucunun belleğini dolduramamalı.
+    pub const MAX_LINE: usize = 16 << 20;
+
+    /// Bir satır okur. Satır `MAX_LINE` baytı aşarsa, `deadline` geçerse ya da bağlantı kapanırsa `false`.
+    pub fn read_bounded_line(reader: &mut impl std::io::BufRead, line: &mut String, deadline: std::time::Instant) -> bool {
+        let mut bytes = Vec::new();
+        loop {
+            let (found, used) = match reader.fill_buf() {
+                Ok(chunk) if !chunk.is_empty() => match chunk.iter().position(|b| *b == b'\n') {
+                    Some(end) => (true, end + 1),
+                    None => (false, chunk.len()),
+                },
+                _ => return false,
+            };
+            if bytes.len() + used > MAX_LINE {
+                return false;
+            }
+            bytes.extend_from_slice(&reader.fill_buf().unwrap_or_default()[..used]);
+            reader.consume(used);
+            if found {
+                *line = String::from_utf8_lossy(&bytes).into_owned();
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+        }
+    }
 
     /// Ajana tek bir komut gönderir ve yanıtını döndürür.
     ///
@@ -132,11 +163,10 @@ mod imp {
         let mut line = String::new();
         // Eski yanıtlar atlanır; sınırlı sayıda satır okunur ki konuk bizi sonsuza dek oyalayamasın.
         let mut synced = false;
+        let sync_deadline = std::time::Instant::now() + SYNC_DEADLINE;
         for _ in 0..64 {
-            line.clear();
-            match reader.read_line(&mut line) {
-                Ok(n) if n > 0 => {}
-                _ => return Err(absent()),
+            if !read_bounded_line(&mut reader, &mut line, sync_deadline) {
+                return Err(absent());
             }
             if serde_json::from_str::<Value>(line.trim()).is_ok_and(|v| v["return"] == id) {
                 synced = true;
@@ -152,10 +182,8 @@ mod imp {
             None => serde_json::json!({ "execute": command }),
         };
         writer.write_all(format!("{request}\n").as_bytes()).map_err(|e| format!("konuk ajanına yazılamadı: {e}"))?;
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(n) if n > 0 => {}
-            _ => return Err(format!("konuk ajanı {command} isteğine süresinde yanıt vermedi")),
+        if !read_bounded_line(&mut reader, &mut line, std::time::Instant::now() + timeout + SYNC_DEADLINE) {
+            return Err(format!("konuk ajanı {command} isteğine süresinde yanıt vermedi"));
         }
         let reply: Value = serde_json::from_str(line.trim()).map_err(|e| format!("konuk ajanının yanıtı okunamadı: {e}"))?;
         match reply.get("return") {
@@ -261,5 +289,31 @@ mod encode_tests {
         }
         assert_eq!(base64(&[0xff, 0xfe]), "//4=");
         assert_eq!(base64(&[0u8; 4]), "AAAAAA==");
+    }
+
+    /// Kanalın öbür ucu konuktur: satır sonu göndermeyen ya da durmadan yazan konuk belleği dolduramaz.
+    #[cfg(unix)]
+    #[test]
+    fn agent_lines_are_bounded_in_size_and_time() {
+        use std::io::{BufReader, Read};
+        use std::time::{Duration, Instant};
+        let soon = || Instant::now() + Duration::from_secs(5);
+        let mut line = String::new();
+
+        let mut two = BufReader::new(&b"{\"return\": 1}\n{\"return\": 2}\n"[..]);
+        assert!(super::imp::read_bounded_line(&mut two, &mut line, soon()) && line.trim() == "{\"return\": 1}");
+        assert!(super::imp::read_bounded_line(&mut two, &mut line, soon()) && line.trim() == "{\"return\": 2}");
+        assert!(!super::imp::read_bounded_line(&mut two, &mut line, soon()), "bağlantı kapandı");
+
+        // Sonsuz, satırsız akış: sınırda bırakılır.
+        let mut flood = BufReader::new(std::io::repeat(b'x'));
+        assert!(!super::imp::read_bounded_line(&mut flood, &mut line, soon()));
+        // Sınırın altında kalan ama bitmeyen satır: süre dolunca bırakılır.
+        let mut slow = BufReader::new(std::io::repeat(b'x').take(1 << 20));
+        assert!(!super::imp::read_bounded_line(&mut slow, &mut line, Instant::now()));
+        // Sınıra sığan uzun yanıt (ör. dosya içeriği) okunur.
+        let mut long = vec![b'y'; 1 << 20];
+        long.push(b'\n');
+        assert!(super::imp::read_bounded_line(&mut BufReader::new(long.as_slice()), &mut line, soon()) && line.len() == (1 << 20) + 1);
     }
 }
