@@ -13,6 +13,12 @@ use serde::Serialize;
 
 /// Bir eş sunucudan okunan yanıtın üst sınırı.
 const MAX_BODY: u64 = 4 * 1024 * 1024;
+const TOO_LARGE: &str = "eş sunucu bildirdiğinden büyük veri gönderdi; indirme kesildi";
+
+/// Bildirilen boya (MiB) göre bir indirmenin kabul edilen en büyük boyu: biçim yükü için dörtte bir ve 256 MiB pay.
+pub fn download_limit(declared_mb: u64) -> u64 {
+    (declared_mb.saturating_mul(1 << 20) / 4).saturating_mul(5).saturating_add(256 << 20)
+}
 pub const MAX_PEERS: usize = 32;
 
 /// Yapılandırılmış eş sunucu. Token yalnızca istek başlığında kullanılır; hiçbir çıktıya girmez.
@@ -353,7 +359,11 @@ impl Peer {
     }
 
     pub fn guest(&self, vmid: redox_core::VmId) -> Result<Guest, String> {
-        serde_json::from_value(self.json("GET", &format!("/api/v1/guests/{vmid}"))?).map_err(|_| "eş sunucudaki konuk kaydı okunamadı".to_string())
+        let guest: Guest = serde_json::from_value(self.json("GET", &format!("/api/v1/guests/{vmid}"))?).map_err(|_| "eş sunucudaki konuk kaydı okunamadı".to_string())?;
+        if guest.vmid != vmid {
+            return Err(format!("eş sunucu {vmid} yerine {} kimlikli konuğun kaydını döndürdü", guest.vmid));
+        }
+        Ok(guest)
     }
 
     /// Eşte yedek başlatır ve tamamlanmasını bekler; yedeğin kimliğini döndürür.
@@ -398,8 +408,8 @@ impl Peer {
         Ok(data)
     }
 
-    pub fn download_backup(&self, id: &str, dest: &std::path::Path) -> Result<u64, String> {
-        self.download_backup_disk(id, 0, dest)
+    pub fn download_backup(&self, id: &str, dest: &std::path::Path, limit: u64) -> Result<u64, String> {
+        self.download_backup_disk(id, 0, dest, limit)
     }
 
     /// Yedeğin makine durumu arşivini (UEFI değişkenleri, sanal TPM) indirir; yedekte arşiv yoksa `false`.
@@ -417,17 +427,22 @@ impl Peer {
     }
 
     /// Yedekteki bir diski indirir: 0 asıl disk, 1 ve üstü ek diskler.
-    pub fn download_backup_disk(&self, id: &str, disk: u8, dest: &std::path::Path) -> Result<u64, String> {
+    /// `limit`: kabul edilen en büyük boy (bayt); eş daha fazlasını yollarsa indirme kesilir.
+    pub fn download_backup_disk(&self, id: &str, disk: u8, dest: &std::path::Path, limit: u64) -> Result<u64, String> {
         let query = if disk == 0 { String::new() } else { format!("?disk={disk}") };
         let response = self.request("GET", &format!("/api/v1/backups/{id}/download{query}"), Duration::from_secs(120)).call().map_err(peer_error)?;
         let expected: Option<u64> = response.header("content-length").and_then(|v| v.parse().ok());
         let tmp = dest.with_extension("indiriliyor");
         let copied = std::fs::File::create(&tmp).and_then(|mut out| {
-            let n = std::io::copy(&mut response.into_reader(), &mut out)?;
+            let n = std::io::copy(&mut std::io::Read::take(response.into_reader(), limit.saturating_add(1)), &mut out)?;
             out.sync_all()?;
             Ok(n)
         });
         match copied {
+            Ok(n) if n > limit => {
+                let _ = std::fs::remove_file(&tmp);
+                Err(TOO_LARGE.to_string())
+            }
             Ok(n) if expected.is_none_or(|e| e == n) => std::fs::rename(&tmp, dest).map(|()| n).map_err(|e| format!("{} yazılamadı: {e}", dest.display())),
             other => {
                 let _ = std::fs::remove_file(&tmp);
@@ -533,17 +548,21 @@ impl Peer {
     }
 
     /// Askıdaki konuğun bellek durumunu indirir; `(çalışırken mi askıya alındı, donanım yerleşimi)` döndürür.
-    pub fn download_state(&self, vmid: redox_core::VmId, dest: &std::path::Path) -> Result<(bool, u8), String> {
+    pub fn download_state(&self, vmid: redox_core::VmId, dest: &std::path::Path, limit: u64) -> Result<(bool, u8), String> {
         let response = self.request("GET", &format!("/api/v1/guests/{vmid}/state"), Duration::from_secs(120)).call().map_err(peer_error)?;
         let expected: Option<u64> = response.header("content-length").and_then(|v| v.parse().ok());
         let running = response.header("x-redox-state-running") == Some("1");
         let layout: u8 = response.header("x-redox-state-layout").and_then(|v| v.parse().ok()).ok_or("eş sunucu bellek durumunun yerleşimini bildirmedi (eski sürüm olabilir)")?;
         let copied = std::fs::File::create(dest).and_then(|mut out| {
-            let n = std::io::copy(&mut response.into_reader(), &mut out)?;
+            let n = std::io::copy(&mut std::io::Read::take(response.into_reader(), limit.saturating_add(1)), &mut out)?;
             out.sync_all()?;
             Ok(n)
         });
         match copied {
+            Ok(n) if n > limit => {
+                let _ = std::fs::remove_file(dest);
+                Err(TOO_LARGE.to_string())
+            }
             Ok(n) if expected.is_none_or(|e| e == n) => Ok((running, layout)),
             other => {
                 let _ = std::fs::remove_file(dest);
@@ -626,5 +645,60 @@ mod tests {
         assert_eq!(v.checked, Some(42));
         assert!(v.error.as_deref().unwrap().starts_with("erişilemiyor"), "{:?}", v.error);
         assert!(!v.online() && v.guests.is_empty());
+    }
+
+    /// Her bağlantıya aynı yanıtı veren küçük bir sunucu.
+    fn canned(replies: usize, head: &'static str, body: Vec<u8>) -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..replies {
+                let Ok((mut stream, _)) = listener.accept() else { return };
+                let mut seen = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(n) if n > 0 => seen.extend_from_slice(&chunk[..n]),
+                        _ => break,
+                    }
+                }
+                let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\nConnection: close\r\n{head}\r\n").as_bytes());
+                let _ = stream.write_all(&body);
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_peer_cannot_send_more_than_the_declared_size() {
+        assert_eq!(download_limit(0), 256 << 20);
+        assert_eq!(download_limit(4096), (5u64 << 30) + (256 << 20), "4 GiB disk: dörtte bir pay ve 256 MiB");
+        assert_eq!(download_limit(u64::MAX), u64::MAX, "taşmaz");
+
+        let port = canned(4, "", vec![7u8; 5000]);
+        let peer = parse_file(&format!("es http://127.0.0.1:{port} {TOKEN}")).unwrap().remove(0);
+        let dir = std::env::temp_dir().join(format!("redox-indirme-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (disk, state) = (dir.join("disk.qcow2"), dir.join("bellek"));
+
+        // Boy bildirmeden durmadan yollayan eş diski dolduramaz: sınırda kesilir, yarım dosya kalmaz.
+        assert!(peer.download_backup_disk("yedek", 0, &disk, 1000).unwrap_err().contains("büyük veri"));
+        assert!(std::fs::read_dir(&dir).unwrap().next().is_none(), "yarım dosya silinir");
+        assert_eq!(peer.download_backup_disk("yedek", 0, &disk, 5000), Ok(5000), "sınıra sığan indirme tamamlanır");
+        std::fs::remove_file(&disk).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let _ = state;
+    }
+
+    #[test]
+    fn a_peer_must_answer_for_the_guest_that_was_asked() {
+        let other = serde_json::to_vec(&redox_core::Cluster::demo(0).guests[0]).unwrap();
+        let asked = redox_core::Cluster::demo(0).guests[0].vmid;
+        let head: &'static str = "Content-Type: application/json\r\n";
+        let port = canned(2, head, other);
+        let peer = parse_file(&format!("es http://127.0.0.1:{port} {TOKEN}")).unwrap().remove(0);
+        assert_eq!(peer.guest(asked).map(|g| g.vmid), Ok(asked));
+        assert!(peer.guest(asked + 1).unwrap_err().contains("kimlikli konuğun kaydını döndürdü"));
     }
 }

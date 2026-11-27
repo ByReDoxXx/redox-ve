@@ -177,7 +177,8 @@ impl AppState {
                     Err(e) => eprintln!("uyarı: {peer_name}/{vmid} disk {disk} artımlı aktarılamadı, tamamı indirilecek: {e}"),
                 }
             }
-            peer.download_backup_disk(&backup, disk, dest).map(|_| ())
+            let size_gb = if disk == 0 { remote.disk_gb } else { remote.hw.disks.iter().find(|d| d.id == disk).map_or(0, |d| d.size_gb) };
+            peer.download_backup_disk(&backup, disk, dest, crate::peers::download_limit(size_gb << 10)).map(|_| ())
         };
         let downloaded = (|| {
             fetch(0, image_path)?;
@@ -396,7 +397,7 @@ impl AppState {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| format!("{} oluşturulamadı: {e}", parent.display()))?;
                 }
-                let restored = peer.download_backup(&backup, &path).and_then(|_| {
+                let restored = peer.download_backup(&backup, &path, crate::peers::download_limit(remote.disk_gb << 10)).and_then(|_| {
                     let guest = self.snapshot().guest(id).cloned().map_err(|e| e.to_string())?;
                     self.driver().restore(&guest, &temp, &[])
                 });
@@ -428,8 +429,8 @@ impl AppState {
     /// Kaynaktaki bellek durumunu indirir, yeni konuğun askı kaydı yapar ve (çalışırken taşınıyorsa) konuğu sürdürür.
     pub(super) fn adopt_state(&self, peer: &crate::peers::Peer, remote_id: VmId, id: VmId, scratch: &Path, resume: bool, user: &str) -> Result<(), String> {
         let file = scratch.with_extension("bellek");
-        let (running, layout) = peer.download_state(remote_id, &file)?;
         let guest = self.snapshot().guest(id).map_err(|e| e.to_string())?.clone();
+        let (running, layout) = peer.download_state(remote_id, &file, crate::peers::download_limit(guest.mem_total_mb))?;
         let adopted = self.driver().adopt_suspend(&guest, &file, running, layout);
         let _ = std::fs::remove_file(&file);
         adopted?;
