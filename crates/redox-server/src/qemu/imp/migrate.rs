@@ -89,6 +89,19 @@ pub fn migrate_layout(d: &QemuDriver, g: &Guest) -> Option<u8> {
 /// Hedef: konuğu taşıma bekler halde (duraklatılmış) açar, disklerini `nbd_port`'tan yazılabilir sunar ve
 /// belleği `ram_port`'tan bekler.
 pub fn migrate_listen(d: &QemuDriver, g: &Guest, layout: u8, bind: &str, nbd_port: u16, ram_port: u16, key: &str) -> Result<(), String> {
+    listen_for(d, g, layout, bind, Some(nbd_port), ram_port, key)
+}
+
+/// Diskler ortak depodadır: yalnızca bellek beklenir.
+pub fn migrate_listen_shared(d: &QemuDriver, g: &Guest, layout: u8, bind: &str, ram_port: u16, key: &str) -> Result<(), String> {
+    if d.cfg.shared_dir(&g.storage).is_none() {
+        return Err("konuğun deposu bu sunucuda ortak depo değil".to_string());
+    }
+    listen_for(d, g, layout, bind, None, ram_port, key)
+}
+
+/// `nbd_port` verilirse diskler de buradan alınır.
+fn listen_for(d: &QemuDriver, g: &Guest, layout: u8, bind: &str, nbd_port: Option<u16>, ram_port: u16, key: &str) -> Result<(), String> {
     let sock = d.cfg.qmp_path(g.vmid);
     let alive = || live_pid(d, g.vmid).is_some();
     if alive() {
@@ -125,10 +138,13 @@ pub fn migrate_listen(d: &QemuDriver, g: &Guest, layout: u8, bind: &str, nbd_por
     let address = |port: u16| if bind.contains(':') { format!("tcp:[{bind}]:{port}") } else { format!("tcp:{bind}:{port}") };
     let prepared = limit_network(d, g).and_then(|()| apply_limits(d, g)).and_then(|()| {
         add_tls(d, g.vmid, key, "server")?;
-        let listen = serde_json::json!({ "execute": "nbd-server-start", "arguments": { "addr": { "type": "inet", "data": { "host": bind, "port": nbd_port.to_string() } }, "tls-creds": TLS_ID } });
-        qmp_values(&sock, &[listen]).map_err(|e| format!("disk kapısı ({nbd_port}) açılamadı: {e}"))?;
-        for device in disk_devices(d, g)? {
-            qmp_values(&sock, &[serde_json::json!({ "execute": "nbd-server-add", "arguments": { "device": device, "writable": true } })])?;
+        // Ortak depoda diskler kopyalanmaz: disk kapısı açılmaz.
+        if let Some(nbd_port) = nbd_port {
+            let listen = serde_json::json!({ "execute": "nbd-server-start", "arguments": { "addr": { "type": "inet", "data": { "host": bind, "port": nbd_port.to_string() } }, "tls-creds": TLS_ID } });
+            qmp_values(&sock, &[listen]).map_err(|e| format!("disk kapısı ({nbd_port}) açılamadı: {e}"))?;
+            for device in disk_devices(d, g)? {
+                qmp_values(&sock, &[serde_json::json!({ "execute": "nbd-server-add", "arguments": { "device": device, "writable": true } })])?;
+            }
         }
         let tls = serde_json::json!({ "execute": "migrate-set-parameters", "arguments": { "tls-creds": TLS_ID } });
         let incoming = serde_json::json!({ "execute": "migrate-incoming", "arguments": { "uri": address(ram_port) } });
@@ -142,15 +158,29 @@ pub fn migrate_listen(d: &QemuDriver, g: &Guest, layout: u8, bind: &str, nbd_por
 
 /// Hedef: bellek geldi ve kaynak kapandı; disk sunumu kapatılır, konuk sürdürülür.
 pub fn migrate_finish(d: &QemuDriver, g: &Guest) -> Result<(), String> {
+    resume_incoming(d, g, true)
+}
+
+pub fn migrate_finish_shared(d: &QemuDriver, g: &Guest) -> Result<(), String> {
+    resume_incoming(d, g, false)
+}
+
+fn resume_incoming(d: &QemuDriver, g: &Guest, serving_disks: bool) -> Result<(), String> {
     let sock = d.cfg.qmp_path(g.vmid);
     if live_pid(d, g.vmid).is_none() {
         return Err("taşımayı bekleyen QEMU kapanmış".to_string());
     }
-    let status = qmp(&sock, &["query-status"])?.first().and_then(|s| s["status"].as_str().map(str::to_string)).unwrap_or_default();
+    // Kaynak "tamamlandı" dediğinde hedef son sayfaları ve aygıt durumunu hâlâ işliyor olabilir (özellikle disk
+    // kopyalanmadığında kaynak çok çabuk biter): "inmigrate" bitene kadar beklenir.
+    let state = || qmp(&sock, &["query-status"]).ok().and_then(|r| r.first().and_then(|s| s["status"].as_str().map(str::to_string))).unwrap_or_default();
+    wait_until(Duration::from_secs(60), || !matches!(state().as_str(), "inmigrate" | "finish-migrate") || live_pid(d, g.vmid).is_none());
+    let status = state();
     if status != "paused" {
         return Err(format!("bellek hedefe tam ulaşmamış (QEMU durumu: {status}); konuk sürdürülmedi"));
     }
-    qmp(&sock, &["nbd-server-stop"])?;
+    if serving_disks {
+        qmp(&sock, &["nbd-server-stop"])?;
+    }
     qmp(&sock, &["cont"])?;
     let _ = std::fs::remove_dir_all(tls_dir(d, g.vmid));
     Ok(())
@@ -164,6 +194,27 @@ pub fn migrate_abort(d: &QemuDriver, g: &Guest) {
 /// Kaynak: diskleri hedefe aynalar, aynalar yetişince belleği taşır. Başarıda konuk burada kapanmıştır ve
 /// duraklama süresi (ms) döner. Hata, bellek hedefe geçmeden olursa konuk burada çalışmayı sürdürür.
 pub fn migrate_send(d: &QemuDriver, g: &Guest, host: &str, nbd_port: u16, ram_port: u16, key: &str) -> Result<u64, String> {
+    send(d, g, host, Disks::Copy(nbd_port), ram_port, key)
+}
+
+/// Diskler ortak depoda kalır: bellek taşınır, ardından disk sahipliği hedefe geçer.
+pub fn migrate_send_shared(d: &QemuDriver, g: &Guest, host: &str, ram_port: u16, key: &str, to: (&str, &str)) -> Result<u64, String> {
+    let dir = d.cfg.shared_dir(&g.storage).ok_or("konuğun deposu ortak depo değil")?;
+    let owner = crate::shared::Owner { server: to.0.to_string(), node: to.1.to_string() };
+    if !crate::shared::valid_id(&owner.server) || owner.server == d.cfg.server_id {
+        return Err("hedef sunucunun ortak depo kimliği geçersiz".to_string());
+    }
+    send(d, g, host, Disks::Shared(dir, owner), ram_port, key)
+}
+
+enum Disks {
+    /// Diskler hedefin bu disk kapısına aynalanır.
+    Copy(u16),
+    /// Diskler paylaşımın bu dizinindedir; yalnızca sahiplik geçer.
+    Shared(std::path::PathBuf, crate::shared::Owner),
+}
+
+fn send(d: &QemuDriver, g: &Guest, host: &str, disks: Disks, ram_port: u16, key: &str) -> Result<u64, String> {
     let sock = d.cfg.qmp_path(g.vmid);
     let alive = || live_pid(d, g.vmid).is_some();
     if !alive() {
@@ -172,7 +223,10 @@ pub fn migrate_send(d: &QemuDriver, g: &Guest, host: &str, nbd_port: u16, ram_po
     if !redox_core::valid_migrate_host(host) {
         return Err(format!("geçersiz hedef adresi: {host}"));
     }
-    let devices = disk_devices(d, g)?;
+    let (devices, nbd_port) = match &disks {
+        Disks::Copy(port) => (disk_devices(d, g)?, *port),
+        Disks::Shared(..) => (Vec::new(), 0),
+    };
     let node = |device: &str| format!("{JOB_PREFIX}{device}");
     // Taşıma olmadıysa geride iz bırakılmaz: aynalar durdurulur, hedefe açılan bağlantılar ve anahtar kaldırılır.
     let undo = || {
@@ -246,6 +300,16 @@ pub fn migrate_send(d: &QemuDriver, g: &Guest, host: &str, nbd_port: u16, ram_po
         let resumed = qmp(&sock, &["cont"]).is_ok();
         undo();
         return Err(if resumed { "bellek taşındı ama disk aynası koptu; konuk bu sunucuda sürdürüldü" } else { "bellek taşındı ama disk aynası koptu; konuk bu sunucuda duraklatılmış durumda" }.to_string());
+    }
+    // Ortak depoda sahiplik, bu QEMU kapanmadan önce ve konuk burada duruyorken geçer. Geçemezse konuk
+    // burada sürer: sahibi hâlâ biziz.
+    if let Disks::Shared(dir, owner) = &disks {
+        if let Err(e) = crate::shared::transfer(dir, g.vmid, &d.cfg.server_id, owner) {
+            let resumed = qmp(&sock, &["cont"]).is_ok();
+            undo();
+            let state = if resumed { "konuk bu sunucuda sürdürüldü" } else { "konuk bu sunucuda duraklatılmış durumda" };
+            return Err(format!("disk sahipliği hedefe geçirilemedi: {e}; {state}"));
+        }
     }
     for device in &devices {
         let _ = qmp_values(&sock, &[serde_json::json!({ "execute": "block-job-cancel", "arguments": { "device": node(device) } })]);

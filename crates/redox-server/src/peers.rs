@@ -449,6 +449,10 @@ impl Peer {
     /// verilmezse eş, isteğin geldiği adrese bağlanır.
     pub fn migrate_and_wait(&self, vmid: redox_core::VmId, host: Option<&str>, nbd_port: u16, ram_port: u16, key: &str, timeout: Duration) -> Result<(), String> {
         let body = serde_json::json!({ "host": host, "nbd_port": nbd_port, "ram_port": ram_port, "key": key });
+        self.send_and_wait(vmid, body, timeout)
+    }
+
+    fn send_and_wait(&self, vmid: redox_core::VmId, body: serde_json::Value, timeout: Duration) -> Result<(), String> {
         let started: serde_json::Value = self
             .request("POST", &format!("/api/v1/guests/{vmid}/migrate"), Duration::from_secs(30))
             .send_json(body)
@@ -471,6 +475,26 @@ impl Peer {
             }
             std::thread::sleep(Duration::from_millis(500));
         }
+    }
+
+    /// Eşin ortak depodaki konuğu için bilgisi; konuk ortak depoda değilse (ya da eş eski sürümse) `None`.
+    pub fn shared_offer(&self, vmid: redox_core::VmId) -> Result<Option<crate::state::shared::Offer>, String> {
+        match self.request("GET", &format!("/api/v1/shared/offer/{vmid}"), Duration::from_secs(15)).call() {
+            Ok(reply) => reply.into_json().map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string()),
+            Err(ureq::Error::Status(404, _)) => Ok(None),
+            Err(e) => Err(peer_error(e)),
+        }
+    }
+
+    /// Eşten kapalı konuğunun disk sahipliğini bu sunucuya geçirmesini ister.
+    pub fn shared_release(&self, vmid: redox_core::VmId, to: &crate::shared::Owner) -> Result<(), String> {
+        self.request("POST", &format!("/api/v1/shared/release/{vmid}"), Duration::from_secs(30)).send_json(serde_json::json!(to)).map(|_| ()).map_err(peer_error)
+    }
+
+    /// `migrate_and_wait` gibi, ama diskler ortak depoda: yalnızca bellek taşınır.
+    pub fn migrate_shared_and_wait(&self, vmid: redox_core::VmId, host: Option<&str>, ram_port: u16, key: &str, to: &crate::shared::Owner, timeout: Duration) -> Result<(), String> {
+        let body = serde_json::json!({ "host": host, "nbd_port": 0, "ram_port": ram_port, "key": key, "shared_to": to });
+        self.send_and_wait(vmid, body, timeout)
     }
 
     /// Eşe, bu sunucudaki konuğu kendine canlı taşımasını söyler (`me`: bu sunucunun eşteki adı). İş eşte arka

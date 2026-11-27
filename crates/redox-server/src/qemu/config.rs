@@ -29,6 +29,10 @@ pub struct QemuConfig {
     /// Ek depolama alanları: `(ad, dizin)`. Konuğun diskleri, kaydındaki depolamanın dizininde durur;
     /// `local` (ve burada tanımlı olmayan her ad) veri dizinindeki `images/` klasörüdür.
     pub storages: Vec<(String, PathBuf)>,
+    /// `storages` içinden ortak depo olanların adları.
+    pub shared: Vec<String>,
+    /// Bu sunucunun ortak depodaki kalıcı kimliği.
+    pub server_id: String,
     /// Yeni yedekler parça deposuna mı yazılsın? (Yalnızca değişen kısım yer kaplar.)
     pub incremental_backups: bool,
     /// Yerel yedek deposunun şifreleme parolası (yalnızca artımlı yedekle).
@@ -58,6 +62,8 @@ impl QemuConfig {
             sys_net: PathBuf::from("/sys/class/net"),
             sys_module: PathBuf::from("/sys/module"),
             storages: Vec::new(),
+            shared: Vec::new(),
+            server_id: String::new(),
             incremental_backups: false,
             backup_passphrase: None,
             backup_mbps: 0,
@@ -119,6 +125,11 @@ impl QemuConfig {
     /// Bir depolama alanının disk dizini.
     pub fn storage_dir(&self, id: &str) -> PathBuf {
         self.storages.iter().find(|(name, _)| name == id).map(|(_, dir)| dir.clone()).unwrap_or_else(|| self.images_dir())
+    }
+
+    /// Depolama alanı ortak depoysa dizini.
+    pub fn shared_dir(&self, storage: &str) -> Option<PathBuf> {
+        self.shared.iter().any(|s| s == storage).then(|| self.storage_dir(storage))
     }
 
     /// Konuğun asıl diski, kendi depolama alanında.

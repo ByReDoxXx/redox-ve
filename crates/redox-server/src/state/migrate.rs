@@ -103,10 +103,27 @@ impl AppState {
 
     /// Kaynak: konuğu, taşımayı bekleyen hedefe gönderir (görev olarak). Bitince konuk burada kapalıdır.
     pub fn migrate_out(&self, vmid: VmId, host: &str, nbd_port: u16, ram_port: u16, key: &str, user: &str) -> Result<TaskId, Error> {
+        self.send_guest(vmid, host, Some(nbd_port), ram_port, key, None, user)
+    }
+
+    /// Kaynak: diskleri ortak depoda olan konuğun yalnızca belleğini gönderir; bellek ulaşınca disk sahipliği
+    /// `to` sunucusuna geçer.
+    pub fn migrate_out_shared(&self, vmid: VmId, host: &str, ram_port: u16, key: &str, to: crate::shared::Owner, user: &str) -> Result<TaskId, Error> {
+        if self.shared_offer(vmid)?.is_none() {
+            return Err(Error::InvalidSpec(format!("{vmid} ortak depoda değil")));
+        }
+        if let Some(why) = redox_core::handover_blocker(self.lock().guest(vmid)?) {
+            return Err(Error::InvalidSpec(why.to_string()));
+        }
+        self.send_guest(vmid, host, None, ram_port, key, Some(to), user)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_guest(&self, vmid: VmId, host: &str, nbd_port: Option<u16>, ram_port: u16, key: &str, to: Option<crate::shared::Owner>, user: &str) -> Result<TaskId, Error> {
         if !redox_core::valid_migrate_host(host) {
             return Err(Error::InvalidSpec(format!("geçersiz hedef adresi: {host}")));
         }
-        if !redox_core::valid_migrate_key(key) || nbd_port < 1024 || ram_port < 1024 || nbd_port == ram_port {
+        if !redox_core::valid_migrate_key(key) || ram_port < 1024 || nbd_port.is_some_and(|port| port < 1024 || port == ram_port) {
             return Err(Error::InvalidSpec("taşıma isteği eksik ya da geçersiz (anahtar ve iki ayrı kapı gerekir)".to_string()));
         }
         if self.snapshot().mirror(vmid).is_some() {
@@ -116,14 +133,24 @@ impl AppState {
             return Err(Error::InvalidSpec("bu sürücü canlı taşımayı desteklemiyor (gerçek sürücü gerekir)".to_string()));
         }
         let (host, key) = (host.to_string(), key.to_string());
+        let (sent, handed) = (to.clone(), to);
         self.run_op(
             vmid,
             user,
             format!("vm migrate {vmid}"),
             None,
             move |c| c.check_migrate_out(vmid),
-            move |d, g| d.migrate_send(g, &host, nbd_port, ram_port, &key),
-            move |c, _downtime_ms| c.after_migrated_out(vmid),
+            move |d, g| match (&sent, nbd_port) {
+                (Some(to), _) => d.migrate_send_shared(g, &host, ram_port, &key, (&to.server, &to.node)),
+                (None, Some(nbd_port)) => d.migrate_send(g, &host, nbd_port, ram_port, &key),
+                (None, None) => Err("taşıma isteği eksik: disk kapısı yok".to_string()),
+            },
+            move |c, _downtime_ms| {
+                c.after_migrated_out(vmid);
+                if let Some(to) = &handed {
+                    c.mark_handed_over(vmid, &to.node);
+                }
+            },
         )
     }
 
@@ -240,6 +267,21 @@ impl AppState {
             Ok(_) => return Err(early(format!("bu sunucuda {vmid} kimliği dolu; canlı taşınan konuk aynı kimlikle gelir (ağ kartının adresi kimlikten türetilir)"))),
         };
         let layout = peer.migrate_prepare(vmid).map_err(early)?;
+        // Eşin diskleri ortak depoda ve o depo burada da görünüyorsa yalnızca bellek taşınır.
+        if redox_core::handover_blocker(&remote).is_none() {
+            if let Some(offer) = peer.shared_offer(vmid).map_err(early)? {
+                if let Some((storage, dir)) = self.shared_match(&offer, vmid) {
+                    // Burada kalan eski kopya (devredilmemiş kayıt) paylaşımdaki dosyaları gösteriyor olabilir:
+                    // yalnızca kaydı kaldırılır.
+                    if leftover {
+                        self.mutate(|c| {
+                            c.mark_handed_over(vmid, &offer.server);
+                        });
+                    }
+                    return self.migrate_shared_into(peer, peer_name, &remote, (&storage, &dir), layout, user);
+                }
+            }
+        }
         if leftover {
             self.delete_guest(vmid, user).map_err(|e| early(format!("burada kalan eski kopya kaldırılamadı: {e}")))?;
         }
@@ -251,6 +293,64 @@ impl AppState {
             let _ = self.delete_guest(id, user);
         }
         moved
+    }
+
+    /// Diskleri ortak depoda duran konuğun canlı taşınması (hedef taraf). Hiçbir adımda disk oluşturulmaz ya
+    /// da silinmez; başarısızlıkta yalnızca bekleyen QEMU kapatılır.
+    fn migrate_shared_into(&self, peer: &crate::peers::Peer, peer_name: &str, remote: &Guest, share: (&str, &std::path::Path), layout: u8, user: &str) -> Result<(), (String, bool)> {
+        let early = |message: String| (message, false);
+        let vmid = remote.vmid;
+        let me = self.driver().server_id();
+        let command = format!("vm migrate {peer_name}/{vmid}");
+        let (guest, task) = self.shared_record(remote, share.0, user, Some(&command)).map_err(|e| early(e.to_string()))?;
+        let task = task.ok_or_else(|| early("taşıma görevi açılamadı".to_string()))?;
+        let driver = self.driver();
+        let owned = || crate::shared::require(share.1, vmid, &me).is_ok();
+        let outcome = (|| -> Result<(), String> {
+            let settings = self.migrate_settings();
+            let key = new_key()?;
+            let ram_port = {
+                let _pick = PICK.lock().unwrap_or_else(|e| e.into_inner());
+                let port = free_port(settings.ports, &settings.bind)?;
+                driver.migrate_listen_shared(&guest, layout, &settings.bind, port, &key)?;
+                port
+            };
+            let to = crate::shared::Owner { server: me.clone(), node: guest.node.clone() };
+            let sent = peer.migrate_shared_and_wait(vmid, settings.host.as_deref(), ram_port, &key, &to, Duration::from_secs(72 * 3600));
+            // Eş hata bildirse de (ör. yanıt yolda kaybolsa) sahiplik geçmişse konuk artık buradadır.
+            if !owned() {
+                driver.migrate_abort(&guest);
+                return Err(sent.err().unwrap_or_else(|| "disk sahipliği bu sunucuya geçmedi".to_string()));
+            }
+            driver.migrate_finish_shared(&guest).map_err(|e| {
+                driver.migrate_abort(&guest);
+                format!("{e}. Diskler artık bu sunucunun: konuğu buradan başlatabilirsiniz")
+            })
+        })();
+        let arrived = owned();
+        self.mutate(|c| {
+            let _ = c.complete_task(task, outcome.clone(), now());
+            if arrived {
+                if let Ok(g) = c.guest_mut_for_import(vmid) {
+                    if g.tags.len() < redox_core::MAX_TAGS && redox_core::valid_tag(&format!("tasindi-{peer_name}")) {
+                        g.tags.push(format!("tasindi-{peer_name}"));
+                    }
+                    (g.onboot, g.backup_time) = (remote.onboot, remote.backup_time.clone());
+                }
+            } else {
+                // Diskler eşte: burada yalnızca yeni kurulan kayıt kaldırılır.
+                let _ = c.delete_guest(vmid, user, now());
+            }
+        });
+        outcome.map_err(|message| (message, true))?;
+        let current = self.lock().guest(vmid).ok().cloned();
+        if let Some(probe) = current.and_then(|g| driver.probe(&g)) {
+            self.mutate(|c| {
+                c.observe_guest(vmid, &probe, now());
+            });
+        }
+        let _ = self.sync_firewall();
+        Ok(())
     }
 
     fn migrate_into(&self, peer: &crate::peers::Peer, peer_name: &str, remote: &Guest, id: VmId, layout: u8, user: &str) -> Result<(), (String, bool)> {

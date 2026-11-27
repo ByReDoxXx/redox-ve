@@ -230,7 +230,8 @@ pub async fn peers(State(st): State<AppState>,
     let views = st.peers().views();
     let balance = crate::state::balance::recommend(&st.snapshot(), &views);
     let switches = st.vswitch_report();
-    Html(view::peers(&ctx.page(Current::Peers, "/cluster"), &views, &balance, &switches))
+    let shared = (!st.shared_storage_ids().is_empty(), st.shared_list(crate::state::now()));
+    Html(view::peers(&ctx.page(Current::Peers, "/cluster"), &views, &balance, &switches, &shared))
 }
 
 #[derive(Debug, Default, Deserialize)]

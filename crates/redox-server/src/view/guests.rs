@@ -154,6 +154,12 @@ pub(super) fn guest_head(p: &Page, g: &Guest, tab: &str) -> Markup {
             &cli,
             &tabs,
         ))
+        @if let Some(to) = &g.hw.handed_to {
+            div class="notice" role="status" {
+                (icon("alert"))
+                span { (tfmt(format!("Bu konuğun diskleri {to} sunucusuna devredildi: burada yalnızca kaydı duruyor. Kaydı silmek disklere dokunmaz."))) }
+            }
+        }
         @if g.hw.suspended {
             div class="notice" role="status" {
                 (icon("half"))

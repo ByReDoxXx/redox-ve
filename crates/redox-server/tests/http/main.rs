@@ -35,6 +35,7 @@ mod pools_storage;
 mod power;
 mod real_driver;
 mod scheduling;
+mod shared;
 mod switches;
 mod ui_v3;
 mod users;

@@ -34,6 +34,8 @@ mod ft;
 mod hardware;
 mod lifecycle;
 mod mirrors;
+mod shared;
+pub use shared::*;
 
 pub use admin::*;
 pub use backups::*;

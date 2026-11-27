@@ -200,6 +200,26 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.hot_add_nic(guest, index, network)
     }
 
+    fn shared_storages(&self) -> Vec<(String, std::path::PathBuf)> {
+        self.vm.shared_storages()
+    }
+
+    fn server_id(&self) -> String {
+        self.vm.server_id()
+    }
+
+    fn migrate_listen_shared(&self, guest: &Guest, layout: u8, bind: &str, ram_port: u16, key: &str) -> Result<(), String> {
+        self.of(guest)?.migrate_listen_shared(guest, layout, bind, ram_port, key)
+    }
+
+    fn migrate_send_shared(&self, guest: &Guest, host: &str, ram_port: u16, key: &str, to: (&str, &str)) -> Result<u64, String> {
+        self.of(guest)?.migrate_send_shared(guest, host, ram_port, key, to)
+    }
+
+    fn migrate_finish_shared(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.migrate_finish_shared(guest)
+    }
+
     fn change_media(&self, guest: &Guest, drive: u8, iso: Option<&str>) -> Result<(), String> {
         self.of(guest)?.change_media(guest, drive, iso)
     }

@@ -145,6 +145,9 @@ pub struct Hardware {
     pub restart: bool,
     /// Sunucuyla paylaşılan klasörler (yalnızca sanal makinelerde; konukta 9p ile bağlanır).
     pub shares: Vec<Share>,
+    /// Konuğun ortak depodaki diskleri başka sunucuya geçti (o sunucunun adı): burada yalnızca kaydı kaldı.
+    /// Yalnızca sahiplik devri bunu değiştirir.
+    pub handed_to: Option<String>,
     /// Konuğun çalışabileceği sunucu çekirdekleri (`0-3,8`); boşsa hepsi. Çalışırken de değişir.
     pub cpu_affinity: String,
     /// Belleğin ayrılacağı sunucu NUMA düğümü; çekirdek listesi boşsa konuk o düğümün çekirdeklerinde çalışır.

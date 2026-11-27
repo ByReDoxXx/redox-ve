@@ -413,7 +413,7 @@ fn balance_card(p: &Page, b: &crate::state::balance::Balance) -> Markup {
 }
 
 /// Birleşik görünüm: bu sunucu ve eş sunucuların konukları tek sayfada, salt okunur.
-pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state::balance::Balance, switches: &[crate::state::vswitch::SwitchReport]) -> String {
+pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state::balance::Balance, switches: &[crate::state::vswitch::SwitchReport], shared: &(bool, Vec<crate::state::shared::SharedItem>)) -> String {
     let c = p.cluster;
     let local = c.summary();
     let online = peers.iter().filter(|v| v.online()).count();
@@ -431,6 +431,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state:
         div class="stack" {
             (balance_card(p, balance))
             (replicas_card(p, peers))
+            (super::shared::shared_card(p, &shared.1, shared.0, peers))
             (super::mirrors::mirror_cards(p, peers))
             (super::ft::ft_card(p, peers))
             (super::switches::switch_card(p, switches, !peers.is_empty()))

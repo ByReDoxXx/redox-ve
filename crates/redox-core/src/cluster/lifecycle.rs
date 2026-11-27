@@ -130,7 +130,7 @@ impl Cluster {
             pool: None,
             backup_gfs: crate::retention::Gfs::default(),
             // Şablonluk ve bağlı klon ilişkisi yalnızca kendi işlemleriyle kurulur; istekle verilemez.
-            hw: crate::hw::Hardware { template: false, base: None, suspended: false, disk_seq: 0, ..spec.hw.clone() },
+            hw: crate::hw::Hardware { template: false, base: None, suspended: false, disk_seq: 0, handed_to: None, ..spec.hw.clone() },
         };
         let at = self.guests.partition_point(|g| g.vmid < vmid);
         self.guests.insert(at, guest);
@@ -183,6 +183,10 @@ impl Cluster {
                 action,
                 status: guest.status,
             });
+        }
+        // Diskleri başka sunucuya geçen konuk burada başlatılmaz; yanlışlıkla çalışıyorsa kapatılabilir.
+        if action != Action::Stop {
+            self.not_handed_over(vmid)?;
         }
         let (kind, node) = (guest.kind, guest.node.clone());
         if self.node(&node)?.status != NodeStatus::Online {

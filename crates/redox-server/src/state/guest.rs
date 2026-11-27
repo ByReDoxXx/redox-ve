@@ -51,7 +51,10 @@ impl AppState {
     /// Önce silinebilirliği denetler, sonra sürücüye kaynakları sildirir, en son kaydı kaldırır.
     pub fn delete_guest(&self, vmid: VmId, user: &str) -> Result<(), Error> {
         let guest = self.lock().check_deletable(vmid)?.clone();
-        self.driver().destroy(&guest).map_err(Error::Driver)?;
+        // Diskleri başka sunucuya geçen konukta silinen yalnızca kayıttır.
+        if guest.hw.handed_to.is_none() {
+            self.driver().destroy(&guest).map_err(Error::Driver)?;
+        }
         self.mutate(|c| c.delete_guest(vmid, user, now()))?;
         let _ = self.sync_firewall();
         Ok(())

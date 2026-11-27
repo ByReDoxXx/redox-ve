@@ -117,6 +117,11 @@ pub fn routes() -> Router<AppState> {
         .route("/vswitches/{name}", delete_route(vswitch_delete))
         .route("/vswitches/{name}/push", post(vswitch_push))
         .route("/guests/{vmid}/migrate/prepare", post(migrate_prepare))
+        .route("/shared", get(shared_list))
+        .route("/shared/offer/{vmid}", get(shared_offer))
+        .route("/shared/release/{vmid}", post(shared_release))
+        .route("/shared/take/{peer}/{vmid}", post(shared_take))
+        .route("/shared/adopt/{storage}/{vmid}", post(shared_adopt))
         .route("/guests/{vmid}/migrate", post(migrate_out))
         .route("/pools", get(pools).post(pool_put))
         .route("/pools/{name}", delete_route(pool_delete))
@@ -239,6 +244,32 @@ async fn host_net_put(State(st): State<AppState>, Extension(me): Extension<Ident
 
 async fn host_net_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
     st.host_net_remove(&name, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn shared_list(State(st): State<AppState>) -> ApiResult<Vec<crate::state::shared::SharedItem>> {
+    Ok(Json(tokio::task::spawn_blocking(move || st.shared_list(crate::state::now())).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))?))
+}
+
+async fn shared_offer(State(st): State<AppState>, Path(vmid): Path<VmId>) -> Result<Response, ApiError> {
+    Ok(match st.shared_offer(vmid)? {
+        Some(offer) => Json(offer).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    })
+}
+
+async fn shared_release(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>, Json(to): Json<crate::shared::Owner>) -> Result<StatusCode, ApiError> {
+    st.shared_release(vmid, to, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn shared_take(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((peer, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
+    tokio::task::spawn_blocking(move || st.shared_take(&peer, vmid, &me.user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn shared_adopt(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((storage, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
+    st.shared_adopt(&storage, vmid, &me.user, crate::state::now())?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -484,7 +515,11 @@ struct MigrateBody {
     #[serde(default)]
     host: Option<String>,
     /// Hedefte disklerin ve belleğin beklendiği kapılar.
+    #[serde(default)]
     nbd_port: u16,
+    /// Verilirse diskler ortak depodadır: yalnızca bellek taşınır ve disk sahipliği bu sunucuya geçer.
+    #[serde(default)]
+    shared_to: Option<crate::shared::Owner>,
     ram_port: u16,
     /// Bu taşımanın bağlantılarını şifreleyen tek kullanımlık anahtar (64 onaltılık hane).
     key: String,
@@ -500,7 +535,11 @@ async fn migrate_out(
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
     let host = body.host.as_deref().map(str::trim).filter(|h| !h.is_empty()).unwrap_or(&ip).to_string();
     let (st2, user) = (st.clone(), me.user.clone());
-    let task = tokio::task::spawn_blocking(move || st2.migrate_out(vmid, &host, body.nbd_port, body.ram_port, &body.key, &user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
+    let task = tokio::task::spawn_blocking(move || match body.shared_to {
+        Some(to) => st2.migrate_out_shared(vmid, &host, body.ram_port, &body.key, to, &user),
+        None => st2.migrate_out(vmid, &host, body.nbd_port, body.ram_port, &body.key, &user),
+    })
+    .await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
     accepted(&st, task)
 }
 

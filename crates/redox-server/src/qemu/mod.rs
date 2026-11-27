@@ -388,10 +388,17 @@ impl Hypervisor for QemuDriver {
     }
 
     fn create(&self, guest: &Guest) -> Result<(), String> {
+        // Başkasının konuğuysa daha baştan, o sunucunun adıyla reddedilir.
+        if let Some(dir) = self.cfg.shared_dir(&guest.storage) {
+            if let Some(owner) = crate::shared::read_owner(&dir, guest.vmid)?.filter(|o| o.server != self.cfg.server_id) {
+                return Err(format!("{} konuğunun ortak depodaki diskleri {} sunucusuna ait; başka bir kimlik seçin", guest.vmid, owner.node));
+            }
+        }
         let disk = self.cfg.disk_of(guest);
         if disk.exists() {
             return Err(format!("{} zaten var; başka bir kimlik seçin ya da dosyayı kaldırın", disk.display()));
         }
+        self.claim(guest)?;
         if let Some(image) = guest.hw.image.as_deref() {
             // Hazır imajdan: kopyala, sonra istenen boyuta büyüt.
             if !redox_core::hw::valid_image_name(image) {
@@ -426,6 +433,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn add_disk(&self, guest: &Guest, id: u8, size_gb: u64) -> Result<(), String> {
+        self.owned(guest)?;
         self.cbt_invalidate(guest.vmid);
         let disk = self.cfg.extra_disk_of(guest, id);
         if disk.exists() {
@@ -435,6 +443,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn remove_disk(&self, guest: &Guest, id: u8) -> Result<(), String> {
+        self.owned(guest)?;
         self.cbt_invalidate(guest.vmid);
         let disk = self.cfg.extra_disk_of(guest, id);
         match std::fs::remove_file(&disk) {
@@ -450,12 +459,18 @@ impl Hypervisor for QemuDriver {
         let _ = std::fs::remove_file(self.cfg.state_path(guest.vmid).with_extension("state.running"));
         let _ = std::fs::remove_file(self.cfg.state_path(guest.vmid).with_extension("state.hp"));
         let _ = std::fs::remove_dir_all(self.cfg.tpm_dir(guest.vmid));
+        // Ortak depoda yalnızca sahibi disk siler. Sahip değilsek (ya da sahiplik okunamıyorsa) paylaşımdaki
+        // dosyalara dokunulmaz: başka sunucuda çalışan konuğun diski olabilir.
+        let shared = self.cfg.shared_dir(&guest.storage);
+        let mine = shared.is_none() || self.owned(guest).is_ok();
         // Ek disk dosyaları kayıttan bağımsız aranır: yarım kalmış bir silmenin artığı da temizlenir.
         for id in 1..=redox_core::hw::MAX_EXTRA_DISKS as u8 {
-            let _ = std::fs::remove_file(self.cfg.extra_disk_of(guest, id));
+            if mine {
+                let _ = std::fs::remove_file(self.cfg.extra_disk_of(guest, id));
+            }
         }
         for path in [
-            self.cfg.disk_of(guest),
+            if mine { self.cfg.disk_of(guest) } else { self.cfg.pid_path(guest.vmid) },
             self.cfg.efivars_path(guest.vmid, false),
             self.cfg.efivars_path(guest.vmid, true),
             self.cfg.pid_path(guest.vmid),
@@ -469,10 +484,16 @@ impl Hypervisor for QemuDriver {
         }
         let _ = std::fs::remove_dir_all(self.cfg.seed_dir(guest.vmid));
         lock(&self.samples).remove(&guest.vmid);
+        if let Some(dir) = shared.filter(|_| mine) {
+            crate::shared::release(&dir, guest.vmid, &self.cfg.server_id)?;
+        }
         Ok(())
     }
 
     fn apply(&self, guest: &Guest, action: Action) -> Result<(), String> {
+        if action != Action::Stop {
+            self.owned(guest)?;
+        }
         #[cfg(unix)]
         {
             imp::apply(self, guest, action)
@@ -518,6 +539,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn hot_add_disk(&self, guest: &Guest, id: u8) -> Result<(), String> {
+        self.owned(guest)?;
         #[cfg(unix)]
         {
             imp::hot_add_disk(self, guest, id)
@@ -807,6 +829,53 @@ impl Hypervisor for QemuDriver {
         }
     }
 
+    fn shared_storages(&self) -> Vec<(String, std::path::PathBuf)> {
+        self.cfg.storages.iter().filter(|(name, _)| self.cfg.shared.contains(name)).cloned().collect()
+    }
+
+    fn server_id(&self) -> String {
+        self.cfg.server_id.clone()
+    }
+
+    fn migrate_listen_shared(&self, guest: &Guest, layout: u8, bind: &str, ram_port: u16, key: &str) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            imp::migrate_listen_shared(self, guest, layout, bind, ram_port, key)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, layout, bind, ram_port, key);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn migrate_send_shared(&self, guest: &Guest, host: &str, ram_port: u16, key: &str, to: (&str, &str)) -> Result<u64, String> {
+        self.owned(guest)?;
+        #[cfg(unix)]
+        {
+            imp::migrate_send_shared(self, guest, host, ram_port, key, to)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, host, ram_port, key, to);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn migrate_finish_shared(&self, guest: &Guest) -> Result<(), String> {
+        // Sahiplik gelmeden konuk sürdürülmez: aynı diske iki sunucu yazmasın.
+        self.owned(guest)?;
+        #[cfg(unix)]
+        {
+            imp::migrate_finish_shared(self, guest)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
     fn migrate_abort(&self, guest: &Guest) {
         #[cfg(unix)]
         imp::migrate_abort(self, guest);
@@ -839,6 +908,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn snapshot(&self, guest: &Guest, op: SnapshotOp<'_>) -> Result<(), String> {
+        self.owned(guest)?;
         if matches!(op, SnapshotOp::Rollback(_)) {
             // Geri dönüş diskin içeriğini haritaya işlenmeden değiştirir: harita artık güvenilmez.
             self.cbt_invalidate(guest.vmid);
@@ -893,6 +963,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn snapshot_disk_only(&self, guest: &Guest, name: &str) -> Result<bool, String> {
+        self.owned(guest)?;
         if !valid_snapshot_name(name) {
             return Err(format!("geçersiz anlık görüntü adı: {name}"));
         }
@@ -907,6 +978,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn resize_disk(&self, guest: &Guest, new_gb: u64) -> Result<(), String> {
+        self.owned(guest)?;
         self.cbt_invalidate(guest.vmid);
         let disk = self.cfg.disk_of(guest);
         let size = format!("{new_gb}G");
@@ -914,6 +986,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn clone_disk(&self, source: &Guest, target: &Guest) -> Result<(), String> {
+        self.claim(target)?;
         let (from, to) = (self.cfg.disk_of(source), self.cfg.disk_of(target));
         if to.exists() {
             return Err(format!("{} zaten var", to.display()));
@@ -926,6 +999,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn suspend(&self, guest: &Guest) -> Result<(), String> {
+        self.owned(guest)?;
         #[cfg(unix)]
         {
             self.pause_mirror(guest)?;
@@ -981,6 +1055,7 @@ impl Hypervisor for QemuDriver {
 
     /// Bağlı klon: her disk, şablonun aynı numaralı diskini arkalık alan boş bir qcow2'dir.
     fn link_disk(&self, source: &Guest, target: &Guest) -> Result<(), String> {
+        self.claim(target)?;
         let mut made: Vec<PathBuf> = Vec::new();
         for n in disk_ids(source) {
             let (base, disk) = (self.guest_disk(source, n), self.guest_disk(target, n));
@@ -1006,6 +1081,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn backup(&self, guest: &Guest, id: &str) -> Result<BackupSize, String> {
+        self.owned(guest)?;
         self.pause_mirror(guest)?;
         let size = self.backup_disks(guest, id)?;
         // Diskler tamam; makine durumu eklenemezse yedek eksik sayılır ve geri alınır.
@@ -1021,6 +1097,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn restore(&self, guest: &Guest, id: &str, disks: &[u8]) -> Result<(), String> {
+        self.owned(guest)?;
         self.backup_path(id)?;
         self.cbt_invalidate(guest.vmid);
         let incremental = self.store.has(id);
@@ -1096,6 +1173,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn instant_from_backup(&self, guest: &Guest, backup: &str, disks: &[u8]) -> Result<(), String> {
+        self.claim(guest)?;
         if self.store.has(backup) {
             return Err("artımlı yedek parça parça durur, bir diskin arkalığı olamaz; yeni konuk olarak geri yükleyin".to_string());
         }
@@ -1126,6 +1204,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn detach_backing(&self, guest: &Guest) -> Result<(), String> {
+        self.owned(guest)?;
         let disks: Vec<PathBuf> = disk_ids(guest).iter().map(|n| self.guest_disk(guest, *n)).collect();
         #[cfg(unix)]
         let live = self.alive(guest.vmid);
@@ -1150,46 +1229,26 @@ impl Hypervisor for QemuDriver {
     /// Diskler önce hedefe geçici adla kopyalanır; hepsi tamamlanınca yerlerine konur ve ancak ondan sonra
     /// kaynaklar silinir. Herhangi bir adım başarısız olursa hedefte dosya bırakılmaz, konuk eski yerinde kalır.
     fn move_storage(&self, guest: &Guest, target: &str) -> Result<(), String> {
-        let dest_dir = self.cfg.storage_dir(target);
-        if dest_dir == self.cfg.storage_dir(&guest.storage) {
-            return Err(format!("{target} alanı konuğun şimdiki alanıyla aynı dizinde"));
-        }
-        std::fs::create_dir_all(&dest_dir).map_err(|e| format!("{} oluşturulamadı: {e}", dest_dir.display()))?;
-        self.cbt_invalidate(guest.vmid);
-        let sources: Vec<PathBuf> = disk_ids(guest).iter().map(|n| self.guest_disk(guest, *n)).collect();
-        let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
-        let copied = sources.iter().try_for_each(|source| {
-            let name = source.file_name().and_then(|n| n.to_str()).ok_or("disk adı okunamadı")?.to_string();
-            let dest = dest_dir.join(&name);
-            if dest.exists() {
-                return Err(format!("{} zaten var; önce onu kaldırın", dest.display()));
-            }
-            let temp = dest_dir.join(format!(".{name}.tasiniyor"));
-            let _ = std::fs::remove_file(&temp);
-            staged.push((temp.clone(), dest));
-            // Bayt bayt kopya: anlık görüntüler ve değişiklik haritası dosyayla birlikte gelir.
-            std::fs::copy(source, &temp).map(|_| ()).map_err(|e| format!("{} kopyalanamadı: {e}", source.display()))
-        });
-        let placed = copied.and_then(|()| staged.iter().try_for_each(|(temp, dest)| std::fs::rename(temp, dest).map_err(|e| format!("{} yerine konamadı: {e}", dest.display()))));
-        if let Err(e) = placed {
-            for (temp, dest) in &staged {
-                let _ = std::fs::remove_file(temp);
-                let _ = std::fs::remove_file(dest);
-            }
-            return Err(e);
-        }
-        for source in &sources {
-            let _ = std::fs::remove_file(source);
-        }
-        Ok(())
+        self.owned(guest)?;
+        let mut moved = guest.clone();
+        moved.storage = target.to_string();
+        self.claim(&moved)?;
+        let outcome = self.move_disks(guest, target);
+        self.settle_move(guest, &moved, outcome.is_ok())?;
+        outcome
     }
-
     fn move_storage_live(&self, guest: &Guest, target: &str) -> Result<(), String> {
+        self.owned(guest)?;
+        let mut moved = guest.clone();
+        moved.storage = target.to_string();
+        self.claim(&moved)?;
         // Yeni dosyada değişiklik haritası yoktur: sonraki artımlı yedek diskin tamamını okur.
         self.cbt_invalidate(guest.vmid);
         #[cfg(unix)]
         {
-            imp::move_storage_live(self, guest, target)
+            let outcome = imp::move_storage_live(self, guest, target);
+            self.settle_move(guest, &moved, outcome.is_ok())?;
+            outcome
         }
         #[cfg(not(unix))]
         {
@@ -1199,6 +1258,7 @@ impl Hypervisor for QemuDriver {
     }
 
     fn import_disk(&self, guest: &Guest, id: u8, source: &Path) -> Result<(), String> {
+        self.owned(guest)?;
         self.cbt_invalidate(guest.vmid);
         let disk = self.cfg.extra_disk_of(guest, id);
         if disk.exists() {
@@ -1375,6 +1435,68 @@ impl Hypervisor for QemuDriver {
 
 impl QemuDriver {
     /// Konuğun QEMU süreci yaşıyor mu?
+    /// Kapalı konuğun disk dosyalarını başka alanın dizinine kopyalar ve eskilerini siler.
+    fn move_disks(&self, guest: &Guest, target: &str) -> Result<(), String> {
+        let dest_dir = self.cfg.storage_dir(target);
+        if dest_dir == self.cfg.storage_dir(&guest.storage) {
+            return Err(format!("{target} alanı konuğun şimdiki alanıyla aynı dizinde"));
+        }
+        std::fs::create_dir_all(&dest_dir).map_err(|e| format!("{} oluşturulamadı: {e}", dest_dir.display()))?;
+        self.cbt_invalidate(guest.vmid);
+        let sources: Vec<PathBuf> = disk_ids(guest).iter().map(|n| self.guest_disk(guest, *n)).collect();
+        let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let copied = sources.iter().try_for_each(|source| {
+            let name = source.file_name().and_then(|n| n.to_str()).ok_or("disk adı okunamadı")?.to_string();
+            let dest = dest_dir.join(&name);
+            if dest.exists() {
+                return Err(format!("{} zaten var; önce onu kaldırın", dest.display()));
+            }
+            let temp = dest_dir.join(format!(".{name}.tasiniyor"));
+            let _ = std::fs::remove_file(&temp);
+            staged.push((temp.clone(), dest));
+            // Bayt bayt kopya: anlık görüntüler ve değişiklik haritası dosyayla birlikte gelir.
+            std::fs::copy(source, &temp).map(|_| ()).map_err(|e| format!("{} kopyalanamadı: {e}", source.display()))
+        });
+        let placed = copied.and_then(|()| staged.iter().try_for_each(|(temp, dest)| std::fs::rename(temp, dest).map_err(|e| format!("{} yerine konamadı: {e}", dest.display()))));
+        if let Err(e) = placed {
+            for (temp, dest) in &staged {
+                let _ = std::fs::remove_file(temp);
+                let _ = std::fs::remove_file(dest);
+            }
+            return Err(e);
+        }
+        for source in &sources {
+            let _ = std::fs::remove_file(source);
+        }
+        Ok(())
+    }
+
+    /// Diske yazmadan önce: ortak depodaki konuk bu sunucunun mu?
+    fn owned(&self, guest: &Guest) -> Result<(), String> {
+        match self.cfg.shared_dir(&guest.storage) {
+            Some(dir) => crate::shared::require(&dir, guest.vmid, &self.cfg.server_id),
+            None => Ok(()),
+        }
+    }
+
+    /// Yeni disk oluşturmadan önce: ortak depoda konuğu üstlenir.
+    fn claim(&self, guest: &Guest) -> Result<(), String> {
+        match self.cfg.shared_dir(&guest.storage) {
+            Some(dir) => crate::shared::claim(&dir, guest.vmid, &crate::shared::Owner { server: self.cfg.server_id.clone(), node: guest.node.clone() }),
+            None => Ok(()),
+        }
+    }
+
+    /// Depolama taşıması bitince sahiplik, disklerin kaldığı tarafta tutulur.
+    fn settle_move(&self, from: &Guest, to: &Guest, moved: bool) -> Result<(), String> {
+        let (left, kept) = if moved { (from, to) } else { (to, from) };
+        match self.cfg.shared_dir(&left.storage) {
+            // Aynı paylaşım dizinine işaret eden iki ad: bırakılacak ayrı bir kayıt yoktur.
+            Some(dir) if self.cfg.shared_dir(&kept.storage).as_ref() != Some(&dir) && !self.cfg.disk_of(left).exists() => crate::shared::release(&dir, left.vmid, &self.cfg.server_id),
+            _ => Ok(()),
+        }
+    }
+
     #[cfg(unix)]
     fn alive(&self, vmid: VmId) -> bool {
         imp::is_alive(self, vmid)

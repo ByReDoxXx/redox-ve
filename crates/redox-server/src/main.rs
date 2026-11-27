@@ -34,6 +34,7 @@ struct ServeOptions {
     tls_key: Option<PathBuf>,
     health_dir: Option<PathBuf>,
     ldap: Option<PathBuf>,
+    shared_storages: Vec<String>,
     auto_balance: bool,
     balance_as: Option<String>,
     allow_plain_http: bool,
@@ -86,6 +87,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         tls_key: None,
         health_dir: None,
         ldap: None,
+        shared_storages: Vec::new(),
         auto_balance: false,
         balance_as: None,
         allow_plain_http: false,
@@ -142,6 +144,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--balance-as" => opts.balance_as = Some(value()?.clone()),
             "--four-eyes" => opts.four_eyes = true,
             "--storage" => opts.storages.push(host::parse_storage(value()?)?),
+            "--shared-storage" => opts.shared_storages.push(value()?.clone()),
             "--firewall" => opts.firewall = true,
             "--incremental-backups" => opts.incremental_backups = true,
             "--changed-block-tracking" => opts.cbt = true,
@@ -263,6 +266,14 @@ fn prepare(opts: &ServeOptions) -> Result<(Box<dyn Hypervisor>, Cluster, Option<
                 cfg.backup_passphrase = Some(text.trim().to_string());
             }
             cfg.storages = opts.storages.clone();
+            if let Some(unknown) = opts.shared_storages.iter().find(|id| !opts.storages.iter().any(|(name, _)| name == *id)) {
+                return Err(format!("--shared-storage {unknown}: bu adda bir --storage tanımı yok"));
+            }
+            if !opts.shared_storages.is_empty() {
+                std::fs::create_dir_all(&opts.data_dir).map_err(|e| format!("{} oluşturulamadı: {e}", opts.data_dir.display()))?;
+                cfg.shared = opts.shared_storages.clone();
+                cfg.server_id = redox_server::shared::server_id(&opts.data_dir.join("server-id"))?;
+            }
             if let Some(dir) = &opts.ovmf_dir {
                 cfg.ovmf_dir = dir.clone();
             }
@@ -419,6 +430,25 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 let worker = st.clone();
                 let _ = tokio::task::spawn_blocking(move || worker.health_tick()).await;
+            }
+        });
+    }
+    if !state.driver().shared_storages().is_empty() {
+        for (id, dir) in state.driver().shared_storages() {
+            match redox_server::shared::share_id(&dir) {
+                Ok(_) => say!("Ortak depo: {id} → {}", dir.display()),
+                Err(e) => complain!("UYARI: {e}"),
+            }
+        }
+        for problem in state.shared_claim_existing() {
+            complain!("UYARI: {problem}");
+        }
+        let st = state.clone();
+        tokio::spawn(async move {
+            loop {
+                let worker = st.clone();
+                let _ = tokio::task::spawn_blocking(move || worker.shared_tick(redox_server::state::now())).await;
+                tokio::time::sleep(Duration::from_secs(redox_server::state::shared::TICK_SECS)).await;
             }
         });
     }
@@ -851,6 +881,10 @@ fn main() -> ExitCode {
         }),
         Some("user" | "token") => manage_users(&args),
         Some("tty") => redox_server::tty::run(&args[1..]),
+        Some("shared") if args.get(1).map(String::as_str) == Some("init") => match args.get(2) {
+            Some(dir) if args.len() == 3 => redox_server::shared::init(std::path::Path::new(dir)).map(|id| println!("ortak depo hazır: {id}")),
+            _ => Err("kullanım: redox shared init <dizin>".to_string()),
+        },
         Some("ldap") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
             ["ldap", "test", file, user] => ldap_test(file, user),
             _ => Err("kullanım: redox ldap test <ayar-dosyası> <kullanıcı>".to_string()),

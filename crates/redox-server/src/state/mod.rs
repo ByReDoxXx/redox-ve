@@ -29,6 +29,7 @@ mod snapshots;
 mod support;
 mod transfer;
 pub mod vswitch;
+pub mod shared;
 pub mod hostnet;
 mod health;
 pub use health::HealthFiles;
@@ -208,6 +209,7 @@ struct Inner {
     migrate: Mutex<MigrateSettings>,
     /// Dağıtık anahtarların ağ yardımcısı için yazıldığı dosya.
     vswitch_file: std::sync::OnceLock<PathBuf>,
+    shared: Mutex<shared::SharedWatch>,
     hostnet_file: std::sync::OnceLock<PathBuf>,
     health: Mutex<Option<health::HealthFiles>>,
     /// Disk yansıtma bekçisinin tur arası bilgisi.
@@ -254,6 +256,7 @@ impl AppState {
             move_precopy: std::sync::atomic::AtomicBool::new(false),
             migrate: Mutex::new(MigrateSettings::default()),
             vswitch_file: Default::default(),
+            shared: Default::default(),
             hostnet_file: Default::default(),
             health: Default::default(),
             mirrors: Default::default(),

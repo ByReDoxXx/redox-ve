@@ -33,6 +33,7 @@ pub mod peers;
 pub mod qemu;
 pub mod qga;
 pub mod report;
+pub mod shared;
 pub mod state;
 pub mod totp;
 pub mod tty;
@@ -138,6 +139,7 @@ pub fn app(state: AppState) -> Router {
         .route("/cluster/migrate", post(ui::peer_migrate))
         .route("/cluster/send", post(ui::peer_send))
         .route("/cluster/switch", post(ui_ops::switch_action))
+        .route("/cluster/shared", post(ui_ops::shared_action))
         .route("/host/update", post(ui_ops::host_update))
         .route("/host/networks", post(ui_ops::host_net_action))
         .route("/cluster/firewall", post(ui_ops::firewall_action))

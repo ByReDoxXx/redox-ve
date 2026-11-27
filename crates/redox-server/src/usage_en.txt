@@ -122,6 +122,8 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox hostnet list | remove <name>                                (server networks)
   redox hostnet bond <name> <active-backup|802.3ad|balance-xor> <a,b> | vlan <iface> <tag> | bridge <name> [ports=a,b] [vlan-aware=true]
   redox hostnet guest <name> <address/prefix> [dhcp=start-end] [nat=true]   (guest network with DHCP and DNS)
+  redox shared init <dir>                                           (prepares a directory as shared storage; on the server: serve --storage name=<dir> --shared-storage name)
+  redox shared list | take <peer> <id> | adopt <storage> <id>       (guests on shared storage; take over without copying disks)
   redox firewall set list | save <name> <address,address> | remove <name>     (address sets, used in rules as @name)
   redox firewall group list | save <name> in='<rules>' out='<rules>' | remove <name>      (security groups; on a guest: vm set <id> fw-groups=name)
   redox switch list | set <vds-name> <vni> <address,address> [--mtu <n>] | push <name> | remove <name> [--everywhere]   (distributed switch)

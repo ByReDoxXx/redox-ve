@@ -18,6 +18,7 @@ mod fwsets;
 mod guests;
 mod mirrors;
 mod perf;
+mod shared;
 mod switches;
 mod widgets;
 

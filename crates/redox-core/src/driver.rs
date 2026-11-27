@@ -269,6 +269,32 @@ pub trait Hypervisor: Send + Sync {
         Err("bu sürücü çalışan konuğa ağ kartı takamaz".to_string())
     }
 
+    /// Ortak depo olarak işaretli depolama alanları: `(ad, dizin)`.
+    fn shared_storages(&self) -> Vec<(String, std::path::PathBuf)> {
+        Vec::new()
+    }
+
+    /// Bu sunucunun ortak depodaki kalıcı kimliği; ortak depo yoksa boş.
+    fn server_id(&self) -> String {
+        String::new()
+    }
+
+    /// Hedef: diskleri ortak depoda olan konuk için QEMU'yu yalnızca bellek taşımasını bekler halde açar.
+    fn migrate_listen_shared(&self, _guest: &Guest, _layout: u8, _bind: &str, _ram_port: u16, _key: &str) -> Result<(), String> {
+        Err("bu sürücü ortak depoda canlı taşıyamaz".to_string())
+    }
+
+    /// Kaynak: yalnızca belleği taşır; bellek hedefe ulaşınca disk sahipliğini `(sunucu kimliği, ad)` hedefine
+    /// geçirir. Duraklama süresini (ms) döndürür.
+    fn migrate_send_shared(&self, _guest: &Guest, _host: &str, _ram_port: u16, _key: &str, _to: (&str, &str)) -> Result<u64, String> {
+        Err("bu sürücü ortak depoda canlı taşıyamaz".to_string())
+    }
+
+    /// Hedef: sahiplik buraya geçtiyse bekleyen konuğu sürdürür.
+    fn migrate_finish_shared(&self, _guest: &Guest) -> Result<(), String> {
+        Err("bu sürücü ortak depoda canlı taşıyamaz".to_string())
+    }
+
     /// Çalışan konuğun CD sürücüsündeki kalıbı değiştirir (`drive`: 1 ya da 2); `None` sürücüyü boşaltır.
     fn change_media(&self, _guest: &Guest, _drive: u8, _iso: Option<&str>) -> Result<(), String> {
         Err("bu sürücü çalışan konukta kalıp değiştiremez".to_string())

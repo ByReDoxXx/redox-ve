@@ -139,6 +139,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox hostnet list | remove <ad>                                  (sunucu ağları)
   redox hostnet bond <ad> <active-backup|802.3ad|balance-xor> <a,b> | vlan <arayüz> <etiket> | bridge <ad> [ports=a,b] [vlan-aware=true]
   redox hostnet guest <ad> <adres/ön> [dhcp=baş-son] [nat=true]     (DHCP/DNS'li konuk ağı)
+  redox shared init <dizin>                                         (bir dizini ortak depo olarak hazırlar; sunucuda: serve --storage ad=<dizin> --shared-storage ad)
+  redox shared list | take <eş> <kimlik> | adopt <depo> <kimlik>    (ortak depodaki konuklar; disk kopyalamadan alma ve devralma)
   redox firewall set list | save <ad> <adres,adres> | remove <ad>             (kurallarda @ad olarak kullanılan adres kümeleri)
   redox firewall group list | save <ad> in='<kurallar>' out='<kurallar>' | remove <ad>   (güvenlik grupları; konuğa: vm set <kimlik> fw-groups=ad)
   redox switch list | set <vds-ad> <vni> <adres,adres> [--mtu <n>] | push <ad> | remove <ad> [--everywhere]   (dağıtık anahtar)
@@ -540,6 +542,9 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["hostnet", "list"] => get("/host/networks", View::Json),
         ["hostnet", "remove", name] => req("DELETE", format!("/host/networks/{name}"), None, View::Done("sunucu ağı silindi")),
         ["hostnet", kind @ ("bridge" | "bond" | "vlan" | "guest"), rest @ ..] => req("POST", "/host/networks".to_string(), Some(hostnet_body(kind, rest)?), View::Done("sunucu ağı kaydedildi; ağı kök yardımcısı kurar")),
+        ["shared", "list"] => get("/shared", View::Json),
+        ["shared", "take", peer, id] => req("POST", format!("/shared/take/{peer}/{}", vmid(id)?), None, View::Done("konuk disk kopyalanmadan alındı")),
+        ["shared", "adopt", storage, id] => req("POST", format!("/shared/adopt/{storage}/{}", vmid(id)?), None, View::Done("konuk devralındı")),
         ["switch", "list"] => get("/vswitches", View::Switches),
         ["switch", "set", name, vni, members, rest @ ..] => req("POST", "/vswitches".to_string(), Some(switch_body(name, vni, members, rest)?), View::Done("anahtar kaydedildi; eşlere göndermek için: redox switch push <ad>")),
         ["switch", "push", name] => req("POST", format!("/vswitches/{name}/push"), None, View::SwitchPeers),
@@ -1160,6 +1165,8 @@ mod tests {
         assert_eq!(parse(&args("hostnet vlan bond0 20")).unwrap().body.unwrap()["name"], json!("bond0.20"));
         assert!(parse(&args("hostnet bond bond0 yuvarlak e1")).unwrap_err().contains("bond kipi"));
         assert!(parse(&args("hostnet guest vnet1 8.8.8.8/24")).unwrap_err().contains("özel bir IPv4"));
+        assert_eq!(parse(&args("shared take ankara 103")).unwrap().path, "/shared/take/ankara/103");
+        assert_eq!(parse(&args("shared adopt ortak 103")).unwrap().path, "/shared/adopt/ortak/103");
         let set = parse(&args("firewall set save ofis 10.0.0.0/24,192.168.1.5")).unwrap();
         assert_eq!((set.path.as_str(), set.body.unwrap()), ("/firewall/sets", json!({"name": "ofis", "entries": ["10.0.0.0/24", "192.168.1.5"]})));
         let group = parse(&["firewall", "group", "save", "web", "in=tcp/443", "out=udp/53 to @ofis"].map(String::from)).unwrap();
