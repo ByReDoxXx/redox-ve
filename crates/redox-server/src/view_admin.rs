@@ -82,6 +82,9 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
                                     button class="btn sm" type="submit" { (tx("2 Adımı Sıfırla")) }
                                 }
                             }
+                            form method="post" action={ "/users/" (u.name) "/sessions/close" } {
+                                button class="btn sm" type="submit" { (tx("Oturumları Kapat")) }
+                            }
                             @if u.name != p.user {
                                 form method="post" action={ "/users/" (u.name) "/delete" } {
                                     label class="check" { input type="checkbox" name="confirm" value="1" required; (tx("Eminim")) }
@@ -153,7 +156,7 @@ pub struct TotpSetup {
     pub qr_svg: String,
 }
 
-pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>, keys_ready: bool) -> String {
+pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>, keys_ready: bool, sessions: &[crate::auth::SessionInfo]) -> String {
     let body = html! {
         (page_head(html! { (tx("Hesabım")) }, html! { span class="pill idle" { (role_label(user.role)) } }, html! {}, "", &[]))
         div class="stack" {
@@ -198,6 +201,7 @@ pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>, keys_ready
                 }
             }
             (security_keys_card(user, keys_ready))
+            (crate::view::sessions_card(sessions))
             div class="card" {
                 header { h2 { (tx("API token'larım")) } (tip("Adınıza bağlanan komut satırı ve betikler için anahtarlar.")) }
                 div class="body" {

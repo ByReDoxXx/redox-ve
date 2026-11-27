@@ -119,6 +119,10 @@ impl Ctx {
     }
 }
 
+pub(crate) fn user_agent(headers: &HeaderMap) -> &str {
+    headers.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or_default()
+}
+
 pub(crate) fn theme_of(headers: &HeaderMap) -> &'static str {
     let cookies = headers.get(COOKIE).and_then(|v| v.to_str().ok()).unwrap_or("");
     if cookies.split(';').any(|c| c.trim() == "theme=light") {
@@ -600,6 +604,7 @@ pub async fn login(
     let attempt = tokio::task::spawn_blocking(move || worker.auth().login_with_code(&client, &user, &password, &code, now())).await.unwrap_or(Err(LoginError::Invalid));
     match attempt {
         Ok(token) => {
+            st.auth().describe_session(&token, &ip, user_agent(&headers));
             println!("giriş: {name} ({ip})");
             audit("giriş", true);
             (
@@ -668,6 +673,7 @@ pub async fn oidc_callback(State(st): State<AppState>, headers: HeaderMap, Exten
         st.auth().audit.record(now(), &subject, &ip, "giriş (tek oturum açma, eşleşen kullanıcı yok)", false);
         return login_error((tx("Bu kimlik hiçbir RedoX VE kullanıcısıyla eşleşmiyor. Yöneticiniz redox user sso ile eşlemelidir.")));
     };
+    st.auth().describe_session(&token, &ip, user_agent(&headers));
     println!("giriş (tek oturum açma): {name} ({ip})");
     st.auth().audit.record(now(), &name, &ip, "giriş (tek oturum açma)", true);
     // Yönlendirme yerine sayfa: dış siteden başlayan yönlendirme zincirinde tarayıcı Strict çerezi göndermez;

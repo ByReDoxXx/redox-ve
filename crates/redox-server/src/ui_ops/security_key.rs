@@ -33,6 +33,7 @@ pub async fn login_key(State(st): State<AppState>, headers: HeaderMap, Extension
     let next = crate::ui::safe_back(&form.next).to_string();
     match st.auth().finish_key_login(&ip, &form.response, now()) {
         Ok((token, name)) => {
+            st.auth().describe_session(&token, &ip, crate::ui::user_agent(&headers));
             println!("giriş (güvenlik anahtarı): {name} ({ip})");
             st.auth().audit.record(now(), &name, &ip, "giriş (güvenlik anahtarı)", true);
             (StatusCode::SEE_OTHER, [(SET_COOKIE, st.auth().session_cookie(&token)), (LOCATION, next)]).into_response()

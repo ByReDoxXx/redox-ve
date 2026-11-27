@@ -40,6 +40,7 @@ mod switches;
 mod oci;
 mod permissions;
 mod security_key;
+mod session_list;
 mod terminal;
 mod token_expiry;
 mod ui_v3;

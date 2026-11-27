@@ -14,6 +14,8 @@ use subtle::ConstantTimeEq;
 
 mod keys;
 mod password;
+mod sessions;
+pub use sessions::SessionInfo;
 mod users;
 
 pub use keys::*;
@@ -154,6 +156,11 @@ struct Session {
     password_hash: String,
     created: u64,
     last_seen: u64,
+    /// Oturumun açıldığı adres ve tarayıcı (bilgi amaçlı).
+    #[serde(default)]
+    ip: String,
+    #[serde(default)]
+    agent: String,
 }
 
 #[derive(Default)]
@@ -401,7 +408,7 @@ impl Auth {
         let mut sessions = lock(&self.sessions);
         // Süresi dolanlar her girişte atılır: dosya da kendiliğinden küçülür.
         sessions.retain(|_, s| !expired(s, now));
-        sessions.insert(sha256_hex(&token), Session { user: user.name, password_hash: user.password_hash, created: now, last_seen: now });
+        sessions.insert(sha256_hex(&token), Session { user: user.name, password_hash: user.password_hash, created: now, last_seen: now, ip: String::new(), agent: String::new() });
         self.save_sessions(&sessions, now);
         token
     }

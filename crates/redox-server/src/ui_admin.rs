@@ -149,7 +149,7 @@ pub async fn account(State(st): State<AppState>, Extension(me): Extension<Identi
         secret: secret.clone(),
         qr_svg: qr_svg(&crate::totp::otpauth_uri("RedoX VE", &user.name, secret)),
     });
-    Html(view_admin::account_page(&ctx.page(Current::Other, "/account"), &user, setup.as_ref(), st.auth().webauthn.is_some())).into_response()
+    Html(view_admin::account_page(&ctx.page(Current::Other, "/account"), &user, setup.as_ref(), st.auth().webauthn.is_some(), &st.auth().sessions_of(&me.user, crate::cookie(&headers, crate::auth::SESSION_COOKIE), now()))).into_response()
 }
 
 pub async fn account_password(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Response {

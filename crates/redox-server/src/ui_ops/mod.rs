@@ -22,6 +22,8 @@ mod admin;
 mod backups;
 mod screen;
 mod security_key;
+mod session_ops;
+pub use session_ops::*;
 pub use security_key::*;
 mod switches;
 mod edit;

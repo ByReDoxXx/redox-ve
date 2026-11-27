@@ -167,6 +167,7 @@ pub fn app(state: AppState) -> Router {
         .route("/users/{name}/password", post(ui_admin::user_password))
         .route("/users/{name}/delete", post(ui_admin::user_delete))
         .route("/users/{name}/totp-reset", post(ui_admin::user_totp_reset))
+        .route("/users/{name}/sessions/close", post(ui_ops::user_sessions_close))
         .route("/users/{name}/tokens", post(ui_admin::user_token_create))
         .route("/users/{name}/tokens/{label}/revoke", post(ui_admin::user_token_revoke))
         .route("/account", get(ui_admin::account))
@@ -177,6 +178,8 @@ pub fn app(state: AppState) -> Router {
         .route("/account/keys/start", post(ui_ops::key_add_start))
         .route("/account/keys/finish", post(ui_ops::key_add_finish))
         .route("/account/keys/remove", post(ui_ops::key_remove))
+        .route("/account/sessions/close-others", post(ui_ops::sessions_close_others))
+        .route("/account/sessions/{id}/close", post(ui_ops::session_close))
         .route("/account/tokens", post(ui_admin::account_token_create))
         .route("/account/tokens/{label}/revoke", post(ui_admin::account_token_revoke))
         .nest("/api/v1", api::routes())
@@ -336,6 +339,8 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
 /// Kilit kipinde de açık kalan, durum değiştiren yollar.
 pub fn lockdown_exempt(path: &str) -> bool {
     path == "/logout" || path == "/lockdown/off" || path == "/api/v1/lockdown" || path.starts_with("/account")
+        // Olay anında oturum kapatılabilmelidir.
+        || (path.starts_with("/users/") && path.ends_with("/sessions/close"))
         // Kaynağın yansıtma bildirimi yönetim değişikliği değildir; kilitliyken kesilirse hedef kopyayı sahipsiz sanır.
         || (path.starts_with("/api/v1/mirror-stores/") && path.ends_with("/report"))
         // Hata toleransının sunucular arası kararları kilit kipinde de işlemelidir.
