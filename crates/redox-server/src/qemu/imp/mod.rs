@@ -31,6 +31,9 @@ pub use power::*;
 pub use storage::*;
 
 const QMP_TIMEOUT: Duration = Duration::from_secs(3);
+/// Disk imajı açan komutlar için: QEMU, şifreli bir imajın anahtarını türetirken ya da yavaş bir depoyu açarken
+/// saniyelerce yanıt vermez. Yüklü sunucuda kısa süre, aslında başaracak bir işlemi başarısız gösterir.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL: Duration = Duration::from_millis(150);
 
 /// PID dosyasındaki süreç yaşıyor ve gerçekten bu konuğun QEMU'su mu?
@@ -135,8 +138,12 @@ fn cleanup(d: &QemuDriver, vmid: VmId) {
 
 /// İzleyici komutunun çıktısını döndürür.
 fn hmp_text(d: &QemuDriver, g: &Guest, line: &str) -> Result<String, String> {
+    hmp_text_within(d, g, line, QMP_TIMEOUT)
+}
+
+fn hmp_text_within(d: &QemuDriver, g: &Guest, line: &str, timeout: Duration) -> Result<String, String> {
     let command = serde_json::json!({ "execute": "human-monitor-command", "arguments": { "command-line": line } });
-    let out = qmp_values(&d.cfg.qmp_path(g.vmid), &[command])?;
+    let out = qmp_run(&d.cfg.qmp_path(g.vmid), &[command], timeout)?;
     Ok(out.first().and_then(Value::as_str).unwrap_or_default().trim().to_string())
 }
 

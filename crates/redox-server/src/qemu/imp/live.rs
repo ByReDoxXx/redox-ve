@@ -242,7 +242,7 @@ fn copy_disks(
             let add = serde_json::json!({ "execute": "blockdev-add", "arguments": {
                 "driver": "qcow2", "node-name": node, "encrypt": { "format": "luks", "key-secret": crate::qemu::SECRET_ID },
                 "file": { "driver": "file", "filename": target.display().to_string() } } });
-            qmp_values(&sock, &[add]).map_err(|e| format!("yedekleme başlatılamadı: {e}"))?;
+            qmp_run(&sock, &[add], OPEN_TIMEOUT).map_err(|e| format!("yedekleme başlatılamadı: {e}"))?;
             added.push(node.clone());
             Some(node)
         } else {
