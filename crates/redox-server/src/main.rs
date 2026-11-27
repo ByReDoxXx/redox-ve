@@ -33,6 +33,8 @@ struct ServeOptions {
     tls_cert: Option<PathBuf>,
     tls_key: Option<PathBuf>,
     webauthn_origin: Option<redox_server::webauthn::Relying>,
+    syslog: Option<String>,
+    syslog_ca: Option<PathBuf>,
     health_dir: Option<PathBuf>,
     ldap: Option<PathBuf>,
     shared_storages: Vec<String>,
@@ -88,6 +90,8 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         tls_cert: None,
         tls_key: None,
         webauthn_origin: None,
+        syslog: None,
+        syslog_ca: None,
         health_dir: None,
         ldap: None,
         shared_storages: Vec::new(),
@@ -140,6 +144,8 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--behind-tls-proxy" => opts.behind_tls_proxy = true,
             "--tls-cert" => opts.tls_cert = Some(PathBuf::from(value()?)),
             "--tls-key" => opts.tls_key = Some(PathBuf::from(value()?)),
+            "--syslog" => opts.syslog = Some(value()?.clone()),
+            "--syslog-ca" => opts.syslog_ca = Some(PathBuf::from(value()?)),
             "--webauthn-origin" => opts.webauthn_origin = Some(redox_server::webauthn::Relying::parse(value()?)?),
             "--health-dir" => opts.health_dir = Some(PathBuf::from(value()?)),
             "--allow-plain-http" => opts.allow_plain_http = true,
@@ -374,6 +380,18 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     let mut auth = Auth::new(users, Some(opts.users.clone()), opts.behind_tls_proxy, Cost::Production);
     auth.direct_tls = tls.is_some();
     auth.webauthn = opts.webauthn_origin.clone();
+    match &opts.syslog {
+        Some(target) => {
+            let target = redox_server::syslog::Target::parse(target, opts.syslog_ca.as_deref())?;
+            say!("denetim kayıtları syslog'a da gönderiliyor: {}", target.describe());
+            if target.is_plain_to_another_machine() {
+                complain!("uyarı: syslog kayıtları ağda şifresiz gidiyor; tls:// kullanın");
+            }
+            auth.audit.forward_to(redox_server::syslog::Forwarder::start(target, redox_server::host::hostname()));
+        }
+        None if opts.syslog_ca.is_some() => return Err("--syslog-ca, --syslog ile birlikte kullanılır".to_string()),
+        None => {}
+    }
     if let Some(rp) = &auth.webauthn {
         say!("güvenlik anahtarı girişi açık: {}", rp.origin);
     } else if auth.list().iter().any(|u| !u.keys.is_empty()) {

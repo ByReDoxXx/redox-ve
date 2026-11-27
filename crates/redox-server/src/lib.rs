@@ -36,6 +36,7 @@ pub mod qga;
 pub mod report;
 pub mod shared;
 pub mod state;
+pub mod syslog;
 pub mod totp;
 pub mod webauthn;
 pub mod tty;

@@ -124,6 +124,7 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox hostnet list | remove <name>                                (server networks)
   redox hostnet bond <name> <active-backup|802.3ad|balance-xor> <a,b> | vlan <iface> <tag> | bridge <name> [ports=a,b] [vlan-aware=true]
   redox hostnet guest <name> <address/prefix> [dhcp=start-end] [nat=true]   (guest network with DHCP and DNS)
+  serve --syslog <udp|tcp|tls://host:port> [--syslog-ca <pem>]   (a copy of the audit log to a remote server)
   serve --disk-key-file <file>    (guests with encrypted disks: "encrypted": true in the API or "Encrypt disks" in the panel)
   serve --webauthn-origin <url>   (security key second step: the panel's https:// address in the browser; not an IP address)
   redox shared init <dir>                                           (prepares a directory as shared storage; on the server: serve --storage name=<dir> --shared-storage name)

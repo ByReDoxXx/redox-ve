@@ -24,6 +24,8 @@ pub struct AuditEntry {
 pub struct Audit {
     path: Option<PathBuf>,
     entries: Mutex<VecDeque<AuditEntry>>,
+    /// Kayıtların kopyasını dışarı gönderen uç (`--syslog`).
+    forward: std::sync::OnceLock<crate::syslog::Forwarder>,
 }
 
 impl Audit {
@@ -38,7 +40,12 @@ impl Audit {
                 }
             }
         }
-        Audit { path, entries: Mutex::new(entries) }
+        Audit { path, entries: Mutex::new(entries), forward: std::sync::OnceLock::new() }
+    }
+
+    /// Bundan sonraki kayıtlar syslog sunucusuna da gönderilir.
+    pub fn forward_to(&self, forwarder: crate::syslog::Forwarder) {
+        let _ = self.forward.set(forwarder);
     }
 
     pub fn record(&self, ts: u64, user: &str, ip: &str, action: &str, ok: bool) {
@@ -47,6 +54,9 @@ impl Audit {
             if let Err(e) = append(path, &entry) {
                 eprintln!("uyarı: denetim kaydı {} dosyasına yazılamadı: {e}", path.display());
             }
+        }
+        if let Some(forwarder) = self.forward.get() {
+            forwarder.push(&entry);
         }
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.push_back(entry);
