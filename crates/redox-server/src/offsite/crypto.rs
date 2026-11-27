@@ -4,30 +4,44 @@ use super::*;
 
 /// Anahtar türetme (Argon2id) bilerek pahalıdır; artımlı yedekte binlerce küçük dosya gittiği için
 /// aynı parola ve tuzla türetilen anahtar bellekte tutulur.
-pub(super) fn derive_key(passphrase: &str, salt: &[u8]) -> Result<ChaCha20Poly1305, String> {
-    type Entry = ([u8; 32], Vec<u8>, ChaCha20Poly1305);
+pub(super) fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
+    type Entry = ([u8; 32], Vec<u8>, [u8; 32]);
     static CACHE: std::sync::Mutex<Vec<Entry>> = std::sync::Mutex::new(Vec::new());
     let owner: [u8; 32] = Sha256::digest(passphrase.as_bytes()).into();
-    let cached = |cache: &Vec<Entry>| cache.iter().find(|(who, s, _)| *who == owner && s.as_slice() == salt).map(|(_, _, cipher)| cipher.clone());
+    let cached = |cache: &Vec<Entry>| cache.iter().find(|(who, s, _)| *who == owner && s.as_slice() == salt).map(|(_, _, key)| *key);
     if let Some(cipher) = cached(&CACHE.lock().unwrap_or_else(|e| e.into_inner())) {
         return Ok(cipher);
     }
-    let cipher = derive_key_uncached(passphrase, salt)?;
+    let cipher = master_key(passphrase, salt)?;
     let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if cache.len() >= 16 {
         cache.remove(0);
     }
-    cache.push((owner, salt.to_vec(), cipher.clone()));
+    cache.push((owner, salt.to_vec(), cipher));
     Ok(cipher)
 }
 
 pub fn derive_key_uncached(passphrase: &str, salt: &[u8]) -> Result<ChaCha20Poly1305, String> {
+    Ok(ChaCha20Poly1305::new(Key::from_slice(&master_key(passphrase, salt)?)))
+}
+
+/// Dosyanın kendi anahtarı: ana anahtardan, dosyanın rastgele öneki ve adıyla türetilir. İki dosya aynı öneki
+/// alsa bile (adları farklı olduğu için) aynı anahtarı kullanmaz.
+pub(super) fn file_cipher(master: &[u8; 32], prefix: &[u8; 7], name: &[u8]) -> ChaCha20Poly1305 {
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(master).expect("HMAC her uzunlukta anahtar alır");
+    mac.update(b"redox-offsite-file-key\0");
+    mac.update(prefix);
+    mac.update(name);
+    ChaCha20Poly1305::new(Key::from_slice(&mac.finalize().into_bytes()))
+}
+
+fn master_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     let params = argon2::Params::new(19_456, 2, 1, Some(32)).map_err(|e| e.to_string())?;
     let mut key = [0u8; 32];
     argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
         .hash_password_into(passphrase.as_bytes(), salt, &mut key)
         .map_err(|e| format!("şifreleme anahtarı türetilemedi: {e}"))?;
-    Ok(ChaCha20Poly1305::new(Key::from_slice(&key)))
+    Ok(key)
 }
 
 /// Parça nonce'u: rastgele önek + parça sayacı + "son parça" baytı. Son parça işareti kesilmeyi,
@@ -61,8 +75,8 @@ pub struct EncryptReader<R: Read> {
 impl<R: Read> EncryptReader<R> {
     /// `name`: dosyanın hedefteki (şifreleme eki olmayan) adı.
     pub fn new(inner: R, passphrase: &str, name: &str) -> Result<Self, String> {
-        // Tuz sunucu her başladığında bir kez üretilir (anahtar bir kez türetilsin diye); dosyaları
-        // birbirinden ayıran, her dosya için yeniden üretilen 56 bitlik nonce önekidir.
+        // Tuz sunucu her başladığında bir kez üretilir (pahalı ana anahtar bir kez türetilsin diye). Her dosya,
+        // ana anahtardan kendi rastgele öneki ve adıyla türetilen ayrı bir anahtarla şifrelenir.
         static SALT: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
         let random = |buf: &mut [u8]| getrandom::getrandom(buf).map_err(|e| format!("rastgele sayı üretilemedi: {e}"));
         let salt = match SALT.get() {
@@ -75,10 +89,10 @@ impl<R: Read> EncryptReader<R> {
         };
         let mut prefix = [0u8; 7];
         random(&mut prefix)?;
-        let mut out = MAGIC_BOUND.to_vec();
+        let mut out = MAGIC_FILE_KEY.to_vec();
         out.extend_from_slice(&salt);
         out.extend_from_slice(&prefix);
-        Ok(EncryptReader { inner, cipher: derive_key(passphrase, &salt)?, prefix, name: name.as_bytes().to_vec(), counter: 0, out, pos: 0, done: false })
+        Ok(EncryptReader { inner, cipher: file_cipher(&derive_key(passphrase, &salt)?, &prefix, name.as_bytes()), prefix, name: name.as_bytes().to_vec(), counter: 0, out, pos: 0, done: false })
     }
 }
 
@@ -132,7 +146,8 @@ pub fn decrypt(source: &mut dyn Read, passphrase: &str, out: &mut dyn Write, nam
     const BAD: &str = "dış kopya çözülemedi: parola yanlış, dosya bozulmuş ya da başka bir yedeğe ait";
     let mut header = [0u8; HEADER];
     let read = read_full(source, &mut header)?;
-    let bound = read == HEADER && &header[..8] == MAGIC_BOUND;
+    let own_key = read == HEADER && &header[..8] == MAGIC_FILE_KEY;
+    let bound = own_key || (read == HEADER && &header[..8] == MAGIC_BOUND);
     if !bound && (read != HEADER || &header[..8] != MAGIC) {
         return Err("dış kopya şifreli RedoX yedeği değil".to_string());
     }
@@ -140,8 +155,10 @@ pub fn decrypt(source: &mut dyn Read, passphrase: &str, out: &mut dyn Write, nam
         return Err("dış kopya bu yedeğin adına bağlı değil (eski biçim): hedefteki dosya başka bir yedekle değiştirilmiş olabilir".to_string());
     }
     let aad: &[u8] = if bound { name.as_bytes() } else { &[] };
-    let cipher = derive_key(passphrase, &header[8..24])?;
+    let master = derive_key(passphrase, &header[8..24])?;
     let prefix: [u8; 7] = header[24..].try_into().expect("7 bayt");
+    // Önceki biçimlerde bütün dosyalar ana anahtarla şifrelidir; onlar da okunur.
+    let cipher = if own_key { file_cipher(&master, &prefix, name.as_bytes()) } else { ChaCha20Poly1305::new(Key::from_slice(&master)) };
     let mut buf = vec![0u8; CHUNK + TAG];
     for counter in 0u32.. {
         let n = read_full(source, &mut buf)?;

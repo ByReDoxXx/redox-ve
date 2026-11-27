@@ -19,7 +19,7 @@ pub use crypto::*;
 
 /// Dosya başı, parolayla şifrelenmiş bir RedoX dosyasına mı ait?
 pub fn is_encrypted(head: &[u8]) -> bool {
-    head.starts_with(MAGIC_BOUND) || head.starts_with(MAGIC)
+    head.starts_with(MAGIC_FILE_KEY) || head.starts_with(MAGIC_BOUND) || head.starts_with(MAGIC)
 }
 pub use sign::*;
 
@@ -28,6 +28,10 @@ const MAGIC: &[u8; 8] = b"RDXENC1\n";
 /// Şimdiki biçim: her parça, dosyanın hedefteki adıyla birlikte doğrulanır. Hedefe yazabilen biri iki yedeğin
 /// dosyalarını yer değiştirirse (ya da birini öbürünün adıyla kopyalarsa) çözme başarısız olur.
 const MAGIC_BOUND: &[u8; 8] = b"RDXENC2\n";
+/// Güncel biçim: ada bağlı ve her dosya kendi anahtarıyla şifreli. Önceki biçimde bütün dosyalar aynı anahtarı
+/// kullanır, dosyaları yalnızca 56 bitlik rastgele bir önek ayırırdı; çok sayıda parça dosyası gönderildiğinde iki
+/// dosyanın aynı öneki alma olasılığı (ve o iki dosyanın içeriğinin açığa çıkması) göz ardı edilemez olurdu.
+const MAGIC_FILE_KEY: &[u8; 8] = b"RDXENC3\n";
 const CHUNK: usize = 64 * 1024;
 const TAG: usize = 16;
 const HEADER: usize = 8 + 16 + 7;

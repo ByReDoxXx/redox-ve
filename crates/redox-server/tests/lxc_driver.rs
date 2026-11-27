@@ -736,7 +736,7 @@ fn container_backups_are_encrypted_on_disk_when_a_passphrase_is_set() {
     d.backup(&g, "ct-100-1").unwrap();
     let archive = cfg.backups_dir.join("ct-100-1.tar.gz");
     let sealed = std::fs::read(&archive).unwrap();
-    assert!(sealed.starts_with(b"RDXENC2\n"), "arşiv diske şifreli yazılır");
+    assert!(sealed.starts_with(b"RDXENC3\n"), "arşiv diske şifreli yazılır");
     assert!(d.verify_backup("ct-100-1", &[]).is_ok());
     std::fs::write(rootfs.join("etc/hostname"), "bozuk\n").unwrap();
     d.restore(&g, "ct-100-1", &[]).unwrap();

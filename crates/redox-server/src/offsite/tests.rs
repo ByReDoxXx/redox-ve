@@ -138,7 +138,7 @@ fn tampering_truncation_and_wrong_passphrase_are_rejected() {
     let as_other = decrypt(&mut sealed.as_slice(), PASS, &mut Vec::new(), "vm-104-9.qcow2", true).unwrap_err();
     assert!(as_other.contains("başka bir yedeğe ait"), "{as_other}");
     assert!(decrypt(&mut sealed.as_slice(), PASS, &mut Vec::new(), "vm-103-1.disk1.qcow2", false).is_err(), "aynı yedeğin başka diski de sayılmaz");
-    assert!(sealed.starts_with(MAGIC_BOUND));
+    assert!(sealed.starts_with(MAGIC_FILE_KEY));
 
     let mut flipped = sealed.clone();
     flipped[HEADER + 10] ^= 1;
@@ -314,7 +314,7 @@ fn s3_target_push_pull_delete_against_a_fake_server() {
 
     assert_eq!(cfg.push(&local).unwrap(), encrypted_len(3000));
     let stored = store.lock().unwrap().get("/yedekler/redox/ct-200-5.tar.gz.enc").cloned().expect("nesne önekli yolda durur");
-    assert!(stored.starts_with(MAGIC_BOUND) && !stored.windows(64).any(|w| w == &data[..64]));
+    assert!(stored.starts_with(MAGIC_FILE_KEY) && !stored.windows(64).any(|w| w == &data[..64]));
 
     std::fs::remove_file(&local).unwrap();
     cfg.pull(&local).unwrap();
@@ -430,6 +430,40 @@ fn key_is_derived_once_per_run_but_every_file_gets_its_own_nonce() {
     assert!(decrypt(&mut old.as_slice(), "yanlis-parola-123", &mut Vec::new(), NAME, false).is_err(), "önbellek parolayı karıştırmaz");
     // Adına bağlı gönderildiği bilinen bir yedeğin yerine konmuş eski biçimli dosya kabul edilmez.
     assert!(decrypt(&mut old.as_slice(), PASS, &mut Vec::new(), NAME, true).unwrap_err().contains("adına bağlı değil"));
+}
+
+/// Her dosya kendi anahtarıyla şifrelenir: iki dosya aynı rastgele öneki alsa bile aynı anahtar ve nonce ile
+/// şifrelenmiş olmaz. Önceki biçimde (ortak anahtar) gönderilmiş kopyalar okunmaya devam eder.
+#[test]
+fn every_file_has_its_own_key_and_older_copies_still_open() {
+    let master = derive_key(PASS, &[5u8; 16]).unwrap();
+    let prefix = [9u8; 7];
+    let seal = |name: &str| file_cipher(&master, &prefix, name.as_bytes()).encrypt(Nonce::from_slice(&nonce(&prefix, 0, true)), Payload { msg: b"ayni icerik", aad: name.as_bytes() }).unwrap();
+    assert_ne!(seal("vm-103-1.qcow2")[..11], seal("vm-104-1.qcow2")[..11], "aynı önek, başka ad: anahtar akışı ortak değil");
+    assert_eq!(seal("vm-103-1.qcow2"), seal("vm-103-1.qcow2"), "türetme belirlenimlidir (çözülebilsin diye)");
+    let other = [8u8; 7];
+    let moved = file_cipher(&master, &other, NAME.as_bytes()).encrypt(Nonce::from_slice(&nonce(&prefix, 0, true)), Payload { msg: b"ayni icerik", aad: NAME.as_bytes() }).unwrap();
+    assert_ne!(moved, seal(NAME), "önek de anahtara girer");
+
+    // Önceki biçim (RDXENC2): ada bağlı ama ortak anahtarla şifreli.
+    let mut older = MAGIC_BOUND.to_vec();
+    older.extend_from_slice(&[5u8; 16]);
+    older.extend_from_slice(&prefix);
+    let shared = derive_key_uncached(PASS, &[5u8; 16]).unwrap();
+    older.extend(shared.encrypt(Nonce::from_slice(&nonce(&prefix, 0, true)), Payload { msg: b"onceki kopya", aad: NAME.as_bytes() }).unwrap());
+    let mut plain = Vec::new();
+    decrypt(&mut older.as_slice(), PASS, &mut plain, NAME, true).unwrap();
+    assert_eq!(plain, b"onceki kopya");
+    // Başlığı yeni biçim gibi göstermek işe yaramaz: anahtar tutmaz.
+    let mut relabelled = older.clone();
+    relabelled[..8].copy_from_slice(MAGIC_FILE_KEY);
+    assert!(decrypt(&mut relabelled.as_slice(), PASS, &mut Vec::new(), NAME, true).is_err());
+    // Yeni dosyalar yeni biçimde yazılır ve çözülür.
+    let fresh = encrypt_all(b"yeni kopya");
+    assert!(fresh.starts_with(MAGIC_FILE_KEY));
+    let mut plain = Vec::new();
+    decrypt(&mut fresh.as_slice(), PASS, &mut plain, NAME, true).unwrap();
+    assert_eq!(plain, b"yeni kopya");
 }
 
 #[test]
