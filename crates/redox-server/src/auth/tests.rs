@@ -58,7 +58,7 @@ fn scope_and_sso_are_validated() {
     assert!(f.set_scope("yok", Vec::new()).is_err());
     assert_eq!("operator".parse::<Role>(), Ok(Role::Operator));
 
-    let op = Identity { user: "nobet".into(), role: Role::Operator, scope: vec!["web".into()] };
+    let op = Identity { user: "nobet".into(), role: Role::Operator, scope: vec!["web".into()], permits: None };
     assert!(op.can_operate(&["web".into(), "x".into()]) && !op.can_operate(&["db".into()]) && !op.can_operate(&[]) && !op.can_write());
     let all = Identity { scope: Vec::new(), ..op.clone() };
     assert!(all.can_operate(&[]), "boş kapsam bütün konuklar demektir");
@@ -123,7 +123,7 @@ fn login_and_session_lifecycle() {
     assert_eq!(a.login("ip", "yok", PW, 100), Err(LoginError::Invalid));
 
     let t = a.login("ip", "admin", PW, 100).unwrap();
-    assert_eq!(a.session(&t, 200), Some(Identity { user: "admin".into(), role: Role::Admin, scope: Vec::new() }));
+    assert_eq!(a.session(&t, 200), Some(Identity { user: "admin".into(), role: Role::Admin, scope: Vec::new(), permits: None }));
     assert_eq!(a.session("uydurma", 200), None);
 
     let t2 = a.login("ip", "admin", PW, 100).unwrap();
@@ -190,7 +190,7 @@ fn bearer_tokens_are_stored_hashed() {
     assert!(f.create_token("yok", "ci").is_err());
 
     let a = Auth::new(f.clone(), None, false, Cost::Test);
-    assert_eq!(a.bearer(&plain), Some(Identity { user: "izleyici".into(), role: Role::Viewer, scope: Vec::new() }));
+    assert_eq!(a.bearer(&plain), Some(Identity { user: "izleyici".into(), role: Role::Viewer, scope: Vec::new(), permits: None }));
     assert_eq!(a.bearer("redox_yanlis"), None);
     assert_eq!(a.bearer(""), None);
 

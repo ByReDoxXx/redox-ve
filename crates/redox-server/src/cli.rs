@@ -34,6 +34,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox user passwd <ad>
   redox user remove <ad>
   redox user totp-reset <ad>      (iki adımlı doğrulamayı kapatır)
+  redox user permits <ad> <power,console,snapshot,backup | all>   (operatörün yetki türleri)
   redox user keys-reset <ad>      (güvenlik anahtarlarını kaldırır)
   redox user list
   redox token create <kullanıcı> <etiket> [--read-only] [--days <gün>]   (süre verilmezse süresiz)

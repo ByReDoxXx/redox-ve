@@ -19,6 +19,7 @@ Users (edits the user file directly; --users FILE or REDOX_USERS):
   redox user passwd <name>
   redox user remove <name>
   redox user totp-reset <name>    (turns two-step verification off)
+  redox user permits <name> <power,console,snapshot,backup | all>   (what an operator may do)
   redox user keys-reset <name>    (removes the security keys)
   redox user list
   redox token create <user> <label> [--read-only] [--days <n>]

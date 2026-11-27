@@ -5,7 +5,7 @@ use super::*;
 /// Konsol: yöneticiler ve konuk kapsamındaki operatörler.
 pub(super) fn console_allowed(st: &AppState, me: &Identity, raw: &str) -> Result<(), Box<Response>> {
     let tags = raw.parse::<VmId>().ok().and_then(|vmid| st.guest_tags(vmid)).unwrap_or_default();
-    if me.can_operate(&tags) {
+    if me.allows(crate::auth::Permit::Console, &tags) {
         Ok(())
     } else {
         // Ekranda parola gibi gizli bilgiler görünebilir; salt okunur hesaplar konsolu göremez.

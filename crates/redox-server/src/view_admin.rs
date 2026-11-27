@@ -56,6 +56,7 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
                         td {
                             (role_label(u.role))
                             @if u.role == Role::Operator { " " span class="mono dim" { @if u.scope.is_empty() { (tx("(bütün konuklar)")) } @else { "(" (u.scope.join(", ")) ")" } } }
+                            @if let (Role::Operator, Some(permits)) = (u.role, &u.permits) { br; span class="dim" { (tx("Yalnızca: ")) (permits.iter().map(|p| tx(p.label())).collect::<Vec<_>>().join(", ")) } }
                             @if let Some(sso) = &u.sso { br; span class="mono dim" { "SSO: " (sso) } }
                             @if u.ldap { br; span class="tag" { "LDAP" } }
                         }
@@ -72,6 +73,12 @@ pub fn users_page(p: &Page, users: &[User]) -> String {
                                 }
                             }
                             @if u.role == Role::Operator {
+                                form method="post" action={ "/users/" (u.name) "/permits" } {
+                                    @for permit in crate::auth::Permit::ALL {
+                                        label class="check" { input type="checkbox" name=(permit.name()) value="1" checked[u.permits.as_ref().is_none_or(|p| p.contains(&permit))]; (tx(permit.label())) }
+                                    }
+                                    button class="btn sm" type="submit" { (tx("Yetkileri Kaydet")) }
+                                }
                                 form method="post" action={ "/users/" (u.name) "/scope" } {
                                     input name="scope" type="text" value=(u.scope.join(", ")) placeholder=(tx("etiketler: web, test")) aria-label={ (u.name) (tx(" için yetkili etiketler")) } autocomplete="off";
                                     button class="btn sm" type="submit" { (tx("Kapsamı Kaydet")) }

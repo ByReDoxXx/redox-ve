@@ -780,6 +780,8 @@ fn manage_users(args: &[String]) -> Result<(), String> {
         ["user", "add", name, "--role", role] => file.add_user(name, &read_new_password()?, role.parse()?, Cost::Production)?,
         ["user", "role", name, role] => file.set_role(name, role.parse()?)?,
         ["user", "scope", name] => file.set_scope(name, Vec::new())?,
+        ["user", "permits", name, "all"] => file.set_permits(name, redox_server::auth::Permit::ALL.to_vec())?,
+        ["user", "permits", name, list] => file.set_permits(name, list.split(',').map(|p| redox_server::auth::Permit::parse(p.trim())).collect::<Result<_, _>>()?)?,
         ["user", "scope", name, tags] => file.set_scope(name, redox_core::parse_tags(tags))?,
         ["user", "sso", name, subject] => file.set_sso(name, subject)?,
         ["user", "ldap", name, state @ ("on" | "off")] => file.set_ldap(name, *state == "on")?,

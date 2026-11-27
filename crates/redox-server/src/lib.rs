@@ -166,6 +166,7 @@ pub fn app(state: AppState) -> Router {
         .route("/users", get(ui_admin::users).post(ui_admin::user_add))
         .route("/users/{name}/role", post(ui_admin::user_role))
         .route("/users/{name}/scope", post(ui_admin::user_scope))
+        .route("/users/{name}/permits", post(ui_admin::user_permits))
         .route("/users/{name}/password", post(ui_admin::user_password))
         .route("/users/{name}/delete", post(ui_admin::user_delete))
         .route("/users/{name}/totp-reset", post(ui_admin::user_totp_reset))
@@ -312,7 +313,7 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
     }
     // Salt okunur hesap yalnızca çıkış yapabilir ve kendi hesabını yönetebilir.
     // Operatör yalnızca kapsamındaki konuklarda güç, konsol, anlık görüntü ve yedek işlemi yapabilir.
-    let operated = me.role == auth::Role::Operator && operator_target(&path).and_then(|vmid| st.guest_tags(vmid)).is_some_and(|tags| me.can_operate(&tags));
+    let operated = me.role == auth::Role::Operator && operator_target(&path).is_some_and(|(vmid, permit)| st.guest_tags(vmid).is_some_and(|tags| me.allows(permit, &tags)));
     if !safe && !me.can_write() && !operated && path != "/logout" && !path.starts_with("/account/") {
         let message = if me.role == auth::Role::Operator {
             "Bu işlem operatör yetkisini aşıyor ya da konuk yetki kapsamınızda değil."
@@ -350,21 +351,24 @@ pub fn lockdown_exempt(path: &str) -> bool {
         || path.starts_with("/api/v1/ft/standby/")
 }
 
-/// Operatöre açık işlemler: yolun hedeflediği konuğun kimliğini döndürür, değilse `None`.
+/// Operatöre açık işlemler: yolun hedeflediği konuk ve gereken yetki türü; kapalıysa `None`.
 /// Geri dönüş, silme, geri yükleme, ayar ve disk işlemleri bilerek dışarıda bırakılmıştır.
-pub fn operator_target(path: &str) -> Option<redox_core::VmId> {
+pub fn operator_target(path: &str) -> Option<(redox_core::VmId, auth::Permit)> {
+    use auth::Permit;
     let (api, rest) = match (path.strip_prefix("/api/v1/guests/"), path.strip_prefix("/guests/")) {
         (Some(rest), _) => (true, rest),
         (_, Some(rest)) => (false, rest),
         _ => return None,
     };
     let (id, op) = rest.split_once('/')?;
-    let allowed = if api {
-        matches!(op, "start" | "stop" | "reboot" | "pause" | "resume" | "suspend" | "snapshots" | "backups" | "exec")
-    } else {
-        matches!(op, "action" | "suspend" | "snapshots" | "backups" | "keys" | "exec")
+    let permit = match (api, op) {
+        (true, "start" | "stop" | "reboot" | "pause" | "resume" | "suspend") | (false, "action" | "suspend") => Permit::Power,
+        (_, "snapshots") => Permit::Snapshot,
+        (_, "backups") => Permit::Backup,
+        (_, "exec") | (false, "keys") => Permit::Console,
+        _ => return None,
     };
-    if allowed { id.parse().ok() } else { None }
+    id.parse().ok().map(|vmid| (vmid, permit))
 }
 
 /// `identify` gibi, ama oturumun hareketsizlik sayacını değiştirmez.

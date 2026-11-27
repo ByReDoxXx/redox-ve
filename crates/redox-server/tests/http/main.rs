@@ -39,6 +39,7 @@ mod shared;
 mod switches;
 mod oci;
 mod permissions;
+mod permits;
 mod security_key;
 mod session_list;
 mod terminal;

@@ -23,6 +23,11 @@ pub struct AdminForm {
     current: String,
     role: String,
     scope: String,
+    /// Operatör yetkileri: işaretli kutular.
+    power: Option<String>,
+    console: Option<String>,
+    snapshot: Option<String>,
+    backup: Option<String>,
     label: String,
     /// Token'ın gün olarak ömrü; boş ya da 0 süresiz.
     days: String,
@@ -99,6 +104,13 @@ pub async fn user_delete(State(st): State<AppState>, Extension(me): Extension<Id
 
 pub async fn user_totp_reset(State(st): State<AppState>, Path(name): Path<String>) -> Redirect {
     done("/users", st.auth().edit(|u| u.reset_second_step(&name)).map(|()| tfmt(format!("{name} için iki adımlı doğrulama kapatıldı."))))
+}
+
+pub async fn user_permits(State(st): State<AppState>, Path(name): Path<String>, Form(f): Form<AdminForm>) -> Redirect {
+    use crate::auth::Permit;
+    let chosen = [(&f.power, Permit::Power), (&f.console, Permit::Console), (&f.snapshot, Permit::Snapshot), (&f.backup, Permit::Backup)];
+    let permits: Vec<Permit> = chosen.into_iter().filter(|(ticked, _)| ticked.is_some()).map(|(_, p)| p).collect();
+    done("/users", st.auth().edit(|u| u.set_permits(&name, permits)).map(|()| tfmt(format!("{name} için operatör yetkileri kaydedildi."))))
 }
 
 fn create_token(st: &AppState, me: &Identity, headers: &HeaderMap, user: &str, f: &AdminForm, back: &str) -> Response {

@@ -14,6 +14,8 @@ use subtle::ConstantTimeEq;
 
 mod keys;
 mod password;
+mod permits;
+pub use permits::Permit;
 mod sessions;
 pub use sessions::SessionInfo;
 mod users;
@@ -104,6 +106,9 @@ pub struct User {
     /// Operatörün yetkili olduğu konuk etiketleri; boşsa bütün konuklar. Öteki rollerde kullanılmaz.
     #[serde(default)]
     pub scope: Vec<String>,
+    /// Operatörün yapabildikleri; `None` ise dördü de. Öteki rollerde kullanılmaz.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permits: Option<Vec<Permit>>,
     /// Tek oturum açmada bu kullanıcıyla eşleşen kimlik (ör. e-posta adresi).
     #[serde(default)]
     pub sso: Option<String>,
@@ -122,6 +127,8 @@ pub struct Identity {
     pub role: Role,
     /// Operatörün yetkili olduğu etiketler (boşsa hepsi).
     pub scope: Vec<String>,
+    /// Operatörün yetki türleri; `None` ise hepsi.
+    pub permits: Option<Vec<Permit>>,
 }
 
 impl Identity {
@@ -439,7 +446,7 @@ impl Auth {
         match user {
             Some(u) if !expired(s, now) => {
                 s.last_seen = now;
-                let identity = Identity { user: u.name.clone(), role: u.role, scope: u.scope.clone() };
+                let identity = Identity { user: u.name.clone(), role: u.role, scope: u.scope.clone(), permits: u.permits.clone() };
                 // Son görülme anı beş dakikada bir diske yazılır: her istekte yazmak gereksizdir.
                 if now >= *lock(&self.sessions_saved) + 300 {
                     self.save_sessions(&sessions, now);
@@ -461,7 +468,7 @@ impl Auth {
         let sessions = lock(&self.sessions);
         let s = sessions.get(&sha256_hex(token))?;
         let user = users.find(&s.user).filter(|u| u.password_hash == s.password_hash)?;
-        (!expired(s, now)).then(|| Identity { user: user.name.clone(), role: user.role, scope: user.scope.clone() })
+        (!expired(s, now)).then(|| Identity { user: user.name.clone(), role: user.role, scope: user.scope.clone(), permits: user.permits.clone() })
     }
 
     pub fn logout(&self, token: &str) {
@@ -485,7 +492,7 @@ impl Auth {
                 if bool::from(t.sha256.as_bytes().ct_eq(digest.as_bytes())) && !t.expired(now) {
                     // Salt okunur token, sahibinin rolünü izleyiciye indirir.
                     let role = if t.read_only { Role::Viewer } else { u.role };
-                    found = Some(Identity { user: u.name.clone(), role, scope: u.scope.clone() });
+                    found = Some(Identity { user: u.name.clone(), role, scope: u.scope.clone(), permits: u.permits.clone() });
                 }
             }
         }

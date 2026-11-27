@@ -562,7 +562,7 @@ pub(super) fn operator_paths_are_an_explicit_allow_list() {
         ("/users/x/role", None),
         ("/guests/103/action/../delete", None),
     ] {
-        assert_eq!(operator_target(path), expected, "{path}");
+        assert_eq!(operator_target(path).map(|(vmid, _)| vmid), expected, "{path}");
     }
 }
 

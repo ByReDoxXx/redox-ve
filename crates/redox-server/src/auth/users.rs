@@ -54,6 +54,7 @@ impl UserFile {
             totp_secret: None,
             totp_pending: None,
             scope: Vec::new(),
+            permits: None,
             sso: None,
             keys: Vec::new(),
         });
