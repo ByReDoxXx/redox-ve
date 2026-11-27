@@ -161,6 +161,8 @@ pub struct Auth {
     attempts: Mutex<HashMap<String, Attempts>>,
     /// TLS arkasında: çerezler `Secure` olur, HSTS gönderilir, X-Forwarded-For'a güvenilir.
     pub behind_tls_proxy: bool,
+    /// Sunucu TLS'i kendisi sonlandırıyor: çerezler `Secure` olur (X-Forwarded-For'a güvenilmez).
+    pub direct_tls: bool,
     /// Var olmayan kullanıcıda da aynı süreyi harcamak için.
     dummy_hash: String,
     cost: Cost,
@@ -179,6 +181,10 @@ fn mtime(path: &Path) -> Option<SystemTime> {
 
 impl Auth {
     /// `path` verilirse dosya değiştikçe (ör. `redox user passwd`) yeniden okunur.
+    pub fn secure_cookies(&self) -> bool {
+        self.behind_tls_proxy || self.direct_tls
+    }
+
     pub fn new(file: UserFile, path: Option<PathBuf>, behind_tls_proxy: bool, cost: Cost) -> Self {
         let mtime = path.as_deref().and_then(mtime);
         // Denetim günlüğü kullanıcı dosyasının yanında durur.
@@ -197,6 +203,7 @@ impl Auth {
             sessions: Mutex::new(stored),
             attempts: Mutex::new(HashMap::new()),
             behind_tls_proxy,
+            direct_tls: false,
             dummy_hash: hash_password("var-olmayan-kullanici-icin", cost),
         }
     }
@@ -388,14 +395,14 @@ impl Auth {
     pub fn session_cookie(&self, token: &str) -> String {
         format!(
             "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ABSOLUTE_SECS}{}",
-            if self.behind_tls_proxy { "; Secure" } else { "" }
+            if self.secure_cookies() { "; Secure" } else { "" }
         )
     }
 
     pub fn clear_cookie(&self) -> String {
         format!(
             "{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0{}",
-            if self.behind_tls_proxy { "; Secure" } else { "" }
+            if self.secure_cookies() { "; Secure" } else { "" }
         )
     }
 }

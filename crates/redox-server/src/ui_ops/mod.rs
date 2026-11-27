@@ -24,6 +24,8 @@ mod screen;
 mod switches;
 mod edit;
 mod files;
+mod health;
+pub use health::*;
 mod firewall;
 pub use firewall::*;
 mod ft;

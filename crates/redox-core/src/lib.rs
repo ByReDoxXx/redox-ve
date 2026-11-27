@@ -11,6 +11,7 @@ pub mod error;
 pub mod fmt;
 pub mod ft;
 pub mod fwsets;
+pub mod health;
 pub mod hw;
 pub mod jobs;
 pub mod metrics;

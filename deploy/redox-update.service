@@ -1,0 +1,14 @@
+[Unit]
+Description=RedoX VE: panelden istenen paket güncellemesi
+After=network-online.target
+Wants=network-online.target
+
+# İstek dosyasının içeriği okunmaz: yalnızca sunucuda tanımlı depolardan "apt-get upgrade" çalışır (paket
+# kaldırılmaz, yapılandırma dosyaları korunur).
+[Service]
+Type=oneshot
+StateDirectory=redox-health
+StateDirectoryMode=0755
+UMask=0022
+ExecStart=/usr/local/bin/redox host update-apply /var/lib/redox/update.request
+TimeoutStartSec=1h

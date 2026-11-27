@@ -99,7 +99,7 @@ pub fn datacenter(p: &Page) -> String {
     layout(p, (tx("Genel Bakış")), &[((tx("Genel Bakış")), "/")], false, body)
 }
 
-pub fn node(p: &Page, n: &Node) -> String {
+pub fn node(p: &Page, n: &Node, updates: &(bool, Option<redox_core::health::UpdateRun>)) -> String {
     let c = p.cluster;
     let q = p.q.to_lowercase();
     let all: Vec<&Guest> = c.guests_on(&n.id).collect();
@@ -125,6 +125,7 @@ pub fn node(p: &Page, n: &Node) -> String {
             }
             (usage_card(p, "node", n.cores as u64, n.cpu_pct, mp))
             @if p.real { (super::perf::perf_card(&crate::host::performance())) }
+            @if let Some(health) = &c.host_health { (super::health::health_card(p, health, updates.0, updates.1.as_ref())) }
             @if p.admin && !p.cluster.maintenance {
                 div class="card" {
                     header { h2 { (tx("Bakım")) } (tip("Sunucuyu güncellemeden önce konukları düzenli kapatır; bakım bitince yeniden başlatır.")) span class="note" { (tx("sunucuyu güncellemeden ya da yeniden başlatmadan önce")) } }

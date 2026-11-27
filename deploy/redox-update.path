@@ -1,0 +1,9 @@
+[Unit]
+Description=RedoX VE güncelleme isteğini izler (isteğe bağlı: panelden güncelleme)
+
+[Path]
+PathExists=/var/lib/redox/update.request
+Unit=redox-update.service
+
+[Install]
+WantedBy=multi-user.target

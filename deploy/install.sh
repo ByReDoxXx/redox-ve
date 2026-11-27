@@ -102,6 +102,7 @@ else
     cp "$HERE/redox-net.service" "$HERE/redox-net.path" "$ROOT/etc/systemd/system/"
     # KSM birimi yalnızca kopyalanır: açmak yöneticinin kararıdır.
     cp "$HERE/redox-ksm.service" "$ROOT/etc/systemd/system/"
+    cp "$HERE/redox-health.service" "$HERE/redox-health.timer" "$HERE/redox-update.service" "$HERE/redox-update.path" "$ROOT/etc/systemd/system/"
     mkdir -p "$ROOT/etc/qemu"
     [ -f "$VDS_CONF" ] || : > "$VDS_CONF"
     chmod 0644 "$VDS_CONF"
@@ -294,7 +295,7 @@ if [ -n "$ROOT" ]; then
     say "Sınama kipi: dosyalar $ROOT altına yazıldı" "Test mode: files were written under $ROOT"
     exit 0
 fi
-run systemctl enable redox.service redox-firstboot.service redox-banner.service redox-console.service redox-net.service redox-net.path
+run systemctl enable redox.service redox-firstboot.service redox-banner.service redox-console.service redox-net.service redox-net.path redox-health.timer
 # tty1'i durum ekranı kullanır; öbür sanal konsollarda (Alt+F2) olağan oturum açma durur.
 run systemctl disable getty@tty1.service
 [ "$TLS" = 0 ] || run systemctl enable caddy.service

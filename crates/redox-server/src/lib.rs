@@ -11,6 +11,8 @@ pub mod console;
 pub mod firewall;
 pub mod fonts;
 pub mod guestfs;
+pub mod health;
+pub mod tls;
 pub mod ha;
 pub mod history;
 pub mod host;
@@ -134,6 +136,7 @@ pub fn app(state: AppState) -> Router {
         .route("/cluster/migrate", post(ui::peer_migrate))
         .route("/cluster/send", post(ui::peer_send))
         .route("/cluster/switch", post(ui_ops::switch_action))
+        .route("/host/update", post(ui_ops::host_update))
         .route("/cluster/firewall", post(ui_ops::firewall_action))
         .route("/cluster/mirror", post(ui_ops::mirror_action))
         .route("/cluster/ft", post(ui_ops::ft_action))

@@ -106,6 +106,8 @@ pub fn routes() -> Router<AppState> {
         .route("/mirror-stores/{origin}/{vmid}/promote", post(mirror_promote))
         .route("/vswitches", get(vswitches).post(vswitch_put))
         .route("/host/performance", get(host_performance))
+        .route("/host/health", get(host_health))
+        .route("/host/update", post(host_update))
         .route("/firewall/sets", get(ip_sets).post(ip_set_put))
         .route("/firewall/sets/{name}", delete_route(ip_set_delete))
         .route("/firewall/groups", get(fw_groups).post(fw_group_put))
@@ -212,6 +214,16 @@ async fn balance(State(st): State<AppState>) -> Json<crate::state::balance::Bala
 /// Sunucunun NUMA, büyük sayfa ve KSM bilgisi (benzetim sürücüsünde boş).
 async fn host_performance(State(st): State<AppState>) -> Json<crate::qemu::perf::HostPerformance> {
     Json(if st.driver().is_real() { crate::host::performance() } else { Default::default() })
+}
+
+async fn host_health(State(st): State<AppState>) -> Json<serde_json::Value> {
+    let (pending, last) = st.update_status();
+    Json(json!({ "health": st.snapshot().host_health, "update_requested": pending, "last_update": last }))
+}
+
+async fn host_update(State(st): State<AppState>, Extension(me): Extension<Identity>) -> Result<StatusCode, ApiError> {
+    st.request_update(&me.user)?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn ip_sets(State(st): State<AppState>) -> Json<Vec<redox_core::fwsets::IpSet>> {

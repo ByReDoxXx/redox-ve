@@ -60,6 +60,9 @@ pub struct Cluster {
     /// Güvenlik duvarının yeniden kullanılan tanımları (ada göre sıralı).
     #[serde(default)]
     pub ip_sets: Vec<crate::fwsets::IpSet>,
+    /// Kök yardımcısının topladığı son donanım ve güncelleme durumu.
+    #[serde(default)]
+    pub host_health: Option<crate::health::HostHealth>,
     #[serde(default)]
     pub fw_groups: Vec<crate::fwsets::FwGroup>,
     #[serde(default)]
@@ -117,6 +120,7 @@ impl Cluster {
             vswitches: Vec::new(),
             mirrors: Vec::new(),
             ip_sets: Vec::new(),
+            host_health: None,
             fw_groups: Vec::new(),
             mirror_stores: Vec::new(),
             protections: Vec::new(),

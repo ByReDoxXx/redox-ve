@@ -1,0 +1,15 @@
+[Unit]
+Description=RedoX VE: disk sağlığı, donanım algılayıcıları ve bekleyen güncellemeler
+After=network-online.target
+Wants=network-online.target
+
+# Yönetim sunucusu yetkisizdir; donanımı yalnızca bu kısa ömürlü birim kök olarak okur ve sonucu köke ait
+# /var/lib/redox-health dizinine yazar. smartmontools ve ipmitool kurulu değilse o bölümler boş kalır.
+[Service]
+Type=oneshot
+StateDirectory=redox-health
+StateDirectoryMode=0755
+UMask=0022
+ExecStart=/usr/local/bin/redox host health --refresh --out /var/lib/redox-health/health.json
+ProtectHome=true
+PrivateTmp=true

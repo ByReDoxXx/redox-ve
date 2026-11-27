@@ -29,6 +29,8 @@ mod snapshots;
 mod support;
 mod transfer;
 pub mod vswitch;
+mod health;
+pub use health::HealthFiles;
 
 /// Grafiklerde tutulan örnek sayısı (5 sn aralıkla 10 dakika).
 pub const HISTORY_LEN: usize = 120;
@@ -205,6 +207,7 @@ struct Inner {
     migrate: Mutex<MigrateSettings>,
     /// Dağıtık anahtarların ağ yardımcısı için yazıldığı dosya.
     vswitch_file: std::sync::OnceLock<PathBuf>,
+    health: Mutex<Option<health::HealthFiles>>,
     /// Disk yansıtma bekçisinin tur arası bilgisi.
     mirrors: mirrors::MirrorWatch,
     /// Hata toleransının tur arası bilgisi.
@@ -249,6 +252,7 @@ impl AppState {
             move_precopy: std::sync::atomic::AtomicBool::new(false),
             migrate: Mutex::new(MigrateSettings::default()),
             vswitch_file: Default::default(),
+            health: Default::default(),
             mirrors: Default::default(),
             ft: Default::default(),
             english: std::sync::atomic::AtomicBool::new(false),

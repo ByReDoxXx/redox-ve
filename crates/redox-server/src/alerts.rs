@@ -77,6 +77,11 @@ pub fn evaluate(c: &Cluster) -> Vec<Alert> {
         }
     }
     // Kaynak kullanımı: sayfada hemen görünür; bildirim için koşulun sürmesi beklenir.
+    if let Some(health) = &c.host_health {
+        for (key, critical, message) in redox_core::health::problems(health) {
+            alerts.push(Alert { key, severity: if critical { Severity::Critical } else { Severity::Warning }, message, hold_secs: 0 });
+        }
+    }
     let mut load = |key: String, severity, message: String| alerts.push(Alert { key, severity, message, hold_secs: LOAD_HOLD_SECS });
     for n in c.nodes.iter().filter(|n| n.status == NodeStatus::Online) {
         let mem = redox_core::fmt::pct(n.mem_used_mb, n.mem_total_mb);

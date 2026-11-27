@@ -189,7 +189,7 @@ pub async fn node(
         return ctx.not_found(&tfmt(format!("“{id}” adında bir düğüm yok.")));
     };
     let back = with_q(&format!("/nodes/{id}"), &ctx.query.q);
-    Html(view::node(&ctx.page(Current::Node(id.clone()), back), node)).into_response()
+    Html(view::node(&ctx.page(Current::Node(id.clone()), back), node, &st.update_status())).into_response()
 }
 
 fn parse_vmid(raw: &str) -> Option<VmId> {
@@ -613,7 +613,7 @@ pub async fn login(
 
 fn oidc_cookie(st: &AppState, value: &str, max_age: u64) -> String {
     // Lax: kimlik sağlayıcıdan dönen üst düzey gezinmede gönderilir (Strict gönderilmezdi).
-    format!("{}={value}; Path=/login/oidc; HttpOnly; SameSite=Lax; Max-Age={max_age}{}", crate::oidc::STATE_COOKIE, if st.auth().behind_tls_proxy { "; Secure" } else { "" })
+    format!("{}={value}; Path=/login/oidc; HttpOnly; SameSite=Lax; Max-Age={max_age}{}", crate::oidc::STATE_COOKIE, if st.auth().secure_cookies() { "; Secure" } else { "" })
 }
 
 fn login_error(message: &str) -> Response {

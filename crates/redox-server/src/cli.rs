@@ -132,6 +132,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox ft list | on <kimlik> <ikiz-eş> <hakem-eş> | off <kimlik> | twins   (hata toleransı)
   redox mirror list | add <kimlik> <eş> | off <kimlik> [--delete-copy]   (eşzamanlı disk yansıtma)
   redox mirror copies | promote <kaynak> <kimlik> | delete-copy <kaynak> <kimlik>   (burada tutulan kopyalar)
+  redox node perf | health | update      (performans donanımı; disk sağlığı ve bekleyen güncellemeler; güncellemeleri kurma isteği)
+  redox tls self-signed <ad> --dir <dizin>   (kendinden imzalı sertifika; sunucuya: serve --tls-cert … --tls-key …)
   redox firewall set list | save <ad> <adres,adres> | remove <ad>             (kurallarda @ad olarak kullanılan adres kümeleri)
   redox firewall group list | save <ad> in='<kurallar>' out='<kurallar>' | remove <ad>   (güvenlik grupları; konuğa: vm set <kimlik> fw-groups=ad)
   redox switch list | set <vds-ad> <vni> <adres,adres> [--mtu <n>] | push <ad> | remove <ad> [--everywhere]   (dağıtık anahtar)
@@ -358,6 +360,8 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["cluster", "status"] => get("/cluster", View::Cluster),
         ["node", "list"] => get("/nodes", View::Nodes),
         ["node", "perf"] => get("/host/performance", View::Json),
+        ["node", "health"] => get("/host/health", View::Json),
+        ["node", "update"] => req("POST", "/host/update".to_string(), None, View::Done("güncelleme istendi; sonuç: redox node health")),
         ["node", "status", id] => get(&format!("/nodes/{id}"), View::Node),
         ["vm", "list"] => get("/guests", View::Guests("vm")),
         ["ct", "list"] => get("/guests", View::Guests("ct")),

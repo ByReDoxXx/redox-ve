@@ -24,6 +24,7 @@ mod ft;
 mod guest_ops;
 mod ha_shares;
 mod hardware;
+mod health;
 mod jobs;
 mod mirrors;
 mod network;

@@ -30,6 +30,9 @@ struct ServeOptions {
     state_file: Option<PathBuf>,
     task_delay: Duration,
     behind_tls_proxy: bool,
+    tls_cert: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
+    health_dir: Option<PathBuf>,
     allow_plain_http: bool,
     driver: String,
     data_dir: PathBuf,
@@ -76,6 +79,9 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         state_file: None,
         task_delay: Duration::from_millis(1500),
         behind_tls_proxy: false,
+        tls_cert: None,
+        tls_key: None,
+        health_dir: None,
         allow_plain_http: false,
         driver: "sim".to_string(),
         data_dir: PathBuf::from("redox-data"),
@@ -120,6 +126,9 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--users" => opts.users = PathBuf::from(value()?),
             "--state" => opts.state_file = Some(PathBuf::from(value()?)),
             "--behind-tls-proxy" => opts.behind_tls_proxy = true,
+            "--tls-cert" => opts.tls_cert = Some(PathBuf::from(value()?)),
+            "--tls-key" => opts.tls_key = Some(PathBuf::from(value()?)),
+            "--health-dir" => opts.health_dir = Some(PathBuf::from(value()?)),
             "--allow-plain-http" => opts.allow_plain_http = true,
             "--no-lxc" => opts.no_lxc = true,
             "--no-autostart" => opts.no_autostart = true,
@@ -325,7 +334,14 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
             opts.users.display()
         ));
     }
-    let auth = Auth::new(users, Some(opts.users.clone()), opts.behind_tls_proxy, Cost::Production);
+    let tls = match (&opts.tls_cert, &opts.tls_key) {
+        (None, None) => None,
+        (Some(_), Some(_)) if opts.behind_tls_proxy => return Err("--tls-cert ile --behind-tls-proxy birlikte kullanılmaz: TLS'i ya sunucu ya da vekil sonlandırır".to_string()),
+        (Some(cert), Some(key)) => Some(redox_server::tls::config(cert, key)?),
+        _ => return Err("--tls-cert ve --tls-key birlikte verilmelidir".to_string()),
+    };
+    let mut auth = Auth::new(users, Some(opts.users.clone()), opts.behind_tls_proxy, Cost::Production);
+    auth.direct_tls = tls.is_some();
 
     let (driver, mut cluster, state_file, images) = prepare(&opts)?;
     let recovered = recover(&mut cluster, now());
@@ -373,6 +389,19 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         if let Err(e) = state.set_vswitch_file(opts.data_dir.join("vswitch.json")) {
             complain!("UYARI: dağıtık anahtar dosyası yazılamadı: {e}");
         }
+    }
+    // Disk sağlığı ve güncelleme durumu: kök yardımcısı yazar, sunucu okur.
+    if state.driver().is_real() || opts.health_dir.is_some() {
+        let results = opts.health_dir.clone().unwrap_or_else(|| PathBuf::from(redox_server::health::HEALTH_DIR));
+        state.set_health_files(redox_server::state::HealthFiles { results, request: opts.data_dir.join("update.request") });
+        let st = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let worker = st.clone();
+                let _ = tokio::task::spawn_blocking(move || worker.health_tick()).await;
+            }
+        });
     }
     if state.driver().firewall() {
         match state.sync_firewall() {
@@ -563,17 +592,24 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     }
     if opts.behind_tls_proxy {
         say!("TLS vekili arkasında: çerezler Secure, HSTS açık, X-Forwarded-For'a güveniliyor.");
+    } else if tls.is_some() {
+        say!("TLS açık: panel https ile sunuluyor.");
     } else if !addr.ip().is_loopback() {
         complain!("UYARI: şifresiz HTTP ağa açık; parolalar ve oturumlar dinlenebilir.");
     }
 
     let closing = state.clone();
-    axum::serve(listener, app(state).into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await
-        .map_err(|e| format!("sunucu hatası: {e}"))?;
+    let stop = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    let served = match tls {
+        Some(config) => {
+            let secure = redox_server::tls::TlsListener::new(listener, config).map_err(|e| format!("TLS dinleyicisi kurulamadı: {e}"))?;
+            redox_server::tls::serve(secure, app(state), stop).await
+        }
+        None => axum::serve(listener, app(state).into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(stop).await,
+    };
+    served.map_err(|e| format!("sunucu hatası: {e}"))?;
     // Düzgün kapanışta son ölçümler diske yazılır.
     closing.save_metrics();
     Ok(())
@@ -677,6 +713,45 @@ fn net_sync(file: &str, rest: &[&str]) -> Result<(), String> {
     if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 
+/// Kök olarak çalışan kısa ömürlü yardımcılar (redox-health.service, redox-update.service).
+fn host_helper(args: &[&str]) -> Result<(), String> {
+    use redox_server::health::{apply_updates, collect, write_json, Tools, HEALTH_DIR};
+    let usage = || "kullanım: redox host health [--refresh] [--out <dosya>]\n          redox host update-apply <istek-dosyası> [--out-dir <dizin>]".to_string();
+    let now = redox_server::state::now();
+    match args {
+        ["host", "health", rest @ ..] => {
+            let (mut refresh, mut out) = (false, None);
+            let mut rest = rest.iter();
+            while let Some(arg) = rest.next() {
+                match *arg {
+                    "--refresh" => refresh = true,
+                    "--out" => out = Some(PathBuf::from(rest.next().ok_or_else(usage)?)),
+                    _ => return Err(usage()),
+                }
+            }
+            let health = collect(&Tools::default(), refresh, now);
+            match out {
+                Some(path) => write_json(&path, &health),
+                None => serde_json::to_string_pretty(&health).map(|text| println!("{text}")).map_err(|e| e.to_string()),
+            }
+        }
+        ["host", "update-apply", request, rest @ ..] => {
+            let dir = match rest {
+                [] => PathBuf::from(HEALTH_DIR),
+                ["--out-dir", dir] => PathBuf::from(dir),
+                _ => return Err(usage()),
+            };
+            // İstek dosyasının yalnızca varlığına bakılır ve hemen silinir (bağlantıysa yalnızca bağlantı silinir).
+            std::fs::remove_file(request).map_err(|e| format!("güncelleme isteği yok: {e}"))?;
+            let run = apply_updates(&Tools::default(), redox_server::state::now());
+            write_json(&dir.join("update.json"), &run)?;
+            write_json(&dir.join("health.json"), &collect(&Tools::default(), false, now))?;
+            if run.ok { Ok(()) } else { Err(format!("güncelleme başarısız:\n{}", run.output)) }
+        }
+        _ => Err(usage()),
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Komut satırının dili: REDOX_LANG ortam değişkeni; `serve --lang en` sunucu çıktılarını da İngilizce yapar.
@@ -698,6 +773,11 @@ fn main() -> ExitCode {
         }),
         Some("user" | "token") => manage_users(&args),
         Some("tty") => redox_server::tty::run(&args[1..]),
+        Some("host") => host_helper(&args.iter().map(String::as_str).collect::<Vec<_>>()),
+        Some("tls") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+            ["tls", "self-signed", name, "--dir", dir] => redox_server::tls::self_signed("openssl", name, std::path::Path::new(dir)).map(|(cert, key)| println!("{}\n{}", cert.display(), key.display())),
+            _ => Err("kullanım: redox tls self-signed <sunucu-adı-ya-da-adresi> --dir <dizin>".to_string()),
+        },
         Some("net") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
             ["net", "vxlan", bridge, vni, local, peers] => redox_server::vxlan::plan(bridge, vni, local, peers).map(|script| print!("{}", redox_server::i18n::cli_text(&script))),
             ["net", "vxlan", bridge, vni, local, peers, "--unit"] => redox_server::vxlan::unit(bridge, vni, local, peers).map(|unit| print!("{}", redox_server::i18n::cli_text(&unit))),
