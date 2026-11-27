@@ -69,7 +69,9 @@ administrator resets the second step on the *Users* page or runs `redox user key
 ## The account page and tokens
 
 The account page (password, second step, creating tokens) works only with a browser sign-in; requests made with an
-API token are refused.
+API token are refused. Creating a token, setting up or turning off the second step and adding a security key ask for
+your password again, so a session left open cannot do them. Five wrong passwords in a row on these forms lock those
+actions for the account for 15 minutes.
 
 ## Token lifetime, sessions and operator permissions
 

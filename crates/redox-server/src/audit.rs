@@ -49,7 +49,9 @@ impl Audit {
     }
 
     pub fn record(&self, ts: u64, user: &str, ip: &str, action: &str, ok: bool) {
-        let entry = AuditEntry { ts, user: user.to_string(), ip: ip.to_string(), action: action.to_string(), ok };
+        // Alanlar dışarıdan gelebilir (ör. girişte yazılan ad): günlük ve bellek sınırsız büyümesin.
+        let cut = |text: &str, max: usize| text.chars().take(max).collect::<String>();
+        let entry = AuditEntry { ts, user: cut(user, 128), ip: cut(ip, 64), action: cut(action, 512), ok };
         if let Some(path) = &self.path {
             if let Err(e) = append(path, &entry) {
                 eprintln!("uyarı: denetim kaydı {} dosyasına yazılamadı: {e}", path.display());

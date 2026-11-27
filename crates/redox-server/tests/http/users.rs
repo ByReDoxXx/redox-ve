@@ -102,7 +102,7 @@ pub(super) async fn viewer_manages_only_their_own_account() {
     let cookie = login_cookie(&app, "izleyici", VIEWER_PW).await;
     let post = |uri: &str, body: &str| form_body(anon(Method::POST, uri).header(COOKIE, &cookie), body);
 
-    let (status, _, body) = send(&app, post("/account/tokens", "label=dizustu")).await;
+    let (status, _, body) = send(&app, post("/account/tokens", &format!("label=dizustu&current={VIEWER_PW}"))).await;
     assert_eq!(status, StatusCode::OK, "salt okunur hesap kendi token'ını üretebilir");
     assert!(body.contains("redox_"));
     assert_eq!(state.auth().list().iter().find(|u| u.name == "izleyici").unwrap().tokens.len(), 2);
@@ -142,7 +142,7 @@ async fn api_tokens_cannot_manage_the_account() {
     assert_eq!(state.auth().list(), before, "hiçbir şey değişmedi");
     // Tarayıcı oturumu hesabını yönetmeye devam eder.
     let cookie = login_cookie(&app, "admin", ADMIN_PW).await;
-    assert_eq!(send(&app, form_body(anon(Method::POST, "/account/tokens").header(COOKIE, &cookie), "label=dizustu")).await.0, StatusCode::OK);
+    assert_eq!(send(&app, form_body(anon(Method::POST, "/account/tokens").header(COOKIE, &cookie), &format!("label=dizustu&current={ADMIN_PW}"))).await.0, StatusCode::OK);
 }
 
 pub(super) fn totp_code(secret: &str) -> String {
@@ -159,7 +159,7 @@ pub(super) async fn two_factor_enrollment_and_login() {
     let account = || anon(Method::GET, "/account").header(COOKIE, &cookie).body(Body::empty()).unwrap();
 
     assert!(send(&app, account()).await.2.contains("Kurulumu Başlat"));
-    assert_eq!(send(&app, post("/account/totp/start", "")).await.0, StatusCode::SEE_OTHER);
+    assert_eq!(send(&app, post("/account/totp/start", &format!("current={ADMIN_PW}"))).await.0, StatusCode::SEE_OTHER);
     let secret = me().totp_pending.expect("kurulum başlatılınca bekleyen anahtar oluşur");
     assert!(me().totp_secret.is_none());
     let (_, _, body) = send(&app, account()).await;

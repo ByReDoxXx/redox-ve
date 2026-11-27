@@ -283,7 +283,11 @@ pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>, keys_ready
                         }
                     } @else {
                         p class="lead" { (tx("Parolanız ele geçirilse bile hesabınıza girilemesin: girişte telefonunuzdaki uygulamanın ürettiği kod da istenir.")) }
-                        form method="post" action="/account/totp/start" { button class="btn primary" type="submit" { (icon("shield")) (tx("Kurulumu Başlat")) } }
+                        form class="inline flat" method="post" action="/account/totp/start" {
+                            label for="totp-current" { (tx("Parolanız")) }
+                            input id="totp-current" name="current" type="password" required autocomplete="current-password";
+                            button class="btn primary" type="submit" { (icon("shield")) (tx("Kurulumu Başlat")) }
+                        }
                     }
                     p class="hint" { (tx("Telefonunuzu kaybederseniz bir yönetici Kullanıcılar sayfasından ya da sunucuda ")) span class="mono" { "redox user totp-reset" } (tx(" ile sıfırlayabilir.")) }
                 }
@@ -299,6 +303,8 @@ pub fn account_page(p: &Page, user: &User, setup: Option<&TotpSetup>, keys_ready
                         input id="label" name="label" type="text" required autocomplete="off" placeholder=(tx("örn. dizustu"));
                         label for="days" { (tx("Geçerlilik")) }
                         (token_days("days"))
+                        label for="token-current" { (tx("Parolanız")) }
+                        input id="token-current" name="current" type="password" required autocomplete="current-password";
                         button class="btn" type="submit" { (tx("Oluştur")) }
                     }
                     p class="hint" { (tx("Token, ")) span class="mono" { "redox" } (tx(" komut satırının ve betiklerin sizin adınıza bağlanmasını sağlar; rolünüzün yetkilerini taşır.")) }

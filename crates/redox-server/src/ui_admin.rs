@@ -39,6 +39,15 @@ fn forbidden() -> Response {
     (StatusCode::FORBIDDEN, (tx("Bu sayfa için yönetici yetkisi gerekir."))).into_response()
 }
 
+/// Açık oturumda parolayı yeniden sorar; hatalı denemeler girişteki gibi sayılır.
+pub(crate) fn password_gate(st: &AppState, user: &str, current: &str, wrong: &str) -> Result<(), String> {
+    match st.auth().confirm_password(user, current, now()) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(wrong.to_string()),
+        Err(secs) => Err(tfmt(format!("Çok fazla hatalı deneme. {} dakika sonra yeniden deneyin.", secs.div_ceil(60))).trim_end_matches('.').to_string()),
+    }
+}
+
 /// Sonucu ilgili sayfaya bildirim olarak döndürür.
 fn done(back: &str, result: Result<String, String>) -> Redirect {
     match result {
@@ -184,8 +193,8 @@ pub async fn account_password(State(st): State<AppState>, Extension(me): Extensi
     if st.auth().list().iter().any(|u| u.name == me.user && u.ldap) {
         return done("/account", Err((tx("parolanız dizin sunucusunda (LDAP) yönetiliyor; oradan değiştirin")).to_string())).into_response();
     }
-    if !st.auth().check_password(&me.user, &f.current) {
-        return done("/account", Err((tx("şimdiki parola hatalı")).to_string())).into_response();
+    if let Err(e) = password_gate(&st, &me.user, &f.current, tx("şimdiki parola hatalı")) {
+        return done("/account", Err(e)).into_response();
     }
     let cost = st.auth().cost();
     match st.auth().edit(|u| u.set_password(&me.user, &f.password, cost)) {
@@ -195,7 +204,11 @@ pub async fn account_password(State(st): State<AppState>, Extension(me): Extensi
     }
 }
 
-pub async fn totp_start(State(st): State<AppState>, Extension(me): Extension<Identity>) -> Redirect {
+/// Kurulum da parola ister: açık bırakılmış bir oturum hesaba kendi ikinci adımını ekleyemesin.
+pub async fn totp_start(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Redirect {
+    if let Err(e) = password_gate(&st, &me.user, &f.current, tx("parola hatalı")) {
+        return done("/account", Err(e));
+    }
     done("/account", st.auth().edit(|u| u.begin_totp(&me.user)).map(|_| (tx("Kodu okutup uygulamadaki 6 haneli kodu girin.")).to_string()))
 }
 
@@ -204,13 +217,17 @@ pub async fn totp_confirm(State(st): State<AppState>, Extension(me): Extension<I
 }
 
 pub async fn totp_disable(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<AdminForm>) -> Redirect {
-    if !st.auth().check_password(&me.user, &f.current) {
-        return done("/account", Err((tx("parola hatalı")).to_string()));
+    if let Err(e) = password_gate(&st, &me.user, &f.current, tx("parola hatalı")) {
+        return done("/account", Err(e));
     }
     done("/account", st.auth().edit(|u| u.disable_totp(&me.user)).map(|()| (tx("İki adımlı doğrulama kapatıldı.")).to_string()))
 }
 
 pub async fn account_token_create(State(st): State<AppState>, Extension(me): Extension<Identity>, headers: HeaderMap, Form(f): Form<AdminForm>) -> Response {
+    // Token ikinci adımı atlar ve oturumdan uzun yaşar: oluşturmak parola ister.
+    if let Err(e) = password_gate(&st, &me.user, &f.current, tx("parola hatalı")) {
+        return done("/account", Err(e)).into_response();
+    }
     create_token(&st, &me, &headers, &me.user, &f, "/account")
 }
 

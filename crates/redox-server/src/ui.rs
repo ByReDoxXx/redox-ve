@@ -597,7 +597,9 @@ pub async fn login(
     Extension(ClientIp(ip)): Extension<ClientIp>,
     Form(form): Form<LoginForm>,
 ) -> Response {
-    let name = form.username.trim();
+    // Ad günlüğe ve deneme sayacına yazılır: uzunluğu sınırlıdır (gerçek adlar çok daha kısadır).
+    let name: String = form.username.trim().chars().take(crate::auth::MAX_NAME_CHARS).collect();
+    let name = name.as_str();
     let next = safe_back(&form.next);
     let audit = |action: &str, ok: bool| st.auth().audit.record(now(), name, &ip, action, ok);
     // Parola özeti ve dizin sunucusu beklenirken öbür istekler sürer.

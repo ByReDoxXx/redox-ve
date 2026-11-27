@@ -129,8 +129,12 @@ impl UserFile {
 
     /// İki adımlı doğrulama kurulumunu başlatır: yeni gizli anahtar üretir ama henüz etkinleştirmez.
     pub fn begin_totp(&mut self, name: &str) -> Result<String, String> {
+        let user = self.find_mut(name)?;
+        if user.totp_secret.is_some() {
+            return Err("iki adımlı doğrulama zaten açık; yenilemek için önce kapatın".to_string());
+        }
         let secret = crate::totp::generate_secret();
-        self.find_mut(name)?.totp_pending = Some(secret.clone());
+        user.totp_pending = Some(secret.clone());
         Ok(secret)
     }
 

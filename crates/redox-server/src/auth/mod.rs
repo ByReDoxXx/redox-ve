@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::SystemTime;
 
 use argon2::password_hash::{PasswordHash, SaltString};
@@ -34,6 +34,10 @@ const MAX_FAILURES: u32 = 5;
 const WINDOW_SECS: u64 = 15 * 60;
 const LOCK_SECS: u64 = 15 * 60;
 const MAX_SESSIONS: usize = 10_000;
+/// Aynı anda hesaplanan parola özeti sayısı: her biri onlarca MiB bellek ister; fazlası sırada bekler.
+const MAX_HASHING: usize = 4;
+/// Deneme sayacında ve denetim günlüğünde saklanan kullanıcı adının en uzun hali.
+pub const MAX_NAME_CHARS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -192,6 +196,8 @@ pub struct Auth {
     /// Oturumların diske son yazıldığı an.
     sessions_saved: Mutex<u64>,
     attempts: Mutex<HashMap<String, Attempts>>,
+    /// O an parola özeti hesaplayan iş sayısı (`MAX_HASHING` ile sınırlı).
+    hashing: (Mutex<usize>, Condvar),
     /// TLS arkasında: çerezler `Secure` olur, HSTS gönderilir, X-Forwarded-For'a güvenilir.
     pub behind_tls_proxy: bool,
     /// Sunucu TLS'i kendisi sonlandırıyor: çerezler `Secure` olur (X-Forwarded-For'a güvenilmez).
@@ -214,9 +220,17 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Deneme sayacının anahtarı: istemci ve kullanıcı adı.
+/// Deneme sayacının anahtarı: istemci ve kullanıcı adı. IPv6 istemcide adresin ağ kısmı (/64) sayılır: tek bir
+/// makine o ağdaki adresleri dilediği gibi değiştirebilir.
 fn attempt_key(client: &str, name: &str) -> String {
-    format!("{client}|{}", name.to_lowercase())
+    let name: String = name.to_lowercase().chars().take(MAX_NAME_CHARS).collect();
+    match client.parse::<std::net::Ipv6Addr>() {
+        Ok(v6) if v6.to_ipv4_mapped().is_none() => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64|{name}", s[0], s[1], s[2], s[3])
+        }
+        _ => format!("{client}|{name}"),
+    }
 }
 
 fn mtime(path: &Path) -> Option<SystemTime> {
@@ -246,6 +260,7 @@ impl Auth {
             users: Mutex::new(Cached { file, mtime }),
             sessions: Mutex::new(stored),
             attempts: Mutex::new(HashMap::new()),
+            hashing: (Mutex::new(0), Condvar::new()),
             behind_tls_proxy,
             direct_tls: false,
             ldap: None,
@@ -285,6 +300,36 @@ impl Auth {
 
     pub fn check_password(&self, name: &str, password: &str) -> bool {
         self.users().find(name).is_some_and(|u| self.password_ok(u, password))
+    }
+
+    /// Açık oturumda parolayı yeniden sorar (parola değiştirme, ikinci adım, token). Girişteki gibi sayılır:
+    /// oturumu ele geçiren biri parolayı buradan sınırsız deneyemesin. `Err`: kilidin kalan saniyesi.
+    pub fn confirm_password(&self, name: &str, password: &str, now: u64) -> Result<bool, u64> {
+        let key = attempt_key("hesap", name);
+        self.reserve(&key, now)?;
+        if self.check_password(name, password) {
+            self.forget_failures(&key);
+            return Ok(true);
+        }
+        match self.settle_failure(&key, now) {
+            LoginError::Locked(wait) => Err(wait),
+            _ => Ok(false),
+        }
+    }
+
+    /// Parola özetini hesaplar; aynı anda en çok `MAX_HASHING` iş çalışır, kalanı sırasını bekler.
+    fn hashed(&self, hash: &str, password: &str) -> bool {
+        let (count, freed) = &self.hashing;
+        let mut busy = lock(count);
+        while *busy >= MAX_HASHING {
+            busy = freed.wait(busy).unwrap_or_else(|e| e.into_inner());
+        }
+        *busy += 1;
+        drop(busy);
+        let ok = verify_password(hash, password);
+        *lock(count) -= 1;
+        freed.notify_one();
+        ok
     }
 
     /// Kullanıcı listesini değiştirir ve dosyaya yazar. Hata dönerse hiçbir şey değişmez.
@@ -327,7 +372,7 @@ impl Auth {
     /// Kullanıcının parolası doğru mu? Dizin kullanıcısında yanıtı dizin verir; dizine ulaşılamazsa giriş yoktur.
     fn password_ok(&self, user: &User, password: &str) -> bool {
         if !user.ldap {
-            return verify_password(&user.password_hash, password);
+            return self.hashed(&user.password_hash, password);
         }
         let Some(directory) = &self.ldap else {
             eprintln!("uyarı: {} dizin kullanıcısı ama sunucu --ldap olmadan çalışıyor", user.name);
@@ -350,19 +395,19 @@ impl Auth {
     /// Parolayı (ve açıksa doğrulama kodunu) denetler; yeni bir oturum token'ı döndürür.
     pub fn login_with_code(&self, client: &str, name: &str, password: &str, code: &str, now: u64) -> Result<String, LoginError> {
         let key = attempt_key(client, name);
-        if let Some(wait) = self.locked_for(&key, now) {
-            return Err(LoginError::Locked(wait));
-        }
+        // Deneme, parola doğrulanmadan önce sayılır: aynı anda yollanan yüzlerce istek sınırı birlikte aşamasın.
+        self.reserve(&key, now).map_err(LoginError::Locked)?;
 
         let user = self.users().find(name).cloned();
         // Var olmayan kullanıcıda da özet hesaplanır: yanıt süresi kullanıcı adlarını ele vermesin.
         let password_ok = match &user {
             Some(user) => self.password_ok(user, password),
-            None => verify_password(&self.dummy_hash, password),
+            None => self.hashed(&self.dummy_hash, password),
         };
         // Güvenlik anahtarı olan hesapta kod yazılmadıysa sıradaki adım anahtardır. Deneme sayacı burada ne artar
         // ne sıfırlanır: oturum henüz açılmamıştır.
         if let Some(user) = user.as_ref().filter(|u| password_ok && code.is_empty() && !u.keys.is_empty()) {
+            self.unreserve(&key);
             return Err(match self.begin_key_login(user, now) {
                 Ok(challenge) => LoginError::SecondStep(Box::new(challenge)),
                 Err(why) => {
@@ -375,7 +420,7 @@ impl Auth {
         // Hangi adımın yanlış olduğu bilerek söylenmez.
         let ok = password_ok && user.is_some() && self.second_factor_ok(user.as_ref(), code, now);
         if !ok {
-            return Err(self.count_failure(key, now));
+            return Err(self.settle_failure(&key, now));
         }
         self.forget_failures(&key);
 
@@ -388,6 +433,47 @@ impl Auth {
 
     fn forget_failures(&self, key: &str) {
         lock(&self.attempts).remove(key);
+    }
+
+    /// Bir denemeyi, sonucu belli olmadan sayar. `Err`: kilidin kalan saniyesi.
+    fn reserve(&self, key: &str, now: u64) -> Result<(), u64> {
+        let mut attempts = lock(&self.attempts);
+        if attempts.len() > MAX_SESSIONS {
+            attempts.retain(|_, a| a.locked_until > now || a.first + WINDOW_SECS > now);
+        }
+        let a = attempts.entry(key.to_string()).or_default();
+        if a.locked_until > now {
+            return Err(a.locked_until - now);
+        }
+        if a.first + WINDOW_SECS <= now {
+            *a = Attempts { failures: 0, first: now, locked_until: 0 };
+        }
+        // Sonucu bekleyen denemeler de sayılır.
+        if a.failures >= MAX_FAILURES {
+            return Err(LOCK_SECS);
+        }
+        a.failures += 1;
+        Ok(())
+    }
+
+    /// Sayılan deneme hatalı sayılmayacaksa (parola doğru, sıra güvenlik anahtarında) geri alınır.
+    fn unreserve(&self, key: &str) {
+        if let Some(a) = lock(&self.attempts).get_mut(key) {
+            a.failures = a.failures.saturating_sub(1);
+        }
+    }
+
+    /// Önceden sayılmış denemenin hatalı çıktığını işler; sınır dolduysa kilitler.
+    fn settle_failure(&self, key: &str, now: u64) -> LoginError {
+        let mut attempts = lock(&self.attempts);
+        let a = attempts.entry(key.to_string()).or_default();
+        if a.failures >= MAX_FAILURES {
+            a.locked_until = now + LOCK_SECS;
+            a.failures = 0;
+            a.first = now;
+            return LoginError::Locked(LOCK_SECS);
+        }
+        LoginError::Invalid
     }
 
     /// Hatalı bir denemeyi sayar; sınır aşılırsa istemci o kullanıcı için bir süre kilitlenir.

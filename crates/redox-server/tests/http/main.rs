@@ -22,6 +22,7 @@ mod backup_features;
 mod console;
 mod ft;
 mod guest_ops;
+mod hardening;
 mod ha_shares;
 mod hardware;
 mod health;

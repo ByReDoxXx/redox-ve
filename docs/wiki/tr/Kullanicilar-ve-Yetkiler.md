@@ -68,7 +68,9 @@ ekleyebilir. Girişte parolaya ek olarak anahtar (ya da açıksa uygulama kodu) 
 ## Hesap sayfası ve token'lar
 
 Hesap sayfası (parola, ikinci adım, token üretme) yalnızca tarayıcıda oturum açarak kullanılır; API token'ıyla
-yapılan istekler reddedilir.
+yapılan istekler reddedilir. Token üretmek, ikinci adımı kurmak ya da kapatmak ve güvenlik anahtarı eklemek parolanızı
+yeniden ister: açık bırakılmış bir oturumla bunlar yapılamaz. Bu formlarda art arda beş hatalı parola, hesabın bu
+işlemlerini 15 dakika kilitler.
 
 ## Token süresi, oturumlar ve operatör yetkileri
 

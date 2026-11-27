@@ -333,3 +333,63 @@ fn read_only_tokens_act_as_viewers_whatever_the_owner_is() {
     let old: ApiToken = serde_json::from_str(r#"{"name":"eski","sha256":"00"}"#).unwrap();
     assert!(!old.read_only);
 }
+
+/// Aynı anda yollanan denemeler sınırı birlikte aşamaz: sayaç, parola doğrulanmadan önce artar.
+#[test]
+fn a_burst_of_guesses_gets_no_more_tries_than_the_limit() {
+    let auth = std::sync::Arc::new(auth());
+    let workers: Vec<_> = (0..40)
+        .map(|n| {
+            let auth = auth.clone();
+            std::thread::spawn(move || auth.login("10.0.0.9", "admin", &format!("yanlis-tahmin-{n:04}"), 1_000))
+        })
+        .collect();
+    let results: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+    let checked = results.iter().filter(|r| matches!(r, Err(LoginError::Invalid))).count();
+    assert!(checked < MAX_FAILURES as usize, "{checked} tahmin denetlendi");
+    assert!(matches!(auth.login("10.0.0.9", "admin", PW, 1_001), Err(LoginError::Locked(_))), "istemci kilitlendi");
+    // Kilit istemciye özeldir; süresi dolunca kalkar.
+    assert!(auth.login("10.0.0.10", "admin", PW, 1_001).is_ok());
+    assert!(auth.login("10.0.0.9", "admin", PW, 1_001 + LOCK_SECS).is_ok());
+}
+
+/// IPv6'da tek makine ağındaki (/64) bütün adresleri kullanabilir: sayaç ağa göre tutulur.
+#[test]
+fn ipv6_clients_are_counted_per_network() {
+    let auth = auth();
+    for n in 1..=MAX_FAILURES {
+        let _ = auth.login(&format!("2001:db8:1:2::{n:x}"), "admin", "yanlis-parola-123", 1_000);
+    }
+    assert!(matches!(auth.login("2001:db8:1:2:ffff::1", "admin", PW, 1_001), Err(LoginError::Locked(_))));
+    assert!(auth.login("2001:db8:1:3::1", "admin", PW, 1_001).is_ok(), "başka ağ etkilenmez");
+    assert_eq!(attempt_key("::ffff:10.0.0.1", "Admin"), "::ffff:10.0.0.1|admin", "IPv4 eşlemeli adres tek başına sayılır");
+    assert!(attempt_key("ip", &"x".repeat(500)).len() < 80, "uzun ad anahtarı büyütmez");
+}
+
+/// Doğru parolanın ardından gelen güvenlik anahtarı adımı deneme hakkından yemez; hatalı parola sayılır.
+#[test]
+fn confirm_password_counts_like_a_login() {
+    let auth = auth();
+    assert_eq!(auth.confirm_password("admin", PW, 1_000), Ok(true));
+    for _ in 0..MAX_FAILURES - 1 {
+        assert_eq!(auth.confirm_password("admin", "yanlis-parola-123", 1_000), Ok(false));
+    }
+    assert_eq!(auth.confirm_password("admin", "yanlis-parola-123", 1_000), Err(LOCK_SECS));
+    assert!(auth.confirm_password("admin", PW, 1_001).is_err(), "kilitliyken doğru parola da geçmez");
+    assert_eq!(auth.confirm_password("izleyici", "izleyici-parolasi-1", 1_001), Ok(true), "başka hesap etkilenmez");
+    assert_eq!(auth.confirm_password("admin", PW, 1_000 + LOCK_SECS), Ok(true));
+    // Giriş sayacı ayrıdır: hesap formlarındaki kilit girişi kapatmaz.
+    assert!(auth.login("ip", "admin", PW, 1_001).is_ok());
+}
+
+#[test]
+fn an_active_second_step_is_not_replaced_by_a_new_setup() {
+    let mut f = users();
+    let secret = f.begin_totp("admin").unwrap();
+    let key = crate::totp::base32_decode(&secret).unwrap();
+    let code = format!("{:06}", crate::totp::code_at(&key, 1_000 / crate::totp::STEP_SECS));
+    f.confirm_totp("admin", &code, 1_000).unwrap();
+    assert!(f.begin_totp("admin").unwrap_err().contains("zaten açık"));
+    assert_eq!(f.find("admin").unwrap().totp_secret.as_deref(), Some(secret.as_str()));
+    assert!(f.find("admin").unwrap().totp_pending.is_none());
+}

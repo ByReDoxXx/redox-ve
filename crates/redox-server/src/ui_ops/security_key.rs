@@ -63,9 +63,7 @@ pub struct KeyAccountForm {
 pub async fn key_add_start(State(st): State<AppState>, Extension(me): Extension<Identity>, headers: HeaderMap, Form(f): Form<KeyAccountForm>) -> Response {
     let (worker, user) = (st.clone(), me.user.clone());
     let started = tokio::task::spawn_blocking(move || {
-        if !worker.auth().check_password(&user, &f.current) {
-            return Err((tx("parola hatalı")).to_string());
-        }
+        crate::ui_admin::password_gate(&worker, &user, &f.current, tx("parola hatalı"))?;
         worker.auth().begin_key_registration(&user, &f.label, now())
     })
     .await;
@@ -81,8 +79,8 @@ pub async fn key_add_finish(State(st): State<AppState>, Extension(me): Extension
 }
 
 pub async fn key_remove(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<KeyAccountForm>) -> Redirect {
-    if !st.auth().check_password(&me.user, &f.current) {
-        return account(Err((tx("parola hatalı")).to_string()));
+    if let Err(e) = crate::ui_admin::password_gate(&st, &me.user, &f.current, tx("parola hatalı")) {
+        return account(Err(e));
     }
     account(st.auth().edit(|u| u.remove_key(&me.user, &f.id)).map(|name| tfmt(format!("{name} adlı güvenlik anahtarı kaldırıldı."))))
 }

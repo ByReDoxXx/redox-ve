@@ -79,9 +79,9 @@ pub struct ClientIp(pub String);
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(ui::datacenter))
-        .route("/login", get(ui::login_form).post(ui::login))
+        .route("/login", get(ui::login_form).post(ui::login).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)))
         .route("/logout", post(ui::logout))
-        .route("/login/key", post(ui_ops::login_key))
+        .route("/login/key", post(ui_ops::login_key).layer(axum::extract::DefaultBodyLimit::max(64 * 1024)))
         .route("/login/oidc", get(ui::oidc_start))
         .route("/login/oidc/callback", get(ui::oidc_callback))
         .route("/healthz", get(|| async { "ok" }))
