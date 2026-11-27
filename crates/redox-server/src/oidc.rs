@@ -156,8 +156,10 @@ impl Oidc {
         let challenge = base64url(&Sha256::digest(verifier.as_bytes()));
         let mut pending = lock(&self.pending);
         pending.retain(|_, p| p.created + PENDING_SECS > now);
-        if pending.len() >= MAX_PENDING {
-            return Err("çok fazla yarım kalmış giriş var; biraz sonra yeniden deneyin".to_string());
+        // Tablo dolunca en eski yarım giriş atılır: kimliği doğrulanmamış istekler girişi herkese kapatamasın.
+        while pending.len() >= MAX_PENDING {
+            let Some(oldest) = pending.iter().min_by_key(|(_, p)| p.created).map(|(state, _)| state.clone()) else { break };
+            pending.remove(&oldest);
         }
         pending.insert(state.clone(), Pending { nonce: nonce.clone(), verifier, created: now });
         let query = serde_urlencoded::to_string([
@@ -220,7 +222,8 @@ impl Oidc {
         if claims["nonce"].as_str() != Some(nonce) {
             return Err("kimlik belirteci bu giriş denemesine ait değil".to_string());
         }
-        if self.config.claim == "email" && claims["email_verified"] == false {
+        // Alan yoksa da reddedilir: doğrulanmamış adres başka birinin hesabıyla eşleşebilir.
+        if self.config.claim == "email" && claims["email_verified"] != true {
             return Err("kimlik sağlayıcı e-posta adresini doğrulamamış".to_string());
         }
         claims[self.config.claim.as_str()].as_str().filter(|s| !s.is_empty()).map(str::to_string).ok_or_else(|| format!("kimlik belirtecinde \"{}\" alanı yok", self.config.claim))
@@ -288,6 +291,8 @@ mod tests {
             (with(json!({"exp": null})), "süresi dolmuş"),
             (with(json!({"nonce": "baska"})), "bu giriş denemesine ait değil"),
             (with(json!({"email_verified": false})), "doğrulamamış"),
+            (with(json!({"email_verified": null})), "doğrulamamış"),
+            (with(json!({"email_verified": "true"})), "doğrulamamış"),
             (with(json!({"email": ""})), "alanı yok"),
             (with(json!({"email": null})), "alanı yok"),
         ] {
