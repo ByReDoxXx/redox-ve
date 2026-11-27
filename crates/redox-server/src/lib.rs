@@ -122,6 +122,8 @@ pub fn app(state: AppState) -> Router {
         .route("/guests/{vmid}/export", get(ui_ops::guest_export))
         .route("/guests/{vmid}/console", get(ui_ops::live_console))
         .route("/guests/{vmid}/vnc", get(ui_ops::vnc))
+        .route("/guests/{vmid}/terminal", get(ui_ops::terminal_page))
+        .route("/guests/{vmid}/terminal/ws", get(ui_ops::terminal_socket))
         .route("/guests/{vmid}/screen", get(ui_ops::screen))
         .route("/guests/{vmid}/screen.png", get(ui_ops::screen_png))
         .route("/guests/{vmid}/keys", post(ui_ops::keys))
@@ -344,6 +346,14 @@ pub fn operator_target(path: &str) -> Option<redox_core::VmId> {
         matches!(op, "action" | "suspend" | "snapshots" | "backups" | "keys" | "exec")
     };
     if allowed { id.parse().ok() } else { None }
+}
+
+/// `identify` gibi, ama oturumun hareketsizlik sayacını değiştirmez.
+pub(crate) fn identify_without_touching(st: &AppState, headers: &HeaderMap) -> Option<Identity> {
+    if let Some(value) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        return value.strip_prefix("Bearer ").and_then(|t| st.auth().bearer(t.trim()));
+    }
+    cookie(headers, SESSION_COOKIE).and_then(|t| st.auth().peek_session(t, state::now()))
 }
 
 /// Önce API token'ına, yoksa oturum çerezine bakar.

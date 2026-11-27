@@ -200,6 +200,14 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.hot_add_nic(guest, index, network)
     }
 
+    fn has_terminal(&self, kind: GuestKind) -> bool {
+        kind == GuestKind::Ct && self.ct.as_ref().is_some_and(|d| d.has_terminal(kind))
+    }
+
+    fn terminal_command(&self, guest: &Guest, cols: u16, rows: u16) -> Result<(String, Vec<String>), String> {
+        self.of(guest)?.terminal_command(guest, cols, rows)
+    }
+
     fn disk_encryption(&self) -> bool {
         self.vm.disk_encryption()
     }

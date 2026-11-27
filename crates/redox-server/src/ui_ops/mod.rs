@@ -35,6 +35,8 @@ mod hardware;
 mod lifecycle;
 mod mirrors;
 mod shared;
+mod terminal;
+pub use terminal::*;
 pub use shared::*;
 
 pub use admin::*;

@@ -38,12 +38,13 @@ pub const WORDMARK_SVG: &str = include_str!("../../assets/wordmark.svg");
 pub const ICONS_SVG: &str = include_str!("../../assets/icons.svg");
 /// Uygulamadaki tek betik: canlı konsol istemcisi. Yalnızca konsol sayfasında yüklenir.
 pub const CONSOLE_JS: &str = include_str!("../../assets/console.js");
+pub const TERMINAL_JS: &str = include_str!("../../assets/terminal.js");
 
 /// Gömülü varlıkların içerik damgası. Adreslere `?v=` olarak eklenir; böylece
 /// güncellemeden sonra tarayıcı eski stil dosyasını önbellekten kullanmaz.
 pub fn asset_version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let all = [STYLE_CSS, LOGO_SVG, WORDMARK_SVG, ICONS_SVG, CONSOLE_JS, crate::fonts::FONTS_CSS].concat();
+        let all = [STYLE_CSS, LOGO_SVG, WORDMARK_SVG, ICONS_SVG, CONSOLE_JS, TERMINAL_JS, crate::fonts::FONTS_CSS].concat();
         crate::auth::sha256_hex(&all)[..12].to_string()
     });
     &VERSION

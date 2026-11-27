@@ -712,6 +712,7 @@ pub async fn asset(Path(file): Path<String>) -> Response {
         "wordmark.svg" => ("image/svg+xml", view::WORDMARK_SVG),
         "icons.svg" => ("image/svg+xml", view::ICONS_SVG),
         "console.js" => ("text/javascript; charset=utf-8", view::CONSOLE_JS),
+        "terminal.js" => ("text/javascript; charset=utf-8", view::TERMINAL_JS),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     ([(CONTENT_TYPE, mime), (CACHE_CONTROL, "public, max-age=3600")], body).into_response()

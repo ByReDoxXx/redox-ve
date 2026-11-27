@@ -50,7 +50,10 @@ pub(super) fn exec_form(base: &str, command: &str) -> Markup {
 pub(super) fn container_console(p: &Page, g: &Guest) -> Markup {
     html! {
         div class="card" {
-            header { h2 { (tx("Komut çalıştır")) } (tip("Konteynerin içinde bir komut çalıştırır ve çıktısını gösterir.")) span class="note" { (tx("konteynerde kök olarak")) } }
+            header {
+                h2 { (tx("Komut çalıştır")) } (tip("Konteynerin içinde bir komut çalıştırır ve çıktısını gösterir.")) span class="note" { (tx("konteynerde kök olarak")) }
+                @if p.real && g.status == GuestStatus::Running { div class="end" { a class="btn primary sm" href={ "/guests/" (g.vmid) "/terminal" } { (icon("terminal")) (tx("Terminali Aç")) } } }
+            }
             @if !p.real {
                 p class="empty" { (tx("Simülasyon sürücüsünde konteynere komut gönderilemez.")) }
             } @else if g.status != GuestStatus::Running {
@@ -58,7 +61,7 @@ pub(super) fn container_console(p: &Page, g: &Guest) -> Markup {
             } @else {
                 div class="console" {
                     (exec_form(&format!("/guests/{}", g.vmid), ""))
-                    p class="hint" { (tx("Komut ")) span class="mono" { "/bin/sh -c" } (tx(" ile, en çok 20 saniye çalışır ve çıktısı gösterilir. Etkileşimli programlar (vi, top) çalışmaz. Komut metni günlüğe yazılmaz.")) }
+                    p class="hint" { (tx("Komut ")) span class="mono" { "/bin/sh -c" } (tx(" ile, en çok 20 saniye çalışır ve çıktısı gösterilir. Etkileşimli programlar (vi, top) için terminali açın (o sayfa JavaScript kullanır). Komut metni günlüğe yazılmaz.")) }
                 }
             }
         }
@@ -108,7 +111,44 @@ pub fn console_tab(p: &Page, g: &Guest, live: bool) -> Markup {
     }
 }
 
-/// Canlı konsol sayfası: uygulamada betik yükleyen tek sayfa. Kabuk (sol menü, otomatik yenileme) yoktur;
+/// Terminal sayfası: canlı konsol gibi kabuksuzdur ve yalnızca bu sunucunun betiğini yükler.
+pub fn terminal_page(p: &Page, g: &Guest, available: bool) -> String {
+    let base = format!("/guests/{}", g.vmid);
+    html! {
+        (DOCTYPE)
+        html lang="tr" data-theme=(p.theme) {
+            head {
+                meta charset="utf-8";
+                meta name="viewport" content="width=device-width, initial-scale=1";
+                title { (g.vmid) " " (g.name) (tx(" · Terminal · RedoX VE")) }
+                link rel="icon" type="image/svg+xml" href=(crate::view::asset("logo.svg"));
+                link rel="stylesheet" href=(crate::view::asset("fonts/fonts.css"));
+                link rel="stylesheet" href=(crate::view::asset("style.css"));
+            }
+            body class="console-page" {
+                header class="top" {
+                    a class="btn sm" href={ (base) "?tab=konsol" } { (tx("← Konuğa dön")) }
+                    strong { span class="mono gold" { (g.vmid) } " " (g.name) }
+                    @if available { span id="terminal-status" class="pill idle" role="status" { (tx("Betik bekleniyor…")) } }
+                }
+                main id="main" {
+                    @if available {
+                        div id="terminal" class="term" data-ws={ (base) "/terminal/ws" } data-connected=(tx("Bağlandı")) data-closed=(tx("Bağlantı kapandı (yeniden açmak için sayfayı yenileyin)")) {}
+                        textarea id="terminal-input" class="term-input" rows="1" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label=(tx("Terminal girişi")) {}
+                        noscript { p class="empty" { (tx("Terminal JavaScript gerektirir. JavaScript'siz komut çalıştırmak için ")) a class="link" href={ (base) "?tab=konsol" } { (tx("konsol sekmesini")) } (tx(" kullanın.")) } }
+                        p class="hint" { (tx("Kabuk konteynerde kök yetkisiyle çalışır. Yazmak için terminale tıklayın; yapıştırma Ctrl+Shift+V ya da sağ tık ile, kopyalama seçip Ctrl+Shift+C ile yapılır. 30 dakika tuşa basılmazsa oturum kapanır. & ile arka plana attığınız işler terminal kapansa da sürer.")) }
+                    } @else {
+                        p class="empty" { (tx("Terminal yalnızca çalışan konteynerde açılır.")) " " a class="link" href={ (base) "?tab=konsol" } { (tx("Konuğa dön")) } "." }
+                    }
+                }
+                @if available { script src=(crate::view::asset("terminal.js")) defer {} }
+            }
+        }
+    }
+    .into_string()
+}
+
+/// Canlı konsol sayfası: betik yükleyen sayfalardandır. Kabuk (sol menü, otomatik yenileme) yoktur;
 /// sayfa yenilenirse oturum kopacağı için kendi kendini yenilemez.
 pub fn live_console_page(p: &Page, g: &Guest, available: bool) -> String {
     let base = format!("/guests/{}", g.vmid);
@@ -150,7 +190,7 @@ pub fn live_console_page(p: &Page, g: &Guest, available: bool) -> String {
                         canvas id="screen" tabindex="0" width="640" height="400" data-ws={ (base) "/vnc" }
                             aria-label={ (g.name) (tx(" konuğunun ekranı; tıklayınca klavye ve fare konuğa gider")) } {}
                         noscript { p class="empty" { (tx("Canlı konsol JavaScript gerektirir. JavaScript'siz ekran için ")) a class="link" href={ (base) "?tab=konsol" } { (tx("konsol sekmesini")) } (tx(" kullanın.")) } }
-                        p class="hint" { (tx("Ekrana tıklayınca klavye ve fare konuğa gider; tuşlar konuğun kendi klavye düzeniyle yorumlanır. Bu sayfa dışında uygulamada betik çalışmaz.")) }
+                        p class="hint" { (tx("Ekrana tıklayınca klavye ve fare konuğa gider; tuşlar konuğun kendi klavye düzeniyle yorumlanır. Bu sayfada yalnızca bu sunucunun kendi betiği çalışır.")) }
                     } @else {
                         p class="empty" {
                             @if g.status != GuestStatus::Running { (tx("Konuk çalışmıyor. Ekranı görmek için başlatın.")) }

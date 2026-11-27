@@ -397,6 +397,16 @@ impl Auth {
         }
     }
 
+    /// `session` gibi denetler ama oturumu "görüldü" saymaz ve değiştirmez. Açık bir terminal, kendi yetki
+    /// denetimiyle web oturumunun hareketsizlik süresini uzatmasın diye.
+    pub fn peek_session(&self, token: &str, now: u64) -> Option<Identity> {
+        let users = self.users();
+        let sessions = lock(&self.sessions);
+        let s = sessions.get(&sha256_hex(token))?;
+        let user = users.find(&s.user).filter(|u| u.password_hash == s.password_hash)?;
+        (!expired(s, now)).then(|| Identity { user: user.name.clone(), role: user.role, scope: user.scope.clone() })
+    }
+
     pub fn logout(&self, token: &str) {
         let mut sessions = lock(&self.sessions);
         sessions.remove(&sha256_hex(token));

@@ -528,6 +528,17 @@ pub trait Hypervisor: Send + Sync {
         Err("bu konuk türünde komut çalıştırma yok".to_string())
     }
 
+    /// Bu konuk türünde etkileşimli terminal açılabiliyor mu?
+    fn has_terminal(&self, _kind: GuestKind) -> bool {
+        false
+    }
+
+    /// Konuğun içinde sözde uçbirimli (PTY) bir kabuk açan komut: `(program, argümanlar)`. Sunucu bu sürecin
+    /// girdi ve çıktısını tarayıcıdaki terminale bağlar.
+    fn terminal_command(&self, _guest: &Guest, _cols: u16, _rows: u16) -> Result<(String, Vec<String>), String> {
+        Err("bu konuk türünde terminal yok".to_string())
+    }
+
     /// Yeni konuğun kaynaklarını (disk imajı vb.) hazırlar.
     fn create(&self, _guest: &Guest) -> Result<(), String> {
         Ok(())

@@ -371,6 +371,19 @@ impl LxcDriver {
     }
 }
 
+/// Kabukta tek sözcük olarak okunacak biçimde tırnaklar.
+fn shell_word(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
+/// `script` argümanları: verilen komutu, boyutu ayarlanmış yeni bir sözde uçbirimde çalıştırır. `script` komutu
+/// kabuktan geçirdiği için her sözcük ayrı ayrı tırnaklanır.
+pub fn pty_args(command: &[String], cols: u16, rows: u16) -> Vec<String> {
+    let words: Vec<String> = command.iter().map(|w| shell_word(w)).collect();
+    let line = format!("stty cols {cols} rows {rows} 2>/dev/null; umask 022; TERM=xterm exec {}", words.join(" "));
+    ["-q", "-f", "-e", "-c", &line, "/dev/null"].iter().map(|a| a.to_string()).collect()
+}
+
 impl Hypervisor for LxcDriver {
     fn name(&self) -> &'static str {
         "lxc"
@@ -483,6 +496,30 @@ impl Hypervisor for LxcDriver {
 
     fn guest_ip(&self, g: &Guest) -> Option<String> {
         lock(&self.ips).get(&g.vmid).cloned()
+    }
+
+    fn has_terminal(&self, kind: GuestKind) -> bool {
+        cfg!(unix) && kind == GuestKind::Ct
+    }
+
+    /// `script` (util-linux) sözde uçbirimi açar; içinde `lxc-attach` konteynerin kabuğunu çalıştırır.
+    fn terminal_command(&self, g: &Guest, cols: u16, rows: u16) -> Result<(String, Vec<String>), String> {
+        let attach = [
+            self.tool_path("lxc-attach").display().to_string(),
+            "-P".to_string(),
+            self.cfg.lxc_path.display().to_string(),
+            "-n".to_string(),
+            container_name(g.vmid),
+            "--clear-env".to_string(),
+            "-v".to_string(),
+            "TERM=xterm".to_string(),
+            "--".to_string(),
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            // Konteynerde bash varsa o, yoksa sh; giriş kabuğu olarak.
+            "if command -v bash >/dev/null 2>&1; then exec bash -l; fi; exec /bin/sh -l".to_string(),
+        ];
+        Ok(("script".to_string(), pty_args(&attach, cols, rows)))
     }
 
     fn exec(&self, g: &Guest, command: &str) -> Result<String, String> {
