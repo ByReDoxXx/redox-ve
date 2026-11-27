@@ -759,3 +759,52 @@ fn container_backups_are_encrypted_on_disk_when_a_passphrase_is_set() {
     assert!(d.verify_backup("ct-100-3", &[]).is_ok() && !d.export_backup("ct-100-3", 0).unwrap().unwrap().1);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Eşteki konteyner yedeği üzerinden bu sunucuya kopyalanır: iki gerçek sunucu, aralarında HTTP.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_container_is_copied_from_a_peer_server_with_its_files() {
+    let server = |name: &str| {
+        let (cfg, dir) = setup();
+        let qemu = QemuDriver::new(QemuConfig::new(dir.join("data"))).unwrap();
+        let cluster = local_cluster(&dir);
+        let node = cluster.nodes[0].id.clone();
+        let mut users = UserFile::default();
+        users.add_user("admin", "es-yonetici-parolasi", redox_server::auth::Role::Admin, Cost::Test).unwrap();
+        users.add_token("admin", name, "es-sunucu-yonetici-tokeni").unwrap();
+        let driver = HostDriver::new(qemu, Some(LxcDriver::new(cfg.clone()).unwrap()));
+        let state = AppState::new(cluster, Box::new(driver), Duration::ZERO, None, Auth::new(users, None, false, Cost::Test));
+        (state, cfg, dir, node)
+    };
+    let (source, source_cfg, source_dir, source_node) = server("kaynak");
+    let (target, target_cfg, target_dir, _) = server("hedef");
+    let id = source.create_guest(&spec("tasinan", &source_node, "alpine-3.24"), "admin").unwrap();
+    let rootfs = source_cfg.lxc_path.join(format!("redox-{id}/rootfs"));
+    std::fs::create_dir_all(rootfs.join("srv/veri")).unwrap();
+    std::fs::write(rootfs.join("srv/veri/kayit"), "kaynaktaki-veri").unwrap();
+    std::os::unix::fs::symlink("veri/kayit", rootfs.join("srv/kisayol")).unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = redox_server::app(source.clone());
+    tokio::spawn(async move { axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap() });
+    target.peers().configure(redox_server::peers::parse_file(&format!("kaynak http://127.0.0.1:{port} es-sunucu-yonetici-tokeni\n")).unwrap());
+
+    let worker = target.clone();
+    tokio::task::spawn_blocking(move || worker.import_from_peer("kaynak", id, "admin")).await.unwrap().unwrap();
+    let task = target.snapshot().tasks.iter().find(|t| t.command.starts_with("vm import")).cloned().expect("içe aktarma görevi");
+    assert_eq!(task.status, TaskStatus::Ok, "{:?}", task.message);
+    let copy = target.snapshot().guests.iter().find(|g| g.name == "tasinan").cloned().expect("kopya oluşmalı");
+    assert_eq!((copy.kind, copy.status), (GuestKind::Ct, GuestStatus::Stopped), "kopya kapalı gelir");
+    assert!(copy.tags.iter().any(|t| t == "tasindi-kaynak"), "{:?}", copy.tags);
+    let arrived = target_cfg.lxc_path.join(format!("redox-{}/rootfs", copy.vmid));
+    assert_eq!(std::fs::read_to_string(arrived.join("srv/veri/kayit")).unwrap(), "kaynaktaki-veri");
+    assert_eq!(std::fs::read_link(arrived.join("srv/kisayol")).unwrap(), PathBuf::from("veri/kayit"));
+    // Kaynak yerinde durur; geçici yedekler iki tarafta da silinir.
+    assert!(source.snapshot().guest(id).is_ok() && source.snapshot().backups.is_empty());
+    for cfg in [&source_cfg, &target_cfg] {
+        assert!(std::fs::read_dir(&cfg.backups_dir).map_or(true, |mut d| d.next().is_none()), "{}", cfg.backups_dir.display());
+    }
+    for dir in [source_dir, target_dir] {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
