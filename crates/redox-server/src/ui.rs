@@ -229,7 +229,8 @@ pub async fn peers(State(st): State<AppState>,
     let ctx = Ctx::new(&st, &headers, query, &me);
     let views = st.peers().views();
     let balance = crate::state::balance::recommend(&st.snapshot(), &views);
-    Html(view::peers(&ctx.page(Current::Peers, "/cluster"), &views, &balance))
+    let switches = st.vswitch_report();
+    Html(view::peers(&ctx.page(Current::Peers, "/cluster"), &views, &balance, &switches))
 }
 
 #[derive(Debug, Default, Deserialize)]

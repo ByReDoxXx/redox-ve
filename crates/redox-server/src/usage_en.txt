@@ -110,4 +110,5 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox peer migrate <peer> <id>  (moves a running virtual machine from the peer to this server without stopping it)
   redox peer send <peer> <id>     (moves a running virtual machine from this server to the peer without stopping it)
   redox balance                   (load balancing advice: which guest to move to which peer when this server is busy)
+  redox switch list | set <vds-name> <vni> <address,address> [--mtu <n>] | push <name> | remove <name> [--everywhere]   (distributed switch)
   redox task list

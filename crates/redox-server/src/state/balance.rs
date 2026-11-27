@@ -138,6 +138,7 @@ mod tests {
 
     fn peer(name: &str, mem_used: u64, mem_total: u64, cpu: u8, guests: Vec<Guest>) -> PeerView {
         PeerView {
+            vswitches: None,
             name: name.into(),
             url: format!("https://{name}"),
             checked: Some(1),

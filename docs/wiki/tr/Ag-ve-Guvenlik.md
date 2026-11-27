@@ -12,6 +12,39 @@
   olmalıdır (KURULUM.md 9. bölüm).
 - **VLAN:** köprüdeki karta etiket (`vmbr1:20`). Köprüde VLAN süzme açık ve hizmette CAP_NET_ADMIN olmalıdır.
 
+## Dağıtık anahtarlar
+
+Dağıtık anahtar, birden çok sunucuda aynı adla bulunan ve aralarında VXLAN tüneliyle birleşen bir konuk ağıdır.
+**Bir kez** tanımlarsınız (ad, VNI, MTU ve **bütün** üye sunucuların tünel adresleri), eşlere gönderirsiniz ve konuk
+hangi sunucuda çalışırsa çalışsın ağ olarak bu adı seçersiniz.
+
+```
+redox switch set vds-web 100 10.0.0.1,10.0.0.2,10.0.0.3          # bir sunucuda
+redox switch push vds-web                                       # aynı tanımı bütün eşlere gönder
+redox switch list                                               # bu sunucudaki durum ve eşlerle karşılaştırma
+redox switch remove vds-web --everywhere
+```
+
+Aynı işlemler *Küme* sayfasındaki **Dağıtık anahtarlar** kartındadır.
+
+* Ad `vds` ile başlamalıdır. Tanım her sunucuda birebir aynıdır; her sunucu üyeler arasından **kendi** adresini tanır
+  ve tünelin yerel ucu olarak onu kullanır.
+* Yönetim hizmeti yetkisiz kalır: tanımları yalnızca `<veri-dizini>/vswitch.json` dosyasına yazar. Ağı
+  `redox-net.service` kurar (root, `CAP_NET_ADMIN`); `redox-net.path` dosya her değiştiğinde onu başlatır, açılışta da
+  çalışır. İkisini de `install.sh` kurar.
+* Yardımcı dosyaya güvenmez: her alanı yeniden doğrular, komutları kabuksuz çalıştırır ve yalnızca **kendi kurduğu**
+  (`ifalias` ile işaretli) aygıtlara dokunur. `vmbr0` gibi bir köprü, yönetim hizmeti ele geçirilse bile tünele
+  bağlanamaz. `qemu-bridge-helper`'ın okuduğu listeyi de (`/etc/qemu/redox-vds.conf`) o yazar.
+* Ne yapacağını görmek için: `redox net sync /var/lib/redox/vswitch.json --dry-run`; neden başarısız olduğunu görmek
+  için: `journalctl -u redox-net`.
+* Eşteki tanım farklıysa *tanımı farklı* görünür; siz göndermedikçe üzerine yazılmaz.
+* O sunucuda bir konuk kullanırken anahtar silinemez.
+
+**Sınırlar.** Tünel **şifrelenmez** (UDP 4789): yalnızca güvendiğiniz bir ağda kullanın ya da WireGuard gibi şifreli
+bir ağın içinden geçirin. Yayın trafiği her üyeye kopyalanır; birkaç sunucu içindir (en çok 16). MTU, VXLAN'a 50 bayt
+bırakmalıdır: olağan 1500 baytlık ağda 1450; konuklar da bunu kullanmalıdır. VNI başına bir anahtar vardır, kapı
+başına ilke yoktur; VLAN etiketi ve hız sınırı yine konuk başına ayarlanır.
+
 ## Sunucular arası ortak ağ (VXLAN)
 
 RedoX VE ağ aygıtı oluşturmaz; konuklar sizin kurduğunuz köprülere bağlanır. Birkaç sunucudaki konukların aynı ağda

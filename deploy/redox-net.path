@@ -1,0 +1,9 @@
+[Unit]
+Description=RedoX VE dağıtık anahtar tanımlarını izler
+
+[Path]
+PathChanged=/var/lib/redox/vswitch.json
+Unit=redox-net.service
+
+[Install]
+WantedBy=multi-user.target

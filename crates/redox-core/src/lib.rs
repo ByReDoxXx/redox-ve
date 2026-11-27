@@ -19,6 +19,7 @@ pub mod replicas;
 pub mod retention;
 pub mod seed;
 pub mod usage;
+pub mod vswitch;
 
 pub use approvals::Approval;
 pub use cluster::{Cluster, ClusterSummary};
@@ -31,4 +32,5 @@ pub use pools::{Pool, PoolUsage, MAX_POOLS};
 pub use replicas::Replica;
 pub use retention::Gfs;
 pub use usage::Usage;
+pub use vswitch::VSwitch;
 pub use model::*;

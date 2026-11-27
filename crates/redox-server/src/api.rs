@@ -90,6 +90,9 @@ pub fn routes() -> Router<AppState> {
         .route("/peers/{name}/migrate/{vmid}", post(peer_migrate))
         .route("/peers/{name}/send/{vmid}", post(peer_send))
         .route("/balance", get(balance))
+        .route("/vswitches", get(vswitches).post(vswitch_put))
+        .route("/vswitches/{name}", delete_route(vswitch_delete))
+        .route("/vswitches/{name}/push", post(vswitch_push))
         .route("/guests/{vmid}/migrate/prepare", post(migrate_prepare))
         .route("/guests/{vmid}/migrate", post(migrate_out))
         .route("/pools", get(pools).post(pool_put))
@@ -184,6 +187,43 @@ async fn peer_migrate(State(st): State<AppState>, Extension(me): Extension<Ident
 /// Yalnızca öneridir; bir şey taşınmaz.
 async fn balance(State(st): State<AppState>) -> Json<crate::state::balance::Balance> {
     Json(st.balance())
+}
+
+/// Dağıtık anahtarlar: tanım, bu sunucudaki durum, kullanan konuklar ve eşlerdeki tanımla karşılaştırma.
+async fn vswitches(State(st): State<AppState>) -> Json<Vec<crate::state::vswitch::SwitchReport>> {
+    Json(st.vswitch_report())
+}
+
+async fn vswitch_put(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(switch): Json<redox_core::VSwitch>) -> Result<StatusCode, ApiError> {
+    st.vswitch_put(switch, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize, Default)]
+struct EverywhereQuery {
+    #[serde(default)]
+    everywhere: bool,
+}
+
+fn peer_results(results: Vec<(String, Result<(), String>)>) -> serde_json::Value {
+    json!(results.into_iter().map(|(peer, r)| json!({ "peer": peer, "ok": r.is_ok(), "error": r.err().map(crate::i18n::tfmt) })).collect::<Vec<_>>())
+}
+
+async fn vswitch_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>, axum::extract::Query(q): axum::extract::Query<EverywhereQuery>) -> Result<Response, ApiError> {
+    if !q.everywhere {
+        st.vswitch_remove(&name, &me.user)?;
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+    let user = me.user.clone();
+    let results = tokio::task::spawn_blocking(move || st.vswitch_remove_everywhere(&name, &user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
+    Ok(Json(json!({ "peers": peer_results(results) })).into_response())
+}
+
+/// Anahtarın tanımını bütün eş sunuculara gönderir.
+async fn vswitch_push(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> ApiResult<serde_json::Value> {
+    let user = me.user.clone();
+    let results = tokio::task::spawn_blocking(move || st.vswitch_push(&name, &user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
+    Ok(Json(json!({ "peers": peer_results(results) })))
 }
 
 #[derive(serde::Deserialize, Default)]

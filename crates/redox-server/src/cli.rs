@@ -126,6 +126,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox peer migrate <eş> <kimlik> (eşteki çalışan sanal makineyi kapatmadan bu sunucuya taşır)
   redox peer send <eş> <kimlik>   (bu sunucudaki çalışan sanal makineyi kapatmadan eşe taşır)
   redox balance                   (yük dengeleme önerisi: sunucu sıkışmışsa hangi konuk hangi eşe taşınmalı)
+  redox switch list | set <vds-ad> <vni> <adres,adres> [--mtu <n>] | push <ad> | remove <ad> [--everywhere]   (dağıtık anahtar)
   redox task list
 ";
 
@@ -164,6 +165,8 @@ pub enum View {
     Lockdown,
     Profile,
     Balance,
+    Switches,
+    SwitchPeers,
     /// Yanıt olduğu gibi (girintili JSON) yazılır.
     Json,
     /// Hazır imaj kataloğu.
@@ -472,6 +475,11 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["storage", "list"] => get("/storage", View::Storage),
         ["peer", "list"] => get("/peers", View::Peers),
         ["balance"] => get("/balance", View::Balance),
+        ["switch", "list"] => get("/vswitches", View::Switches),
+        ["switch", "set", name, vni, members, rest @ ..] => req("POST", "/vswitches".to_string(), Some(switch_body(name, vni, members, rest)?), View::Done("anahtar kaydedildi; eşlere göndermek için: redox switch push <ad>")),
+        ["switch", "push", name] => req("POST", format!("/vswitches/{name}/push"), None, View::SwitchPeers),
+        ["switch", "remove", name] => req("DELETE", format!("/vswitches/{name}"), None, View::Done("anahtar silindi")),
+        ["switch", "remove", name, "--everywhere"] => req("DELETE", format!("/vswitches/{name}?everywhere=true"), None, View::SwitchPeers),
         ["peer", "send", peer, id] => req("POST", format!("/peers/{peer}/send/{}", vmid(id)?), None, View::Done("canlı taşıma başladı; sonuç: redox task list")),
         ["support"] => get("/support", View::Json),
         ["profile", "export"] => get("/profile", View::Json),
@@ -489,6 +497,29 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
 
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("-")
+}
+
+/// Anahtarın bu sunucudaki ve eşteki durumunun okunur adı.
+fn switch_local(state: Option<&str>) -> &'static str {
+    use crate::vswitch::status::Local;
+    state.and_then(|s| [Local::Ready, Local::Missing, Local::Foreign, Local::Differs].into_iter().find(|l| serde_json::to_value(l).is_ok_and(|v| v == s))).map_or("benzetim (ağ kurulmaz)", Local::label)
+}
+
+fn switch_peer_state(state: &str) -> &'static str {
+    use crate::state::vswitch::PeerState;
+    [PeerState::Same, PeerState::Different, PeerState::Missing].into_iter().find(|p| serde_json::to_value(p).is_ok_and(|v| v == state)).unwrap_or(PeerState::Unknown).label()
+}
+
+/// `redox switch set` değerlerini API gövdesine çevirir.
+fn switch_body(name: &str, vni: &str, members: &str, rest: &[&str]) -> Result<Value, String> {
+    let vni: u32 = vni.parse().map_err(|_| format!("VNI bir sayı olmalı: {vni}"))?;
+    let mtu: u32 = match rest {
+        [] => redox_core::vswitch::DEFAULT_MTU,
+        ["--mtu", value] => value.parse().map_err(|_| format!("MTU bir sayı olmalı: {value}"))?,
+        _ => return Err(format!("anlaşılmayan seçenek: {}", rest.join(" "))),
+    };
+    let members: Vec<&str> = members.split(',').map(str::trim).filter(|m| !m.is_empty()).collect();
+    Ok(json!({ "name": name, "vni": vni, "mtu": mtu, "members": members }))
 }
 
 fn n(v: &Value, key: &str) -> u64 {
@@ -643,6 +674,21 @@ pub fn render(view: View, v: &Value) -> String {
             "çoğaltma yok",
         ),
         View::Json => serde_json::to_string_pretty(v).unwrap_or_default(),
+        View::Switches => or_none(
+            rows(&|x| {
+                let list = |key: &str| x[key].as_array().map(|a| a.iter().map(|i| i.as_str().map_or_else(|| i.to_string(), str::to_string)).collect::<Vec<_>>().join(",")).unwrap_or_default();
+                let peers: String = x["peers"].as_array().into_iter().flatten().map(|p| format!("\n  eş {}: {}", p[0].as_str().unwrap_or("?"), switch_peer_state(p[1].as_str().unwrap_or("")))).collect();
+                format!("{:<15} VNI {:<8} MTU {}\n  bu sunucu: {}\n  üyeler: {}\n  konuklar: {}{peers}", s(x, "name"), n(x, "vni"), n(x, "mtu"), switch_local(x["local"].as_str()), list("members"), list("guests"))
+            }),
+            "dağıtık anahtar yok",
+        ),
+        View::SwitchPeers => v["peers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| if p["ok"] == true { format!("{}: tamam", s(p, "peer")) } else { format!("{}: {}", s(p, "peer"), s(p, "error")) })
+            .collect::<Vec<_>>()
+            .join("\n"),
         View::Balance => {
             let head = format!("işlemci %{}  bellek %{}", n(v, "cpu_pct"), n(v, "mem_pct"));
             let moves: Vec<String> = v["moves"].as_array().into_iter().flatten().map(|m| format!("  {:<6} {:<16} -> {:<12} ({}; sonra burada %{}, eşte %{})   redox peer send {} {}", n(m, "vmid"), s(m, "name"), s(m, "peer"), s(m, "reason"), n(m, "here_mem_pct"), n(m, "peer_mem_pct"), s(m, "peer"), n(m, "vmid"))).collect();
@@ -894,6 +940,20 @@ mod tests {
         assert!(advice.contains("sunucu sıkışmış. Öneriler:") && advice.contains("redox peer send ankara 103"), "{advice}");
         let english = crate::i18n::lines_to_english(&advice);
         assert!(english.contains("the server is busy. Advice:") && english.contains("(uses 6000 MB of memory; afterwards 75% here, 40% on the peer)   redox peer send ankara 103"), "{english}");
+        let set = parse(&args("switch set vds-web 100 10.0.0.1,10.0.0.2 --mtu 1400")).unwrap();
+        assert_eq!((set.path.as_str(), set.body.clone().unwrap()), ("/vswitches", json!({"name": "vds-web", "vni": 100, "mtu": 1400, "members": ["10.0.0.1", "10.0.0.2"]})));
+        assert_eq!(parse(&args("switch push vds-web")).unwrap().path, "/vswitches/vds-web/push");
+        assert_eq!(parse(&args("switch remove vds-web --everywhere")).unwrap().path, "/vswitches/vds-web?everywhere=true");
+        assert!(parse(&args("switch set vds-web yuz 10.0.0.1,10.0.0.2")).is_err() && parse(&args("switch set vds-web 1 10.0.0.1 --hiz 5")).is_err());
+        let listed = render(View::Switches, &json!([{"name": "vds-web", "vni": 100, "mtu": 1450, "members": ["10.0.0.1", "10.0.0.2"], "local": "missing", "guests": [100, 101], "peers": [["ankara", "same"], ["izmir", "different"]]}]));
+        for part in ["vds-web         VNI 100      MTU 1450", "bu sunucu: kurulmadı", "üyeler: 10.0.0.1,10.0.0.2", "konuklar: 100,101", "eş ankara: aynı", "eş izmir: tanımı farklı"] {
+            assert!(listed.contains(part), "{part}\n{listed}");
+        }
+        let english = crate::i18n::lines_to_english(&listed);
+        for part in ["this server: not set up", "members: 10.0.0.1,10.0.0.2", "guests: 100,101", "peer ankara: same", "peer izmir: definition differs"] {
+            assert!(english.contains(part), "{part}\n{english}");
+        }
+        assert_eq!(render(View::SwitchPeers, &json!({"peers": [{"peer": "ankara", "ok": true}, {"peer": "izmir", "ok": false, "error": "erişilemiyor"}]})), "ankara: tamam\nizmir: erişilemiyor");
         assert_eq!(parse(&args("profile export")).unwrap().path, "/profile");
         let file = std::env::temp_dir().join(format!("redox-profil-{}.json", std::process::id()));
         std::fs::write(&file, r#"{"kind":"redox-profile","options":{}}"#).unwrap();

@@ -1,0 +1,32 @@
+[Unit]
+Description=RedoX VE dağıtık anahtarları (ağ yardımcısı)
+After=network-online.target
+Wants=network-online.target
+Before=redox.service
+ConditionPathExists=/var/lib/redox/vswitch.json
+# Tanımlar art arda değişirse birim her seferinde yeniden çalışabilmelidir.
+StartLimitIntervalSec=0
+
+# Yönetim sunucusu (redox.service) yetkisizdir; ağ aygıtlarını yalnızca bu kısa ömürlü birim kurar. Tanım
+# dosyasındaki her alanı yeniden doğrular ve yalnızca "vds" önekli, kendi kurduğu aygıtlara dokunur.
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/redox net sync /var/lib/redox/vswitch.json --bridge-conf /etc/qemu/redox-vds.conf
+# CAP_NET_ADMIN: ağ aygıtları. CAP_DAC_READ_SEARCH: redox kullanıcısının dosyasını okumak.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_READ_SEARCH
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/qemu
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

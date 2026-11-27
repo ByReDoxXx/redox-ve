@@ -368,6 +368,12 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         say!("Uyarılar gönderilecek: {}", channel.describe());
         state.alerts().add_channel(channel);
     }
+    if state.driver().is_real() {
+        // Dağıtık anahtar tanımları: ağı kuran root birimi (redox-net.service) bu dosyayı okur.
+        if let Err(e) = state.set_vswitch_file(opts.data_dir.join("vswitch.json")) {
+            complain!("UYARI: dağıtık anahtar dosyası yazılamadı: {e}");
+        }
+    }
     if state.driver().firewall() {
         match state.sync_firewall() {
             Ok(()) => say!("Konuk güvenlik duvarı açık (nftables, bridge ailesi, tablo: redox)."),
@@ -633,6 +639,31 @@ fn manage_users(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Dağıtık anahtarların ağını kurar (root olarak çalışır; `redox-net.service`).
+fn net_sync(file: &str, rest: &[&str]) -> Result<(), String> {
+    let (mut dry_run, mut bridge_conf) = (false, None);
+    let mut rest = rest.iter();
+    while let Some(arg) = rest.next() {
+        match *arg {
+            "--dry-run" => dry_run = true,
+            "--bridge-conf" => bridge_conf = Some(*rest.next().ok_or("--bridge-conf bir dosya yolu ister")?),
+            other => return Err(format!("bilinmeyen seçenek: {other}")),
+        }
+    }
+    let switches = redox_server::vswitch::read_spec(std::path::Path::new(file))?;
+    let (done, errors) = redox_server::vswitch::sync::sync(&switches, dry_run)?;
+    for line in &done {
+        say!("{line}");
+    }
+    if done.is_empty() && errors.is_empty() {
+        say!("ağ zaten tanımlara uygun");
+    }
+    if let Some(path) = bridge_conf.filter(|_| !dry_run) {
+        redox_server::vswitch::write_bridge_conf(std::path::Path::new(path), &switches)?;
+    }
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Komut satırının dili: REDOX_LANG ortam değişkeni; `serve --lang en` sunucu çıktılarını da İngilizce yapar.
@@ -657,7 +688,8 @@ fn main() -> ExitCode {
         Some("net") => match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
             ["net", "vxlan", bridge, vni, local, peers] => redox_server::vxlan::plan(bridge, vni, local, peers).map(|script| print!("{}", redox_server::i18n::cli_text(&script))),
             ["net", "vxlan", bridge, vni, local, peers, "--unit"] => redox_server::vxlan::unit(bridge, vni, local, peers).map(|unit| print!("{}", redox_server::i18n::cli_text(&unit))),
-            _ => Err("kullanım: redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,<eş-adres>...] [--unit]".to_string()),
+            ["net", "sync", file, rest @ ..] => net_sync(file, rest),
+            _ => Err("kullanım: redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,<eş-adres>...] [--unit]\n          redox net sync <tanım-dosyası> [--dry-run] [--bridge-conf <dosya>]".to_string()),
         },
         Some(_) => cli::run(&args).map(|out| {
             use std::io::Write;

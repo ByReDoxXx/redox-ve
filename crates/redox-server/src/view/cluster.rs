@@ -375,7 +375,6 @@ fn replica_row(p: &Page, peers: &[crate::peers::PeerView], r: &redox_core::repli
     }
 }
 
-/// Birleşik görünüm: bu sunucu ve eş sunucuların konukları tek sayfada, salt okunur.
 /// Yük dengeleme önerisi: yalnızca sunucu sıkışmışken görünür.
 fn balance_card(p: &Page, b: &crate::state::balance::Balance) -> Markup {
     html! {
@@ -407,7 +406,8 @@ fn balance_card(p: &Page, b: &crate::state::balance::Balance) -> Markup {
     }
 }
 
-pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state::balance::Balance) -> String {
+/// Birleşik görünüm: bu sunucu ve eş sunucuların konukları tek sayfada, salt okunur.
+pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state::balance::Balance, switches: &[crate::state::vswitch::SwitchReport]) -> String {
     let c = p.cluster;
     let local = c.summary();
     let online = peers.iter().filter(|v| v.online()).count();
@@ -425,6 +425,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state:
         div class="stack" {
             (balance_card(p, balance))
             (replicas_card(p, peers))
+            (super::switches::switch_card(p, switches, !peers.is_empty()))
             @if p.admin {
                 div class="card" {
                     header { h2 { (tx("Destek paketi")) } (tip("Sorun bildirirken gönderilecek durum dökümü.")) a class="btn sm end" href="/support" download { (icon("disk")) (tx("İndir")) } }

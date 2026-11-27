@@ -53,6 +53,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Maintenance mode can evacuate a server: its running VMs are live-migrated to a peer (`redox maintenance on --evacuate <peer>`).
 - CPU shares and memory reservation per VM (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): who gets the CPU when the server runs short, and memory that is not taken back; both can be changed while the guest runs.
 - Lockdown (`redox lockdown on`): a change freeze during which nobody, administrators included, can change anything from the interface or the API; guests and scheduled work go on.
+- Distributed switches (`redox switch`): one VXLAN guest network defined once and sent to every peer; a small root helper builds it and touches only its own devices.
 - Load balancing advice (`redox balance`): when a server is busy, which running VM to live-migrate to which peer; nothing moves by itself, `redox peer send` does the move.
 - Server profiles (`redox profile export | diff | apply`): compare one server's settings with another's and bring pools and backup jobs in line.
 - A support bundle (`redox support > bundle.json`, or *Cluster* page): version, capabilities, settings, guest hardware and recent tasks in one file, without passwords, tokens or the audit log.
@@ -316,6 +317,7 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 | `GET /support` | Support bundle (administrators only) |
 | `GET`/`POST /lockdown` | Lockdown (change freeze) |
 | `GET /profile`, `POST /profile/diff`, `/profile/apply` | Server profile |
+| `GET`/`POST /vswitches`, `DELETE /vswitches/{name}`, `POST /vswitches/{name}/push` | Distributed switches |
 | `GET /balance`, `POST /peers/{name}/send/{vmid}` | Load balancing advice; live-migrate a VM to a peer |
 | `GET /tasks`, `GET /tasks/{id}` | Task log |
 
@@ -439,7 +441,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-565 tests pass on Linux and 479 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+577 tests pass on Linux and 491 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 

@@ -43,6 +43,7 @@ use std::net::SocketAddr;
 
 pub mod csv;
 pub mod openapi;
+pub mod vswitch;
 pub mod vxlan;
 pub mod delta;
 pub mod i18n;
@@ -131,6 +132,7 @@ pub fn app(state: AppState) -> Router {
         .route("/cluster/import", post(ui::peer_import))
         .route("/cluster/migrate", post(ui::peer_migrate))
         .route("/cluster/send", post(ui::peer_send))
+        .route("/cluster/switch", post(ui_ops::switch_action))
         .route("/cluster/replica", post(ui::replica_action))
         .route("/help", get(ui::help))
         .route("/cmd", post(ui::command))

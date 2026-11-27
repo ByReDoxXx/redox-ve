@@ -12,6 +12,7 @@ mod backups;
 mod cluster;
 mod forms;
 mod guests;
+mod switches;
 mod widgets;
 
 pub use account::*;

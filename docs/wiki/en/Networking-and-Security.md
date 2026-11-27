@@ -12,6 +12,40 @@
   `/etc/qemu/bridge.conf` (INSTALL.md section 9).
 - **VLAN:** a tag on a bridged card (`vmbr1:20`). The bridge needs VLAN filtering and the service CAP_NET_ADMIN.
 
+## Distributed switches
+
+A distributed switch is a guest network that exists under the same name on several servers and is joined between them
+by a VXLAN tunnel. You define it **once** (name, VNI, MTU and the tunnel addresses of **all** member servers), send it
+to the peers, and select its name as the network of a guest, wherever that guest runs.
+
+```
+redox switch set vds-web 100 10.0.0.1,10.0.0.2,10.0.0.3          # on one server
+redox switch push vds-web                                       # send the same definition to every peer
+redox switch list                                               # local state and comparison with the peers
+redox switch remove vds-web --everywhere
+```
+
+The *Cluster* page has the same in a **Distributed switches** card.
+
+* The name must start with `vds`. The definition is identical on every server; each one recognises **its own** address
+  among the members and uses it as the local end of the tunnel.
+* The management service stays unprivileged: it only writes the definitions to `<data-dir>/vswitch.json`. The network
+  is built by `redox-net.service` (root, `CAP_NET_ADMIN`), which `redox-net.path` starts whenever the file changes and
+  which also runs at boot. `install.sh` sets both up.
+* The helper does not trust the file: every field is validated again, commands run without a shell, and it only touches
+  devices **it created itself** (marked with `ifalias`). A bridge such as `vmbr0` can never be joined to a tunnel, even
+  by a compromised management service. It also maintains the list `qemu-bridge-helper` reads
+  (`/etc/qemu/redox-vds.conf`).
+* To see what it would do: `redox net sync /var/lib/redox/vswitch.json --dry-run`; to see why it failed:
+  `journalctl -u redox-net`.
+* A peer's definition that differs is shown as *definition differs*; it is never overwritten until you send yours.
+* A switch cannot be removed while a guest on that server uses it.
+
+**Limits.** The tunnel is **not encrypted** (UDP 4789): use it only on a network you trust, or run it inside an
+encrypted one such as WireGuard. Broadcasts are copied to every member, so it is meant for a handful of servers (at
+most 16). The MTU must leave 50 bytes for VXLAN: 1450 on an ordinary 1500-byte network, and guests must use it too.
+There is one switch per VNI and no per-port policies; VLAN tags and rate limits are still set on each guest.
+
 ## A network shared between servers (VXLAN)
 
 RedoX VE does not create network devices; guests attach to bridges you set up. To put guests on several servers in

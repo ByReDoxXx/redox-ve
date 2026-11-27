@@ -54,6 +54,9 @@ pub struct Cluster {
     /// çalışmayı, zamanlanmış işler yürümeyi sürdürür. Yalnızca bir yönetici kilidi kaldırabilir.
     #[serde(default)]
     pub lockdown: bool,
+    /// Dağıtık anahtarlar (ada göre sıralı): eşlerle birebir aynı tanımla paylaşılan konuk ağları.
+    #[serde(default)]
+    pub vswitches: Vec<crate::vswitch::VSwitch>,
     /// Konuk başına birikimli kaynak tüketimi (kimliğe göre sıralı).
     #[serde(default)]
     pub usage: Vec<crate::usage::Usage>,
@@ -94,6 +97,7 @@ impl Cluster {
             replicas: Vec::new(),
             maintenance: false,
             lockdown: false,
+            vswitches: Vec::new(),
             maintenance_resume: Vec::new(),
             guest_fs: Vec::new(),
             approvals: Vec::new(),

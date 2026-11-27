@@ -43,6 +43,8 @@ pub struct PeerView {
     pub cluster: String,
     pub nodes: Vec<Node>,
     pub guests: Vec<Guest>,
+    /// Eşin dağıtık anahtarları; okunamadıysa (ör. eski sürüm) `None`.
+    pub vswitches: Option<Vec<redox_core::VSwitch>>,
 }
 
 impl PeerView {
@@ -161,10 +163,18 @@ fn fetch(peer: &Peer, now: u64) -> PeerView {
             view.cluster = cluster;
             view.nodes = nodes;
             view.guests = guests;
+            // İsteğe bağlı bilgi: bunu sunmayan eş yine "erişilebilir" sayılır. Rapordaki ek alanlar atılır.
+            view.vswitches = get::<Vec<serde_json::Value>>(&agent, peer, "/api/v1/vswitches").ok().and_then(|all| all.into_iter().map(switch_of).collect());
         }
         Err(e) => view.error = Some(e),
     }
     view
+}
+
+/// Eşin anahtar raporundan yalnızca tanım alanlarını alır.
+fn switch_of(report: serde_json::Value) -> Option<redox_core::VSwitch> {
+    let only = serde_json::json!({ "name": report["name"], "vni": report["vni"], "mtu": report["mtu"], "members": report["members"] });
+    serde_json::from_value(only).ok()
 }
 
 fn get<T: DeserializeOwned>(agent: &ureq::Agent, peer: &Peer, path: &str) -> Result<T, String> {
@@ -222,6 +232,19 @@ impl Peer {
             return Ok(serde_json::Value::Null);
         }
         response.into_json().map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())
+    }
+
+    pub fn vswitch_put(&self, switch: &serde_json::Value) -> Result<(), String> {
+        self.request("POST", "/api/v1/vswitches", Duration::from_secs(30)).send_json(switch.clone()).map(|_| ()).map_err(peer_error)
+    }
+
+    /// Eşte anahtarı siler; eşte zaten yoksa başarı sayılır.
+    pub fn vswitch_delete(&self, name: &str) -> Result<(), String> {
+        let listed = self.json("GET", "/api/v1/vswitches")?;
+        if !listed.as_array().is_some_and(|all| all.iter().any(|s| s["name"] == name)) {
+            return Ok(());
+        }
+        self.request("DELETE", &format!("/api/v1/vswitches/{name}"), Duration::from_secs(30)).call().map(|_| ()).map_err(peer_error)
     }
 
     /// Bu eşin kendi eşlerini nasıl gördüğü: (ad, adres, ulaşılıyor mu). Devralmada hakem oyu olarak kullanılır.

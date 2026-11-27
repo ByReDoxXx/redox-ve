@@ -43,7 +43,7 @@ if [ -z "$BINARY" ]; then
     done
 fi
 [ -n "$BINARY" ] && [ -f "$BINARY" ] || die "redox ikili dosyası bulunamadı; --binary YOL verin" "redox binary not found; pass --binary PATH"
-for unit in redox-host.service; do
+for unit in redox-host.service redox-net.service redox-net.path; do
     [ -f "$HERE/$unit" ] || die "$HERE/$unit yok" "$HERE/$unit is missing"
 done
 
@@ -91,6 +91,23 @@ else
     mkdir -p "$(dirname "$UNIT")"
     sed "s|--addr 127.0.0.1:8006|--addr $LISTEN|" "$HERE/redox-host.service" > "$UNIT"
 fi
+
+# Dağıtık anahtarlar: ağ aygıtlarını kuran root birimi ve tanım dosyasını izleyen birim. qemu-bridge-helper,
+# "include" edilen dosya yoksa bütün köprüleri reddeder; bu yüzden dosya önce oluşturulur.
+VDS_CONF="$ROOT/etc/qemu/redox-vds.conf"
+QEMU_CONF="$ROOT/etc/qemu/bridge.conf"
+if [ "$DRY_RUN" = 1 ]; then
+    echo "+ write redox-net.service redox-net.path $VDS_CONF; include in $QEMU_CONF"
+else
+    cp "$HERE/redox-net.service" "$HERE/redox-net.path" "$ROOT/etc/systemd/system/"
+    mkdir -p "$ROOT/etc/qemu"
+    [ -f "$VDS_CONF" ] || : > "$VDS_CONF"
+    chmod 0644 "$VDS_CONF"
+    # "include" satırı hedef sistemdeki yolu gösterir ($ROOT'suz).
+    grep -qxF "include /etc/qemu/redox-vds.conf" "$QEMU_CONF" 2>/dev/null || echo "include /etc/qemu/redox-vds.conf" >> "$QEMU_CONF"
+    chmod 0644 "$QEMU_CONF"
+fi
+[ -n "$ROOT" ] || [ ! -f /usr/lib/qemu/qemu-bridge-helper ] || run chmod u+s /usr/lib/qemu/qemu-bridge-helper
 
 if [ "$TLS" = 1 ]; then
     CADDY="$ROOT/etc/caddy/Caddyfile"
@@ -275,7 +292,7 @@ if [ -n "$ROOT" ]; then
     say "Sınama kipi: dosyalar $ROOT altına yazıldı" "Test mode: files were written under $ROOT"
     exit 0
 fi
-run systemctl enable redox.service redox-firstboot.service redox-banner.service redox-console.service
+run systemctl enable redox.service redox-firstboot.service redox-banner.service redox-console.service redox-net.service redox-net.path
 # tty1'i durum ekranı kullanır; öbür sanal konsollarda (Alt+F2) olağan oturum açma durur.
 run systemctl disable getty@tty1.service
 [ "$TLS" = 0 ] || run systemctl enable caddy.service
@@ -290,6 +307,7 @@ if [ ! -s /var/lib/redox/users.json ] && [ -t 0 ] && [ "$DRY_RUN" = 0 ]; then
 fi
 run systemctl restart redox-firstboot.service
 run systemctl restart redox.service
+run systemctl restart redox-net.path
 [ "$TLS" = 0 ] || run systemctl restart caddy.service
 run systemctl restart redox-banner.service
 [ "$DRY_RUN" = 1 ] || sed -n '/Panel/p' /etc/issue

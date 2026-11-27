@@ -26,6 +26,7 @@ mod schedule;
 mod snapshots;
 mod support;
 mod transfer;
+pub mod vswitch;
 
 /// Grafiklerde tutulan örnek sayısı (5 sn aralıkla 10 dakika).
 pub const HISTORY_LEN: usize = 120;
@@ -200,6 +201,8 @@ struct Inner {
     move_precopy: std::sync::atomic::AtomicBool,
     /// Canlı taşıma: kapı aralığı ve adresler.
     migrate: Mutex<MigrateSettings>,
+    /// Dağıtık anahtarların ağ yardımcısı için yazıldığı dosya.
+    vswitch_file: std::sync::OnceLock<PathBuf>,
     /// Çerezi olmayan ziyaretçiye gösterilecek dil İngilizce mi? (`--lang en`)
     english: std::sync::atomic::AtomicBool,
     /// API hız sınırı: (dakikadaki istek sınırı; 0 kapalı, kullanıcı → (dakika, o dakikadaki istek sayısı)).
@@ -239,6 +242,7 @@ impl AppState {
             four_eyes: std::sync::atomic::AtomicBool::new(false),
             move_precopy: std::sync::atomic::AtomicBool::new(false),
             migrate: Mutex::new(MigrateSettings::default()),
+            vswitch_file: Default::default(),
             english: std::sync::atomic::AtomicBool::new(false),
             api_rate: Mutex::new((0, HashMap::new())),
             report: Mutex::new((None, None)),
