@@ -388,7 +388,7 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   disk alınır. Dışa aktarmak için kapalı konuğun *Çoğalt ve Taşı* sekmesinde **OVA Olarak İndir** (ya da
   `curl -H "Authorization: Bearer $REDOX_TOKEN" -o vm.ova $REDOX_URL/api/v1/guests/103/export`): tanım ve bütün diskler
   (streamOptimized vmdk) tek arşivde gelir.
-- **Askıya alma:** konuk sayfasının başlığında **Askıya Al** (ya da `redox vm suspend 103`): konuğun bellek ve aygıt
+- **Askıya alma:** konuk sayfasının başlığındaki **Diğer** menüsünde **Askıya Al** (ya da `redox vm suspend 103`): konuğun bellek ve aygıt
   durumu diske (`images/vm-<kimlik>.state`) yazılır ve konuk kapanır; sunucuyu yeniden başlatabilirsiniz. **Başlat**
   konuğu kaldığı yerden sürdürür (duraklatılmışken askıya alındıysa duraklatılmış döner). Askıdayken disk ve donanım
   değiştirilemez: geri yükleme, anlık görüntüye dönüş, disk ekleme reddedilir; yedek alınabilir (yedek yalnızca diski
@@ -528,7 +528,7 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   bildirim). Ek disk silme, yedek işi silme ve kullanıcı silme de aynı kurala bağlıdır. İstek sahibi kendi isteğini onaylayamaz, 24 saatte onaylanmayan istek düşer. En az iki yönetici
   hesabı gerekir. Zamanlayıcının saklama budaması bu kuralın dışındadır. Aynı kişinin iki hesabı varsa kural onu
   durdurmaz: amaç, ele geçirilen tek bir hesabın yedekleri silememesidir.
-- **Çoğaltma (yedek kopya):** *Küme* sayfasındaki **Çoğaltma** kartı ya da `redox replica add <eş> <kimlik> 60`.
+- **Çoğaltma (yedek kopya):** *Koruma* sayfasındaki **Çoğaltma** kartı ya da `redox replica add <eş> <kimlik> 60`.
   Eş sunucudaki sanal makinenin kopyası bu sunucuda verdiğiniz aralıkla (15 dakika – 1 hafta) tazelenir; kaynak
   çalışmaya devam eder, askıya alınmaz. Kopya `<ad>-kopya` adıyla kapalı durur; kaynak sunucu ölürse onu buradan
   başlatırsınız (kayıp, son turdan beri yazılanlardır). Çalışan bir kopyanın üzerine yazılmaz. **Her tur diskin
@@ -538,7 +538,7 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   sırasının tersine kapatılır; kipteyken hiçbir konuk başlatılmaz, zamanlanmış yedekler, güç işlemleri, çoğaltma ve
   kendiliğinden yeniden başlatma durur. Kip durum dosyasında saklanır: sunucu bu sırada yeniden başlasa da konuklar
   açılmaz. `redox maintenance off` kapatılan konukları açılış sırasıyla yeniden başlatır. Konukları başka sunucuya
-  kendiliğinden taşımaz; taşımak istediklerinizi önce öbür sunucunun *Küme* sayfasından alın.
+  kendiliğinden taşımaz; taşımak istediklerinizi önce öbür sunucunun *Sunucular* sayfasından alın.
 - **Zamanlanmış yedek sınaması:** hizmet satırına `--backup-test-every 7@03:00`. Her sanal makinenin en yeni yedeği
   7 günde bir, 03:00'ten başlayan dört saatlik pencerede sırayla (aynı anda tek sınama) açılıp sınanır; sonuç
   yedeğin satırına ve günlük rapora yazılır.
@@ -706,7 +706,7 @@ Arayüz Türkçe ve İngilizcedir. Her kullanıcı üst çubuktaki **EN / TR** d
 
 ### 10.2 Birleşik görünüm (birden çok sunucu)
 
-Birkaç RedoX VE sunucunuz varsa birini "merkez" yapıp diğerlerinin düğüm ve konuklarını **Küme**
+Birkaç RedoX VE sunucunuz varsa birini "merkez" yapıp diğerlerinin düğüm ve konuklarını **Sunucular**
 sayfasında görebilirsiniz. Bu **gerçek bir küme değildir**: görünüm salt okunurdur, her sunucu kendi
 konuklarını yönetir; ortak durum ve kendiliğinden devralma yoktur (konuk taşıma aşağıda). Konuğun adına tıklamak
 sizi o sunucunun arayüzüne götürür (orada ayrıca giriş yaparsınız).
@@ -736,7 +736,7 @@ edilir. Eşin sertifikası geçerli olmalıdır (kendinden imzalı sertifika red
 token'ı reddeden eş sayfada nedeniyle birlikte gösterilir; diğerleri etkilenmez. Komut satırından:
 `redox peer list`.
 
-**Sanal makine taşıma:** eşteki **kapalı** bir sanal makineyi merkeze kopyalamak için *Küme* sayfasındaki
+**Sanal makine taşıma:** eşteki **kapalı** bir sanal makineyi merkeze kopyalamak için *Sunucular* sayfasındaki
 **Buraya Al** düğmesini ya da `redox peer import izmir 103` komutunu kullanın. Bunun için eş dosyasındaki token
 eşte **yönetici** yetkili olmalıdır. Merkez eşte bir yedek aldırır, indirir, yeni bir kimlikle konuğu oluşturur ve
 eşteki geçici yedeği siler. Kaynak konuk yerinde kalır: kopyanın çalıştığını görünce eşte siz silersiniz. Köprü
@@ -873,7 +873,7 @@ sudo -u redox redox user scope nobet web,test --users /var/lib/redox/users.json 
 ```
 
 Kapsam boşsa operatör bütün konuklarda yetkilidir. Operatör bütün konukları **görür**; kapsam yalnızca işlem yapmayı
-kısıtlar. Kaynak kotaları için 8. bölümdeki *Kaynak havuzları* maddesine bakın. Rol ve kapsam *Kullanıcılar* sayfasından da değişir.
+kısıtlar. Kaynak kotaları için 8. bölümdeki *Kaynak havuzları* maddesine bakın. Rol ve kapsam *Kullanıcılar* sayfasında, kullanıcının **Yönet** menüsünden açılan sayfadan da değişir.
 
 **Tek oturum açma (OpenID Connect):** kimlik sağlayıcınızda (Keycloak, Authentik, Google, Microsoft Entra) bir istemci
 oluşturun; dönüş adresi `https://redox.example.com/login/oidc/callback` olsun.

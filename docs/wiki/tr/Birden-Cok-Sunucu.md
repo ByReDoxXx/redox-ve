@@ -5,11 +5,11 @@
 # Birden çok sunucu
 
 RedoX VE'de ortak küme durumu yoktur: her sunucu kendi konuklarını yönetir. Sunucuları birbirine **eş** olarak
-tanıtırsınız (`--peers DOSYA`, her satır `AD ADRES TOKEN`); *Küme* sayfası hepsini birlikte gösterir.
+tanıtırsınız (`--peers DOSYA`, her satır `AD ADRES TOKEN`); *Sunucular* sayfası hepsini birlikte gösterir.
 
 ## Taşıma
 
-*Küme* sayfasında eşteki konuğun yanındaki düğmeler:
+*Sunucular* sayfasında eşteki konuğun yanındaki düğmeler:
 
 - **Buraya Al:** kapalı sanal makineyi yedeği üzerinden bu sunucuya kopyalar. Kaynak yerinde kalır; çalıştığını
   görünce orada siz silersiniz.
@@ -21,17 +21,17 @@ tanıtırsınız (`--peers DOSYA`, her satır `AD ADRES TOKEN`); *Küme* sayfas�
   kısa süre dondurulur); kopya kapalı gelir. Bu sunucuda LXC kurulu olmalıdır. **Sahte LXC araçlarıyla sınandı; gerçek
   LXC ile denenmedi.**
 
-**Canlı taşıma:** çalışan sanal makine **kapatılmadan** da taşınır (*Küme* sayfasında *Canlı Taşı* ya da hedefte `redox peer migrate <eş> <kimlik>`). Hedef, konuğun QEMU'sunu duraklatılmış ve bekler halde açar; kaynak, konuk çalışmayı sürdürürken her diski hedefe aynalar, sonra belleği taşır. Konuk yalnızca son bellek sayfaları için duraklar (testlerde onlarca milisaniye) ve hedefte aynı kimlikle sürer. Konuğun kaydı ve diskleri kaynakta kalır: kapalıdır ve kendiliğinden yeniden açılmayacak biçimde işaretlenir; her şey yolundaysa orada silersiniz.
+**Canlı taşıma:** çalışan sanal makine **kapatılmadan** da taşınır (*Sunucular* sayfasında *Canlı Taşı* ya da hedefte `redox peer migrate <eş> <kimlik>`). Hedef, konuğun QEMU'sunu duraklatılmış ve bekler halde açar; kaynak, konuk çalışmayı sürdürürken her diski hedefe aynalar, sonra belleği taşır. Konuk yalnızca son bellek sayfaları için duraklar (testlerde onlarca milisaniye) ve hedefte aynı kimlikle sürer. Konuğun kaydı ve diskleri kaynakta kalır: kapalıdır ve kendiliğinden yeniden açılmayacak biçimde işaretlenir; her şey yolundaysa orada silersiniz.
 
 İki QEMU birbirine doğrudan bağlanır: kaynak, hedefe `--migrate-ports` ile verilen kapılardan ulaşabilmelidir (varsayılan 49152-49215, taşıma başına iki kapı; yalnızca sunucular arasında açın). Kaynağın hedefi gördüğü adres isteğin geldiği adresten farklıysa hedefte `--migrate-host` verin. İki bağlantı da yönetim bağlantısı üzerinden iletilen tek kullanımlık bir anahtarla şifrelenir (ön paylaşımlı anahtarlı TLS); bu yüzden sunucular arasında `https` kullanın.
 
 Her konuk canlı taşınamaz: UEFI ya da sanal TPM, takılı kurulum kalıbı, cloud-init sürücüsü, paylaşılan klasör, aktarılmış sunucu aygıtı ve bir şablona ya da yedeğe bağlı disk taşımayı engeller (ileti hangisi olduğunu söyler); aynı kimlik hedefte boş olmalı, iki sunucuda aynı QEMU sürümü ve uyumlu bir işlemci modeli bulunmalıdır. Gerçek QEMU 10.2 ile, bir Linux konukla, tek makinede (iki sunucu, yerel ağ arayüzü) sınandı; iki fiziksel makine arasında, Windows konukla ya da büyük ve yoğun konuklarla denenmedi.
 
-**Sunucuyu bakım için boşaltma:** `redox maintenance on --evacuate <eş>` (ya da *Küme* sayfasında eşin yanındaki *Konuklarımı Buraya Boşalt*) bu sunucuyu bakım kipine alır ve çalışan sanal makinelerini teker teker, kapatmadan eşe taşır. Canlı taşınamayan konuklar yerinde kalır; onları kapatmak için `--drain` ekleyin (bakım bitince yeniden başlatılırlar). Taşımayı eş yürüttüğü için eşin kendi `--peers` dosyasında bu sunucu tanımlı olmalıdır; adresinden tanınamıyorsa oradaki adını `--as` ile verin. Taşınan konuklar bakım bitince eşte çalışmayı sürdürür. Birini geri getirmek için bu sunucudan *Canlı Taşı* kullanın: konuk aynı kimlikle döner ve geride kalan kapalı kopyanın yerini alır (yedekleri ona bağlı kalır). Elle başlatılmış bir kopya ise kendi başına bir konuk sayılır ve üzerine yazılmaz. İki sunucu arasında sahte QEMU ile sınandı; alttaki taşıma, gerçek QEMU'da sınananla aynıdır.
+**Sunucuyu bakım için boşaltma:** `redox maintenance on --evacuate <eş>` (ya da *Sunucular* sayfasında eşin yanındaki *Konuklarımı Buraya Boşalt*) bu sunucuyu bakım kipine alır ve çalışan sanal makinelerini teker teker, kapatmadan eşe taşır. Canlı taşınamayan konuklar yerinde kalır; onları kapatmak için `--drain` ekleyin (bakım bitince yeniden başlatılırlar). Taşımayı eş yürüttüğü için eşin kendi `--peers` dosyasında bu sunucu tanımlı olmalıdır; adresinden tanınamıyorsa oradaki adını `--as` ile verin. Taşınan konuklar bakım bitince eşte çalışmayı sürdürür. Birini geri getirmek için bu sunucudan *Canlı Taşı* kullanın: konuk aynı kimlikle döner ve geride kalan kapalı kopyanın yerini alır (yedekleri ona bağlı kalır). Elle başlatılmış bir kopya ise kendi başına bir konuk sayılır ve üzerine yazılmaz. İki sunucu arasında sahte QEMU ile sınandı; alttaki taşıma, gerçek QEMU'da sınananla aynıdır.
 
 ## Yük dengeleme önerisi
 
-Bu sunucu sıkıştığında (bellek ya da işlemci %80 ve üstü) *Küme* sayfasında **Yük dengeleme önerisi** kartı görünür;
+Bu sunucu sıkıştığında (bellek ya da işlemci %80 ve üstü) *Sunucular* sayfasında **Yük dengeleme önerisi** kartı görünür;
 `redox balance` aynı şeyi yazar: çalışan hangi sanal makinenin hangi eşe canlı taşınmasının işe yarayacağı ve
 taşımadan sonra iki taraftaki bellek kullanımı. Kendiliğinden bir şey taşınmaz; her satırda bir *Gönder* düğmesi
 vardır (`redox peer send <eş> <kimlik>`), o sanal makineyi bu sunucudan eşe canlı taşır.
@@ -74,7 +74,7 @@ redox mirror promote <kaynak> 103           # devralma: kopyadan KAPALI bir konu
 redox mirror delete-copy <kaynak> 103
 ```
 
-Aynı işlemler *Küme* sayfasındaki **Disk yansıtma** ve **Tutulan kopyalar** kartlarındadır.
+Aynı işlemler *Koruma* sayfasındaki **Disk yansıtma** ve **Tutulan kopyalar** kartlarındadır.
 
 **Bir şey bozulunca ne olur**
 
@@ -123,7 +123,7 @@ redox ft twins                     # ikiz sunucusunda
 redox ft off 103
 ```
 
-Aynı işlemler *Küme* sayfasındaki **Hata toleransı** kartındadır.
+Aynı işlemler *Koruma* sayfasındaki **Hata toleransı** kartındadır.
 
 **Hangi konuk korunabilir.** **Tek diskli** ve **köprüye bağlı tek kartlı**, ek donanımı olmayan bir sanal makine:
 çalışırken ekleme, balon, UEFI, TPM, aygıt aktarımı, paylaşılan klasör, ISO, cloud-init, VLAN etiketi, konuk güvenlik
@@ -178,7 +178,7 @@ redox replica remove <eş> <kimlik>
 Eşteki sanal makinenin ya da konteynerin kopyası bu sunucuda düzenli tazelenir; kaynak çalışmaya devam eder. Kopya `<ad>-kopya` adıyla
 kapalı durur. Kaynak sunucu ölürse kopyayı buradan **siz** başlatırsınız; kayıp, son turdan beri yazılanlardır.
 Çalışan bir kopyanın üzerine yazılmaz. **Artımlı:** sanal makinelerde ilk turdan sonra yalnızca değişen 4 MiB'lik bloklar indirilir; değişmeyenler eski
-kopyadan alınır ve indirilen her blok SHA-256 özetiyle doğrulanır. *Çoğaltma* kartı son turda kaç bloğun indiğini
+kopyadan alınır ve indirilen her blok SHA-256 özetiyle doğrulanır. *Koruma* sayfasındaki *Çoğaltma* kartı son turda kaç bloğun indiğini
 gösterir. Kaynak sunucu yine de her turda diskin tamamını okur (özet çıkarmak için); kazanç ağdadır. Artımlı aktarım
 bir nedenle başarısız olursa o disk kendiliğinden tam olarak indirilir. Konteynerler her turda tam kopyalanır.
 

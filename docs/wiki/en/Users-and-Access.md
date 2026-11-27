@@ -12,7 +12,11 @@
 | Operator | Power, console, snapshots and backups on guests in scope (by tag). |
 | Viewer | Read only. |
 
-Users are created on the server with `redox user add <name> --users FILE` or on the *Users* page.
+Users are created on the server with `redox user add <name> --users FILE` or with **Add User** on the *Users* page.
+
+Every row of the *Users* page ends with a **Manage** menu: closing sessions and resetting the second step are one click
+there; role, operator permissions and scope, password reset, API tokens and deletion are on that user's own page
+(open it from the menu or by clicking the user's name).
 
 ## API tokens
 

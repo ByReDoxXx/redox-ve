@@ -58,7 +58,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 - Distributed switches (`redox switch`): one VXLAN guest network defined once and sent to every peer; a small root helper builds it and touches only its own devices.
 - Load balancing advice (`redox balance`): when a server is busy, which running VM to live-migrate to which peer; nothing moves by itself, `redox peer send` does the move.
 - Server profiles (`redox profile export | diff | apply`): compare one server's settings with another's and bring pools and backup jobs in line.
-- A support bundle (`redox support > bundle.json`, or *Cluster* page): version, capabilities, settings, guest hardware and recent tasks in one file, without passwords, tokens or the audit log.
+- A support bundle (`redox support > bundle.json`, or the *Servers* page): version, capabilities, settings, guest hardware and recent tasks in one file, without passwords, tokens or the audit log.
 - A status screen on the server's own console: name, addresses, where the web interface is, whether the service answers and how many guests run; Enter logs in.
 - Import `vmdk`, `vdi`, `vhdx` disks and OVA archives; export a guest as OVA.
 - Templates, full clones and linked clones (a linked clone is ready in under a second).

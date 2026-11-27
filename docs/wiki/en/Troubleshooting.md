@@ -42,7 +42,7 @@ For anything else, the service log: `journalctl -u redox -e`.
 ## Support bundle
 
 When you report a problem, attach a support bundle: `redox support > bundle.json`, or *Download* under *Support bundle*
-on the *Cluster* page (administrators only). It is one JSON file with the version, what the driver can do on this
+on the *Servers* page (administrators only). It is one JSON file with the version, what the driver can do on this
 server, the settings, nodes and storage, every guest's hardware, the last 200 tasks and a few host facts (kernel, load,
 memory, addresses).
 

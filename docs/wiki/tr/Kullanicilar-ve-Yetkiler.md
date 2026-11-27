@@ -12,7 +12,11 @@
 | Operatör | Kapsamındaki (etiketlerine göre) konuklarda güç, konsol, anlık görüntü ve yedek. |
 | İzleyici | Yalnızca okuma. |
 
-Kullanıcılar sunucuda `redox user add <ad> --users DOSYA` ile ya da *Kullanıcılar* sayfasından oluşturulur.
+Kullanıcılar sunucuda `redox user add <ad> --users DOSYA` ile ya da *Kullanıcılar* sayfasındaki **Kullanıcı Ekle** düğmesiyle oluşturulur.
+
+*Kullanıcılar* sayfasında her satırın sonunda bir **Yönet** menüsü vardır: oturumları kapatmak ve ikinci adımı sıfırlamak
+menüden tek tıkla yapılır; rol, operatör yetkileri ve kapsamı, parola sıfırlama, API token'ları ve silme o kullanıcının
+kendi sayfasındadır (menüden ya da kullanıcının adına tıklayarak açılır).
 
 ## API token'ları
 

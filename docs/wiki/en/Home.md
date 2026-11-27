@@ -26,6 +26,22 @@ terminal and security key pages).
 | Interface language | [Language](Language.md) |
 | Common problems | [Troubleshooting](Troubleshooting.md) |
 
+## Finding your way in the panel
+
+The left menu has three groups:
+
+| Group | Pages |
+|---|---|
+| **Operations** | *Overview* (summary and the **Needs attention** list), *Guests*, *Storage*, *Backups* |
+| **Infrastructure** | *Network* (server network, distributed switches, security groups), *Protection* (replication, disk mirroring, fault tolerance, shared storage), *Servers* (peer servers, moving guests, load balancing, support bundle), *Pools* |
+| **Administration** | *Tasks*, *Users*, *Audit Log*, *Command Line* |
+
+*My Account* is the user row at the bottom of the menu (click your name); the language and theme buttons are there too.
+On a narrow screen the menu opens with the **Menu** button at the top.
+
+The header of a guest page shows only what applies right now: **Start** for a stopped guest; **Console**, **Turn off**
+and **Restart** for a running one. Pause, suspend, backup, clone, template and delete are in the **More** menu.
+
 ## Know what has been tried
 
 Every feature is covered by automated tests, and the QEMU driver has also been exercised against real QEMU/KVM. Some

@@ -437,7 +437,7 @@ What the driver offers, from the tabs of a guest page:
   **another** administrator (`redox approval list | approve <n> | reject <n>`, or the notice at the top of every
   page). Removing an extra disk, a backup job or a user follows the same rule. The requester cannot approve their own request; requests expire after 24 hours. Needs at least two
   administrator accounts. Retention pruning by the scheduler is exempt.
-- **Replication (standby copy):** the **Çoğaltma** card on the cluster page, or `redox replica add <peer> <id> 60`.
+- **Replication (standby copy):** the **Çoğaltma** card on the protection page (*Koruma*), or `redox replica add <peer> <id> 60`.
   A copy of a peer's VM is refreshed on this server at the interval you give (15 minutes to 1 week); the source
   keeps running and is not suspended. The copy is a stopped guest named `<name>-kopya`; if the source server dies
   you start it here (you lose what was written since the last run). A running copy is never overwritten. **Every
@@ -587,8 +587,8 @@ with `REDOX_LANG=en`; `--lang en` also makes the server's startup messages, aler
 
 ### 10.2 Combined view (several servers)
 
-With several RedoX VE servers, make one the hub and see the others' nodes and guests on the cluster page
-(*Küme*). This is **not a real cluster**: the view is read-only and each server manages its own guests.
+With several RedoX VE servers, make one the hub and see the others' nodes and guests on the servers page
+(*Sunucular*). This is **not a real cluster**: the view is read-only and each server manages its own guests.
 
 1. On every **peer**, create a read-only user and a token:
 
@@ -610,7 +610,7 @@ With several RedoX VE servers, make one the hub and see the others' nodes and gu
 
 The URL must be `https://`; plain `http://` is accepted only for peers on the same machine. `redox peer list`.
 
-**Moving a VM:** *Buraya Al* on the cluster page, or `redox peer import izmir 103`, copies a **stopped** VM from
+**Moving a VM:** *Buraya Al* on the servers page (*Sunucular*), or `redox peer import izmir 103`, copies a **stopped** VM from
 a peer to the hub. The token in the peer file must be an **admin** token on the peer. The hub has the peer take
 a backup, downloads it, creates the guest and deletes the temporary backup. The source stays in place. A bridge
 that does not exist on the hub becomes NAT; USB/PCI passthrough is dropped. Extra disks come with their numbers

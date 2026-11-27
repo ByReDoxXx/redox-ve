@@ -26,6 +26,22 @@ kullanmaz.
 | Arayüz dili | [Dil](Dil.md) |
 | Sık karşılaşılan sorunlar | [Sorun giderme](Sorun-Giderme.md) |
 
+## Panelde gezinme
+
+Sol menü üç gruptur:
+
+| Grup | Sayfalar |
+|---|---|
+| **İşletim** | *Genel Bakış* (özet ve **Dikkat gerektirenler** listesi), *Konuklar*, *Depolama*, *Yedekler* |
+| **Altyapı** | *Ağ* (sunucu ağı, dağıtık anahtarlar, güvenlik grupları), *Koruma* (çoğaltma, disk yansıtma, hata toleransı, ortak depo), *Sunucular* (eş sunucular, taşıma, yük dengeleme, destek paketi), *Havuzlar* |
+| **Yönetim** | *Görevler*, *Kullanıcılar*, *Denetim Günlüğü*, *Komut Satırı* |
+
+*Hesabım* menünün altındaki kullanıcı satırındadır (adınıza tıklayın); dil ve tema düğmeleri de oradadır. Dar ekranda
+menü, üstteki **Menü** düğmesiyle açılır.
+
+Konuk sayfasının başlığında yalnızca o an geçerli işlemler durur: kapalı konukta **Başlat**; çalışan konukta **Konsol**,
+**Kapat** ve **Yeniden Başlat**. Duraklatma, askıya alma, yedek, klon, şablon ve silme **Diğer** menüsündedir.
+
 ## Neyin denendiğini bilin
 
 Her özellik otomatik testlerle sınanır; QEMU sürücüsü ayrıca gerçek QEMU/KVM üzerinde denenmiştir. Bazı parçalar ise

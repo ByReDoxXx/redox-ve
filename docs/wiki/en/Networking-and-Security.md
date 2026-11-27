@@ -25,7 +25,7 @@ redox switch list                                               # local state an
 redox switch remove vds-web --everywhere
 ```
 
-The *Cluster* page has the same in a **Distributed switches** card.
+The *Network* page has the same in a **Distributed switches** card.
 
 * The name must start with `vds`. The definition is identical on every server; each one recognises **its own** address
   among the members and uses it as the local end of the tunnel.
@@ -115,7 +115,7 @@ redox hostnet vlan bond0 20
 redox hostnet bridge vmbr1 ports=bond0.20 vlan-aware=true
 ```
 
-`redox-hostnet.service` builds the network (DHCP needs `dnsmasq-base`). The server's management card cannot be moved into a bridge from the panel. To check by hand: `redox net apply /var/lib/redox/hostnet.json --dry-run`.
+The *Network* page has the same in the **Server network** card. `redox-hostnet.service` builds the network (DHCP needs `dnsmasq-base`). The server's management card cannot be moved into a bridge from the panel. To check by hand: `redox net apply /var/lib/redox/hostnet.json --dry-run`.
 
 ## TLS and LDAP
 

@@ -5,11 +5,11 @@
 # Multiple servers
 
 RedoX VE has no shared cluster state: each server manages its own guests. Servers are introduced to each other as
-**peers** (`--peers FILE`, each line `NAME ADDRESS TOKEN`); the *Cluster* page shows them together.
+**peers** (`--peers FILE`, each line `NAME ADDRESS TOKEN`); the *Servers* page shows them together.
 
 ## Moving
 
-Buttons next to a peer's guest on the *Cluster* page:
+Buttons next to a peer's guest on the *Servers* page:
 
 - **Copy Here:** copies a stopped virtual machine to this server through its backup. The source stays; you delete it
   there once you see it running here.
@@ -21,17 +21,17 @@ Buttons next to a peer's guest on the *Cluster* page:
   briefly during the backup); the copy arrives stopped. LXC must be installed on this server. **Tested with fake LXC
   tools; not tried with real LXC.**
 
-**Live migration:** a running VM can also be moved **without stopping it** (*Migrate Live* on the *Cluster* page, or `redox peer migrate <peer> <id>` on the target). The target starts the guest's QEMU paused and waiting, the source mirrors every disk to it while the guest keeps running, then migrates the memory; the guest pauses only for the last memory pages (tens of milliseconds in the tests) and continues on the target with the same ID. The guest's record and disks stay on the source, stopped and marked so that they do not start again by themselves; delete them once you are satisfied.
+**Live migration:** a running VM can also be moved **without stopping it** (*Migrate Live* on the *Servers* page, or `redox peer migrate <peer> <id>` on the target). The target starts the guest's QEMU paused and waiting, the source mirrors every disk to it while the guest keeps running, then migrates the memory; the guest pauses only for the last memory pages (tens of milliseconds in the tests) and continues on the target with the same ID. The guest's record and disks stay on the source, stopped and marked so that they do not start again by themselves; delete them once you are satisfied.
 
 The two QEMU processes connect to each other directly: the source must be able to reach the target on the ports given with `--migrate-ports` (default 49152-49215, two per migration; open them between the servers only). If the address the source sees the target under differs from where the request came from, set `--migrate-host` on the target. Both connections are encrypted with a one-time key (TLS with a pre-shared key) that travels over the management connection, so use `https` between the servers.
 
 Not every guest can be moved live: UEFI or virtual TPM, an attached installation image, a cloud-init drive, shared folders, passed-through host devices and disks that depend on a template or backup block it (the message says which); the same ID must be free on the target, and both servers need the same QEMU version and a compatible CPU model. Tested on real QEMU 10.2 with a Linux guest on one machine (two servers, loopback network); not tried between two physical machines, with a Windows guest, or with large and busy guests.
 
-**Evacuating a server for maintenance:** `redox maintenance on --evacuate <peer>` (or *Evacuate My Guests Here* next to the peer on the *Cluster* page) puts this server into maintenance mode and moves its running virtual machines to the peer one by one, without stopping them. Guests that cannot be migrated live stay where they are; add `--drain` to stop those instead (they start again when maintenance ends). The peer does the pulling, so it must list this server in its own `--peers` file; if it cannot be recognised by address, give the name it has there with `--as`. The moved guests keep running on the peer when maintenance ends. To bring one back, use *Migrate Live* from this server: the guest returns with the same ID and replaces the stopped copy that was left behind (its backups stay attached). A left-behind copy that has been started by hand is treated as a guest in its own right and is never replaced. Tested with fake QEMU between two servers; the migration underneath is the same one tested on real QEMU.
+**Evacuating a server for maintenance:** `redox maintenance on --evacuate <peer>` (or *Evacuate My Guests Here* next to the peer on the *Servers* page) puts this server into maintenance mode and moves its running virtual machines to the peer one by one, without stopping them. Guests that cannot be migrated live stay where they are; add `--drain` to stop those instead (they start again when maintenance ends). The peer does the pulling, so it must list this server in its own `--peers` file; if it cannot be recognised by address, give the name it has there with `--as`. The moved guests keep running on the peer when maintenance ends. To bring one back, use *Migrate Live* from this server: the guest returns with the same ID and replaces the stopped copy that was left behind (its backups stay attached). A left-behind copy that has been started by hand is treated as a guest in its own right and is never replaced. Tested with fake QEMU between two servers; the migration underneath is the same one tested on real QEMU.
 
 ## Load balancing advice
 
-When this server is busy (memory or CPU at 80% or more), the *Cluster* page shows a **Load balancing advice** card and
+When this server is busy (memory or CPU at 80% or more), the *Servers* page shows a **Load balancing advice** card and
 `redox balance` prints the same thing: which running virtual machine would help if it were live-migrated to which
 peer, and what the memory use would be on both sides afterwards. Nothing is moved automatically; each line has a
 *Send* button (`redox peer send <peer> <id>`), which live-migrates that virtual machine from this server to the peer.
@@ -74,7 +74,7 @@ redox mirror promote <source> 103           # take over: creates a STOPPED guest
 redox mirror delete-copy <source> 103
 ```
 
-The *Cluster* page has the same in the **Disk mirroring** and **Copies held here** cards.
+The *Protection* page has the same in the **Disk mirroring** and **Copies held here** cards.
 
 **What happens when something fails**
 
@@ -124,7 +124,7 @@ redox ft twins                     # on the twin server
 redox ft off 103
 ```
 
-The *Cluster* page has the same in the **Fault tolerance** card.
+The *Protection* page has the same in the **Fault tolerance** card.
 
 **What guest can be protected.** A virtual machine with **one disk** and **one bridged network card**, and no extra
 hardware: no hot-add, balloon, UEFI, TPM, passthrough, shared folders, ISO, cloud-init, VLAN tag, guest firewall or

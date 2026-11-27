@@ -53,7 +53,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Dağıtık anahtarlar (`redox switch`): bir kez tanımlanıp bütün eşlere gönderilen ortak VXLAN konuk ağı; ağı küçük bir root yardımcısı kurar ve yalnızca kendi aygıtlarına dokunur.
 - Yük dengeleme önerisi (`redox balance`): sunucu sıkıştığında çalışan hangi sanal makinenin hangi eşe canlı taşınacağını söyler; kendiliğinden bir şey taşımaz, taşımayı `redox peer send` yapar.
 - Sunucu profili (`redox profile export | diff | apply`): bir sunucunun ayarlarını başkasıyla karşılaştırır, havuzları ve yedek işlerini eşitler.
-- Destek paketi (`redox support > destek.json` ya da *Küme* sayfası): sürüm, yetenekler, ayarlar, konukların donanımı ve son görevler tek dosyada; parola, token ve denetim günlüğü içermez.
+- Destek paketi (`redox support > destek.json` ya da *Sunucular* sayfası): sürüm, yetenekler, ayarlar, konukların donanımı ve son görevler tek dosyada; parola, token ve denetim günlüğü içermez.
 - Sunucunun kendi konsolunda durum ekranı: ad, adresler, panelin adresi, hizmetin yanıt verip vermediği ve çalışan konuk sayısı; Enter ile oturum açılır.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
 - Şablonlar, tam klonlar ve bağlı klonlar (bağlı klon bir saniyenin altında hazır olur).

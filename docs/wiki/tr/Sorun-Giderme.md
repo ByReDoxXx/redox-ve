@@ -37,7 +37,7 @@ iç içe sanal makine) konuşuyorsa çerçeveleri düşürülür; o konukta koru
 
 ## Destek paketi
 
-Sorun bildirirken bir destek paketi ekleyin: `redox support > destek.json` ya da *Küme* sayfasında *Destek paketi*
+Sorun bildirirken bir destek paketi ekleyin: `redox support > destek.json` ya da *Sunucular* sayfasında *Destek paketi*
 altındaki *İndir* (yalnızca yönetici). Tek bir JSON dosyasıdır: sürüm, sürücünün bu sunucuda yapabildikleri, ayarlar,
 düğümler ve depolama, her konuğun donanımı, son 200 görev ve sunucuya dair birkaç ölçüm (çekirdek, yük, bellek,
 adresler).

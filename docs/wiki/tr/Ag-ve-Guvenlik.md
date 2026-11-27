@@ -25,7 +25,7 @@ redox switch list                                               # bu sunucudaki 
 redox switch remove vds-web --everywhere
 ```
 
-Aynı işlemler *Küme* sayfasındaki **Dağıtık anahtarlar** kartındadır.
+Aynı işlemler *Ağ* sayfasındaki **Dağıtık anahtarlar** kartındadır.
 
 * Ad `vds` ile başlamalıdır. Tanım her sunucuda birebir aynıdır; her sunucu üyeler arasından **kendi** adresini tanır
   ve tünelin yerel ucu olarak onu kullanır.
@@ -114,7 +114,7 @@ redox hostnet vlan bond0 20
 redox hostnet bridge vmbr1 ports=bond0.20 vlan-aware=true
 ```
 
-Ağı `redox-hostnet.service` kurar (DHCP için `dnsmasq-base`). Sunucunun yönetim kartı panelden köprüye taşınamaz. Elle denemek için: `redox net apply /var/lib/redox/hostnet.json --dry-run`.
+Aynı işlemler *Ağ* sayfasındaki **Sunucu ağı** kartındadır. Ağı `redox-hostnet.service` kurar (DHCP için `dnsmasq-base`). Sunucunun yönetim kartı panelden köprüye taşınamaz. Elle denemek için: `redox net apply /var/lib/redox/hostnet.json --dry-run`.
 
 ## TLS ve LDAP
 
