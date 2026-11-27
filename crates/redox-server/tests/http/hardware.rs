@@ -318,3 +318,53 @@ pub(super) async fn the_support_bundle_is_for_admins_and_carries_no_secrets() {
         assert_eq!(send(&app, as_viewer(Method::GET, path).body(Body::empty()).unwrap()).await.0, StatusCode::FORBIDDEN, "{path}");
     }
 }
+
+// ---------- Kilit kipi ----------
+
+#[tokio::test]
+pub(super) async fn lockdown_refuses_every_change_until_an_admin_lifts_it() {
+    let (app, state) = setup();
+    // Yalnızca yönetici kilitler.
+    let viewer = as_viewer(Method::POST, "/api/v1/lockdown").header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "on": true }).to_string())).unwrap();
+    assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN);
+    assert!(page(&app, "/nodes/pve-ist-01").await.contains(r#"action="/lockdown/on""#));
+    let (status, v) = api(&app, post_json("/api/v1/lockdown", &json!({ "on": true }))).await;
+    assert_eq!((status, v["on"].as_bool(), state.in_lockdown()), (StatusCode::OK, Some(true), true));
+    assert_eq!(state.snapshot().tasks[0].command, "lockdown on");
+
+    // Kilitliyken: API'den ve arayüzden hiçbir değişiklik kabul edilmez, yönetici dahil; okumalar çalışır.
+    let before = state.snapshot().guest(103).unwrap().clone();
+    let (status, v) = api(&app, post_json("/api/v1/guests/103/start", &json!({}))).await;
+    assert_eq!((status, v["code"].as_str()), (StatusCode::LOCKED, Some("lockdown")), "{v}");
+    for (path, body) in [("/guests/103/action", "action=start"), ("/guests/103/edit", "part=secenekler&name=x"), ("/maintenance/on", ""), ("/guests/103/delete", "")] {
+        let (status, _, text) = send(&app, form_body(request(Method::POST, path), body)).await;
+        assert!(status == StatusCode::LOCKED && text.contains("kilit kipinde"), "{path}: {status} {text}");
+    }
+    let (status, _) = api(&app, request(Method::DELETE, "/api/v1/guests/103").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::LOCKED);
+    assert_eq!(state.snapshot().guest(103).unwrap(), &before, "kilitliyken konuk değişmez");
+    let (status, v) = api(&app, get("/api/v1/guests")).await;
+    assert!(status == StatusCode::OK && v.as_array().is_some());
+    let home = page(&app, "/").await;
+    assert!(home.contains("Kilit kipi açık") && home.contains(r#"action="/lockdown/off""#));
+    assert!(!page(&app, "/nodes/pve-ist-01").await.contains(r#"action="/lockdown/on""#));
+    // Açık kalan yollar: kişinin kendi hesabı ve çıkış.
+    for open in ["/logout", "/account/password", "/lockdown/off", "/api/v1/lockdown"] {
+        assert!(redox_server::lockdown_exempt(open), "{open}");
+    }
+    for shut in ["/guests/103/action", "/api/v1/guests", "/lockdown/on", "/maintenance/off"] {
+        assert!(!redox_server::lockdown_exempt(shut), "{shut}");
+    }
+
+    // İzleyici kilidi kaldıramaz; yönetici kaldırır ve işlemler yeniden kabul edilir.
+    let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, "/lockdown/off"), "")).await;
+    assert_eq!((status, state.in_lockdown()), (StatusCode::FORBIDDEN, true));
+    assert!(post_ok(&app, "/lockdown/off", "").await.contains("notice="));
+    assert!(!state.in_lockdown());
+    let (status, _) = api(&app, post_json("/api/v1/guests/103/start", &json!({}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    // Durum dosyasında saklanır: sunucu yeniden başlasa da kilit durur.
+    state.lockdown_set(true, "admin");
+    let saved: redox_core::Cluster = serde_json::from_value(serde_json::to_value(state.snapshot()).unwrap()).unwrap();
+    assert!(saved.lockdown);
+}

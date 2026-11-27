@@ -216,6 +216,13 @@ fn top(p: &Page, crumbs: &[(&str, &str)]) -> Markup {
 fn flash(p: &Page) -> Markup {
     let pending = if p.admin { p.cluster.pending_approvals(p.now) } else { Vec::new() };
     html! {
+        @if p.cluster.lockdown {
+            div class="flash bad" role="status" {
+                (icon("shield"))
+                span { (tx("Kilit kipi açık: arayüzden ve API'den hiçbir değişiklik yapılamaz. Konuklar ve zamanlanmış işler çalışmayı sürdürür.")) " " }
+                @if p.admin { form class="inline" method="post" action="/lockdown/off" { button class="btn sm" type="submit" { (tx("Kilidi Kaldır")) } } }
+            }
+        }
         @if p.cluster.maintenance {
             div class="flash bad" role="status" {
                 (icon("alert"))

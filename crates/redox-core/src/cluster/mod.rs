@@ -50,6 +50,10 @@ pub struct Cluster {
     /// Bakıma girerken kapatılan konuklar: bakım bitince yeniden başlatılır.
     #[serde(default)]
     pub maintenance_resume: Vec<VmId>,
+    /// Kilit kipi (değişiklik dondurma): açıkken arayüzden ve API'den hiçbir değişiklik yapılamaz; konuklar
+    /// çalışmayı, zamanlanmış işler yürümeyi sürdürür. Yalnızca bir yönetici kilidi kaldırabilir.
+    #[serde(default)]
+    pub lockdown: bool,
     /// Konuk başına birikimli kaynak tüketimi (kimliğe göre sıralı).
     #[serde(default)]
     pub usage: Vec<crate::usage::Usage>,
@@ -89,6 +93,7 @@ impl Cluster {
             archive: Vec::new(),
             replicas: Vec::new(),
             maintenance: false,
+            lockdown: false,
             maintenance_resume: Vec::new(),
             guest_fs: Vec::new(),
             approvals: Vec::new(),

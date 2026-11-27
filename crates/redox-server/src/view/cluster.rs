@@ -134,6 +134,15 @@ pub fn node(p: &Page, n: &Node) -> String {
                     footer { (tx("Bakım kipinde hiçbir konuk başlatılmaz; zamanlanmış yedekler, güç işlemleri ve kendiliğinden yeniden başlatma durur. Kapatılan konuklar bakım bitince açılış sırasıyla yeniden başlatılır. Sunucu bu sırada yeniden başlasa da kip korunur.")) }
                 }
             }
+            @if p.admin && !p.cluster.lockdown {
+                div class="card" {
+                    header { h2 { (tx("Kilit kipi")) } (tip("Değişiklik dondurma: kilit kaldırılana kadar kimse değişiklik yapamaz.")) span class="note" { (tx("denetim ya da değişiklik dondurma dönemleri için")) } }
+                    div class="inline" {
+                        form method="post" action="/lockdown/on" { button class="btn sm" type="submit" { (icon("shield")) (tx("Sunucuyu Kilitle")) } }
+                    }
+                    footer { (tx("Kilit açıkken arayüzden ve API'den konuk başlatılamaz, durdurulamaz, ayar değiştirilemez, yedek alınamaz ya da silinemez; yöneticiler dahil. Konuklar çalışmayı, zamanlanmış yedekler ve kendiliğinden yeniden başlatma yürümeyi sürdürür. Herkes oturumunu kapatabilir ve kendi parolasını değiştirebilir; kilidi yalnızca bir yönetici kaldırır.")) }
+                }
+            }
             div {
                 div class="tools" {
                     h2 { (tx("Bu düğümdeki konuklar")) }

@@ -43,3 +43,15 @@ redox approval reject <n>
 
 The requester cannot approve their own request; requests expire after 24 hours. At least two administrator accounts are
 needed. Retention pruning by the scheduler is exempt.
+
+## Lockdown (change freeze)
+
+`redox lockdown on` (or *Lock the Server* on the node's page) puts the server into lockdown: until an administrator
+lifts it, **nobody** can change anything from the web interface or the API, administrators and API tokens included.
+Guests keep running, and scheduled backups, schedules and automatic restarts go on. Reading still works; everyone can
+log out and manage their own account. It is meant for audits and change-freeze periods, and it survives a restart of
+the service.
+
+Lockdown is not a security boundary against someone with a shell on the server: it only closes the management
+interface. Requests from peer servers (copying, replication, live migration from this server) are refused as well
+while it is on.

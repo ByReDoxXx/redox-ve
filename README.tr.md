@@ -47,6 +47,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 - Çalışan sanal makinenin diskleri, konuk durdurulmadan başka depolama alanına taşınır (`redox vm move 103 hizli`).
 - Bakım kipi sunucuyu boşaltabilir: çalışan sanal makineler eşe canlı taşınır (`redox maintenance on --evacuate <eş>`).
 - Sanal makine başına işlemci payı ve bellek garantisi (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): sunucu sıkışınca işlemciyi kimin alacağı ve geri alınmayacak bellek; ikisi de konuk çalışırken değişir.
+- Kilit kipi (`redox lockdown on`): açıkken yöneticiler dahil hiç kimsenin arayüzden ya da API'den değişiklik yapamadığı bir değişiklik dondurma; konuklar ve zamanlanmış işler sürer.
 - Destek paketi (`redox support > destek.json` ya da *Küme* sayfası): sürüm, yetenekler, ayarlar, konukların donanımı ve son görevler tek dosyada; parola, token ve denetim günlüğü içermez.
 - Sunucunun kendi konsolunda durum ekranı: ad, adresler, panelin adresi, hizmetin yanıt verip vermediği ve çalışan konuk sayısı; Enter ile oturum açılır.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
@@ -312,6 +313,7 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 | `GET /storage`, `GET /media`, `PUT /media/{name}`, `POST /media/fetch` | Depolama, kalıp ve imaj yükleme |
 | `GET /peers`, `POST /peers/{name}/import/{vmid}`, `POST /peers/{name}/migrate/{vmid}` | Öbür sunucular, sanal makine alma, canlı taşıma |
 | `GET /support` | Destek paketi (yalnızca yönetici) |
+| `GET`/`POST /lockdown` | Kilit kipi (değişiklik dondurma) |
 | `GET /tasks`, `GET /tasks/{id}` | Görev günlüğü |
 
 `GET /metrics` (`/api/v1` dışında) aynı token ile Prometheus ölçümlerini verir.
@@ -435,7 +437,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 558, Windows'ta 472 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 559, Windows'ta 473 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 

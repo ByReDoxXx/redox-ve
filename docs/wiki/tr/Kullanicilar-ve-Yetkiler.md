@@ -43,3 +43,14 @@ redox approval reject <no>
 
 İstek sahibi kendi isteğini onaylayamaz; 24 saatte onaylanmayan istek düşer. En az iki yönetici hesabı gerekir.
 Zamanlayıcının saklama budaması bu kuralın dışındadır.
+
+## Kilit kipi (değişiklik dondurma)
+
+`redox lockdown on` (ya da düğüm sayfasındaki *Sunucuyu Kilitle*) sunucuyu kilit kipine alır: bir yönetici kilidi
+kaldırana kadar web arayüzünden ve API'den **hiç kimse** değişiklik yapamaz; yöneticiler ve API token'ları dahil.
+Konuklar çalışmayı, zamanlanmış yedekler, zamanlamalar ve kendiliğinden yeniden başlatma yürümeyi sürdürür. Okuma
+çalışır; herkes oturumunu kapatabilir ve kendi hesabını yönetebilir. Denetim ve değişiklik dondurma dönemleri içindir;
+hizmet yeniden başlasa da kilit durur.
+
+Kilit kipi, sunucuda kabuk erişimi olan birine karşı bir güvenlik sınırı değildir: yalnızca yönetim arayüzünü kapatır.
+Kilit açıkken eş sunuculardan gelen istekler de (kopyalama, çoğaltma, bu sunucudan canlı taşıma) reddedilir.

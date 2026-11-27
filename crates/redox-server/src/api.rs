@@ -57,6 +57,7 @@ pub fn routes() -> Router<AppState> {
         .route("/backups/forecast", get(backup_forecast))
         .route("/approvals", get(approvals))
         .route("/maintenance", get(maintenance).post(maintenance_set))
+        .route("/lockdown", get(lockdown).post(lockdown_set))
         .route("/replicas", get(replicas).post(replica_put))
         .route("/replicas/{peer}/{vmid}", delete_route(replica_delete))
         .route("/replicas/{peer}/{vmid}/run", post(replica_run))
@@ -720,6 +721,21 @@ async fn openapi() -> Json<serde_json::Value> {
 async fn replica_run(State(st): State<AppState>, Path((peer, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
     tokio::task::spawn_blocking(move || st.replica_run(&peer, vmid)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn lockdown(State(st): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({ "on": st.in_lockdown() }))
+}
+
+#[derive(serde::Deserialize)]
+struct LockdownBody {
+    on: bool,
+}
+
+/// Kilit kipini açar ya da kapatır (yalnızca yönetici). Kilit açıkken kabul edilen tek değişiklik budur.
+async fn lockdown_set(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<LockdownBody>) -> Json<serde_json::Value> {
+    st.lockdown_set(body.on, &me.user);
+    Json(json!({ "on": st.in_lockdown() }))
 }
 
 async fn maintenance(State(st): State<AppState>) -> Json<serde_json::Value> {

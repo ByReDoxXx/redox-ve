@@ -105,6 +105,7 @@ pub fn app(state: AppState) -> Router {
         .route("/guests/{vmid}/cores", post(ui_ops::cores_add))
         .route("/guests/{vmid}/memory", post(ui_ops::memory_add))
         .route("/approvals/{id}/{op}", post(ui_ops::approval_action))
+        .route("/lockdown/{op}", post(ui_ops::lockdown_action))
         .route("/maintenance/evacuate", post(ui_ops::maintenance_evacuate))
         .route("/maintenance/{op}", post(ui_ops::maintenance_action))
         .route("/guests/{vmid}/move", post(ui_ops::storage_move))
@@ -290,7 +291,22 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
             (StatusCode::FORBIDDEN, message).into_response()
         }));
     }
+    // Kilit kipi: yetkisi ne olursa olsun kimse değişiklik yapamaz. Açık kalan yollar: kilidi kaldırmak (yukarıdaki
+    // denetim onu zaten yöneticiye bırakır), çıkış ve kişinin kendi hesabı (parola, iki adımlı doğrulama).
+    if !safe && st.in_lockdown() && !lockdown_exempt(&path) {
+        let message = "Sunucu kilit kipinde: değişiklik yapılamaz. Bir yönetici kilidi kaldırmalı (redox lockdown off).";
+        return Err(Box::new(if is_api {
+            (StatusCode::LOCKED, Json(json!({ "error": message, "code": "lockdown" }))).into_response()
+        } else {
+            (StatusCode::LOCKED, message).into_response()
+        }));
+    }
     Ok(())
+}
+
+/// Kilit kipinde de açık kalan, durum değiştiren yollar.
+pub fn lockdown_exempt(path: &str) -> bool {
+    path == "/logout" || path == "/lockdown/off" || path == "/api/v1/lockdown" || path.starts_with("/account")
 }
 
 /// Operatöre açık işlemler: yolun hedeflediği konuğun kimliğini döndürür, değilse `None`.

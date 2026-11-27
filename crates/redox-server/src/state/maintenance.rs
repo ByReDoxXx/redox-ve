@@ -10,6 +10,23 @@ impl AppState {
         self.lock().maintenance
     }
 
+    pub fn in_lockdown(&self) -> bool {
+        self.lock().lockdown
+    }
+
+    /// Kilit kipini açar ya da kapatır; değişiklik görev günlüğüne yazılır. Zaten istenen durumdaysa `false`.
+    pub fn lockdown_set(&self, on: bool, user: &str) -> bool {
+        self.mutate(|c| {
+            if c.lockdown == on {
+                return false;
+            }
+            c.lockdown = on;
+            let node = c.nodes.first().map(|n| n.id.clone()).unwrap_or_default();
+            c.log(&node, user, format!("lockdown {}", if on { "on" } else { "off" }), &Ok(()), now(), None);
+            true
+        })
+    }
+
     /// Bakıma alır. `drain`: çalışan konuklar açılış sırasının tersine kapatılır ve bakım bitince yeniden
     /// başlatılmak üzere kaydedilir. Kapatılmaya başlanan konuk sayısını döndürür.
     pub fn maintenance_on(&self, drain: bool, user: &str) -> usize {

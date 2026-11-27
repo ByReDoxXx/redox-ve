@@ -66,6 +66,21 @@ pub async fn maintenance_action(State(st): State<AppState>, Extension(me): Exten
     }
 }
 
+/// Kilit kipini açar ya da kaldırır (`op`: `on` / `off`).
+pub async fn lockdown_action(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(op): Path<String>) -> Redirect {
+    match op.as_str() {
+        "on" => {
+            st.lockdown_set(true, &me.user);
+            flash("/", "notice", (tx("Kilit kipi açıldı: kilit kaldırılana kadar hiçbir değişiklik yapılamaz.")))
+        }
+        "off" => {
+            st.lockdown_set(false, &me.user);
+            flash("/", "notice", (tx("Kilit kaldırıldı.")))
+        }
+        _ => flash("/", "error", &tfmt(format!("Bilinmeyen işlem: {op}"))),
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct EvacuateForm {

@@ -83,6 +83,8 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("delete", "/media/{name}", "Delete media"),
     ("get", "/peers", "Peer servers and their last known state"),
     ("get", "/support", "Support bundle: a state dump without secrets, for bug reports (administrators only)"),
+    ("get", "/lockdown", "Whether lockdown (change freeze) is on"),
+    ("post", "/lockdown", "Turn lockdown on or off; while on, every other change is refused"),
     ("post", "/peers/{name}/import/{vmid}", "Copy or move a guest from a peer server to this one"),
     ("post", "/peers/{name}/migrate/{vmid}", "Live-migrate a running virtual machine from a peer server to this one"),
     ("post", "/guests/{vmid}/migrate/prepare", "Live migration source: check the guest and report its hardware layout (called by the target server)"),

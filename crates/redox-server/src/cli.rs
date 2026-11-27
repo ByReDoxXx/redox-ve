@@ -75,6 +75,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
         --drain çalışan konukları sırayla kapatır, off onları yeniden başlatır)
   redox maintenance on --evacuate <eş> [--as <ad>] [--drain]   (çalışan sanal makineleri kapatmadan eşe taşır;
         --as bu sunucunun eşteki adı, --drain taşınamayanları kapatır)
+  redox lockdown status | on | off   (kilit kipi: açıkken kimse değişiklik yapamaz; konuklar ve zamanlanmış işler sürer)
   redox approval list | approve <no> | reject <no>   (dört göz ilkesi: bekleyen silme istekleri; kendi isteğinizi onaylayamazsınız)
   redox backup ack <yedek>               (olağan dışı değişim uyarısını kapatır: baktınız, sorun yok)
   redox backup archive | recover <yedek>   (yerelde silinmiş ama kopya hedefinde saklanan yedekler; recover listeye geri getirir)
@@ -156,6 +157,7 @@ pub enum View {
     Replicas,
     /// Bakım kipi durumu ya da değişikliği.
     Maintenance,
+    Lockdown,
     /// Yanıt olduğu gibi (girintili JSON) yazılır.
     Json,
     /// Hazır imaj kataloğu.
@@ -397,6 +399,9 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
             req("POST", "/maintenance".to_string(), Some(body), View::Maintenance)
         }
         ["maintenance", "off"] => req("POST", "/maintenance".to_string(), Some(json!({ "on": false })), View::Maintenance),
+        ["lockdown", "status"] => get("/lockdown", View::Lockdown),
+        ["lockdown", "on"] => req("POST", "/lockdown".to_string(), Some(json!({ "on": true })), View::Lockdown),
+        ["lockdown", "off"] => req("POST", "/lockdown".to_string(), Some(json!({ "on": false })), View::Lockdown),
         ["approval", "list"] => get("/approvals", View::Approvals),
         ["approval", "approve", id] => req("POST", format!("/approvals/{}/approve", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Approved),
         ["approval", "reject", id] => req("DELETE", format!("/approvals/{}", id.parse::<u64>().map_err(|_| format!("istek numarası bir sayı olmalı: {id}"))?), None, View::Done("istek reddedildi")),
@@ -624,6 +629,7 @@ pub fn render(view: View, v: &Value) -> String {
             "çoğaltma yok",
         ),
         View::Json => serde_json::to_string_pretty(v).unwrap_or_default(),
+        View::Lockdown => if v["on"].as_bool() == Some(true) { "kilit kipi açık: değişiklik yapılamaz" } else { "kilit kipi kapalı" }.to_string(),
         View::Maintenance => match (v["on"].as_bool() == Some(true), v["guests"].as_u64(), v["resume"].as_array().map(Vec::len)) {
             (true, _, _) if v["evacuating"].is_u64() => format!("bakım kipi açık; {} sanal makine kapatılmadan {} sunucusuna taşınıyor (sonuç: redox task list)", v["evacuating"], s(v, "peer")),
             (true, Some(stopped), _) => format!("bakım kipi açık; {stopped} konuk kapatılıyor"),
@@ -884,6 +890,8 @@ mod tests {
         assert_eq!(render(View::Replicas, &json!([{"peer": "ankara", "source": 500, "every_min": 60, "standby": 103, "last_ok": 5, "error": null}])), "ankara         500    her    60 dk   yedek kopya: 103");
         assert_eq!(parsed("maintenance on --drain"), ("POST", "/maintenance".into(), Some(json!({"on": true, "drain": true})), View::Maintenance));
         assert_eq!(parsed("maintenance off").2, Some(json!({"on": false})));
+        assert_eq!(parsed("lockdown on"), ("POST", "/lockdown".into(), Some(json!({"on": true})), View::Lockdown));
+        assert_eq!(render(View::Lockdown, &json!({"on": true})), "kilit kipi açık: değişiklik yapılamaz");
         assert_eq!(parsed("maintenance on --evacuate ankara").2, Some(json!({"on": true, "evacuate": "ankara"})));
         assert_eq!(parsed("maintenance on --evacuate ankara --as istanbul --drain").2, Some(json!({"on": true, "evacuate": "ankara", "as": "istanbul", "drain": true})));
         assert!(parse(&args("maintenance on --evacuate ankara --as")).is_err() && parse(&args("maintenance on --evacuate ankara --hizli")).is_err());
