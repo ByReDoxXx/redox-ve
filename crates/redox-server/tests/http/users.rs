@@ -17,7 +17,8 @@ pub(super) async fn admin_pages_are_hidden_from_viewers() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
         assert!(!body.contains("admin"), "{uri}: kullanıcı adları sızmamalı");
     }
-    assert_eq!(send(&app, viewer("/account")).await.0, StatusCode::OK);
+    let cookie = login_cookie(&app, "izleyici", VIEWER_PW).await;
+    assert_eq!(send(&app, anon(Method::GET, "/account").header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.0, StatusCode::OK);
     for uri in ["/users", "/users/admin/role", "/users/admin/delete", "/users/admin/password", "/users/admin/tokens", "/users/admin/totp-reset"] {
         let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, uri), "name=x&password=cok-uzun-bir-parola&role=admin&confirm=1&label=t")).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
@@ -101,6 +102,27 @@ pub(super) async fn viewer_manages_only_their_own_account() {
     let (_, _, account) = send(&app, anon(Method::GET, "/account").header(COOKIE, &cookie).body(Body::empty()).unwrap()).await;
     assert!(account.contains("İzleyici") && !account.contains("Kullanıcı ekle"));
     assert_eq!(send(&app, form_body(anon(Method::POST, "/guests/103/action").header(COOKIE, &cookie), "action=start")).await.0, StatusCode::FORBIDDEN);
+}
+
+/// Salt okunur token hesap yollarından yetki kazanamamalı: hesap yalnızca tarayıcı oturumuyla yönetilir.
+#[tokio::test]
+async fn api_tokens_cannot_manage_the_account() {
+    let (app, state) = setup();
+    let reading = state.auth().edit(|u| u.create_token_as("admin", "izleme", true)).unwrap();
+    let before = state.auth().list();
+    let with = |token: &str, method: Method, uri: &str| anon(method, uri).header(AUTHORIZATION, format!("Bearer {token}"));
+    for token in [reading.as_str(), ADMIN_TOKEN, VIEWER_TOKEN] {
+        for (uri, body) in [("/account/tokens", "label=yeni"), ("/account/tokens/test/revoke", ""), ("/account/totp/start", ""), ("/account/password", "current=x&password=cok-uzun-bir-parola")] {
+            let (status, _, text) = send(&app, form_body(with(token, Method::POST, uri), body)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {text}");
+            assert!(!text.contains("redox_"), "{uri}: yeni token verilmemeli");
+        }
+        assert_eq!(send(&app, with(token, Method::GET, "/account").body(Body::empty()).unwrap()).await.0, StatusCode::FORBIDDEN);
+    }
+    assert_eq!(state.auth().list(), before, "hiçbir şey değişmedi");
+    // Tarayıcı oturumu hesabını yönetmeye devam eder.
+    let cookie = login_cookie(&app, "admin", ADMIN_PW).await;
+    assert_eq!(send(&app, form_body(anon(Method::POST, "/account/tokens").header(COOKIE, &cookie), "label=dizustu")).await.0, StatusCode::OK);
 }
 
 pub(super) fn totp_code(secret: &str) -> String {

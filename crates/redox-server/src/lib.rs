@@ -281,6 +281,12 @@ fn authorize(st: &AppState, req: &mut Request) -> Result<(), Box<Response>> {
     };
     // Reddedilen girişimler de günlüğe düşsün diye kimlik önce işlenir.
     req.extensions_mut().insert(me.clone());
+    // Hesap (parola, ikinci adım, token üretimi) yalnızca tarayıcı oturumuyla yönetilir. Aşağıdaki kurallar
+    // salt okunur kimliklerin kendi hesabını yönetmesine izin verir; bu izin token'a geçerse salt okunur bir
+    // token tam yetkili yenisini üretebilir ya da sahibini dışarıda bırakabilir.
+    if (path == "/account" || path.starts_with("/account/")) && req.headers().contains_key(AUTHORIZATION) {
+        return Err(Box::new((StatusCode::FORBIDDEN, "Hesap yalnızca panelde oturum açılarak yönetilir; API token'ı kullanılamaz.").into_response()));
+    }
     if is_api {
         if let Err(wait) = st.api_allowed(&me.user, state::now()) {
             return Err(Box::new(

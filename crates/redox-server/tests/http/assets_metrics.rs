@@ -28,8 +28,10 @@ pub(super) async fn fonts_are_served_locally_and_nothing_loads_from_third_partie
     }
     assert_eq!(send_bytes(&app, get("/assets/fonts/yok.woff2")).await.0, StatusCode::NOT_FOUND);
 
+    let cookie = login_cookie(&app, "admin", ADMIN_PW).await;
     for uri in ["/", "/guests/102", "/help", "/account"] {
-        let (_, headers, body) = send(&app, get(uri)).await;
+        let request = if uri == "/account" { anon(Method::GET, uri).header(COOKIE, &cookie).body(Body::empty()).unwrap() } else { get(uri) };
+        let (_, headers, body) = send(&app, request).await;
         assert!(!body.contains("googleapis") && !body.contains("gstatic") && !body.contains("http://") && !body.contains("https://"), "{uri}: dış adres var");
         assert!(body.contains("/assets/fonts/fonts.css?v="), "{uri}");
         let csp = headers.get("content-security-policy").unwrap().to_str().unwrap();
