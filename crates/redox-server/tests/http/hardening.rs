@@ -148,43 +148,38 @@ async fn a_new_operator_starts_with_the_chosen_permits_and_scope() {
     assert!(form.contains(r#"name="power""#) && form.contains(r#"name="scope""#) && !form.contains(r#"name="power" value="1" checked"#), "kutular boş gelir");
 }
 
-/// Vekil anahtarı tanımlıyken istemci adresi yalnızca anahtarı taşıyan istekte vekilden alınır.
+/// Vekil tanımlıyken istemci adresi yalnızca vekilin kullanıcısının açtığı bağlantıda başlıktan alınır.
+#[cfg(target_endian = "little")]
 #[tokio::test]
 async fn forwarded_addresses_count_only_from_the_proxy() {
-    const SECRET: &str = "vekil-anahtari-0123456789abcdef";
+    use axum::extract::ConnectInfo;
+    use redox_server::proxy::ProxyOwner;
+    // İki yerel bağlantı: 40000'i kök (vekil), 40001'i sıradan bir hesap açmış.
+    let row = |port: &str, uid: u32| format!("   0: 0100007F:{port} 0100007F:1F46 01 00000000:00000000 00:00000000 00000000 {uid:5}        0 5 1\n");
+    let table = std::env::temp_dir().join(format!("redox-baglanti-{}", std::process::id()));
+    std::fs::write(&table, row("9C40", 0) + &row("9C41", 1000)).unwrap();
+    let mut owner = ProxyOwner::new(0, 8006);
+    owner.tables = vec![table.clone()];
     let mut auth = Auth::new(users(), None, true, Cost::Test);
-    auth.proxy_secret = Some(SECRET.to_string());
+    auth.proxy_owner = Some(owner);
     let state = AppState::new(Cluster::demo(now()), Box::new(SimDriver::default()), Duration::ZERO, None, auth);
     let app = app(state.clone());
-    let attempt = |from: String, key: Option<&str>, password: &str| {
-        let mut builder = anon(Method::POST, "/login").header("x-forwarded-for", from);
-        if let Some(key) = key {
-            builder = builder.header("x-redox-proxy", key);
-        }
-        form_body(builder, &format!("username=admin&password={password}&next="))
+    let attempt = |from: String, port: u16, password: &str| {
+        let mut request = form_body(anon(Method::POST, "/login").header("x-forwarded-for", from), &format!("username=admin&password={password}&next="));
+        request.extensions_mut().insert(ConnectInfo(std::net::SocketAddr::from(([127, 0, 0, 1], port))));
+        request
     };
-    // Yerel adrese doğrudan bağlanan biri her denemede başka bir adres uydursa da hepsi tek istemci sayılır.
+    // Sıradan hesap her denemede başka bir adres uydursa da hepsi tek istemci sayılır.
     for n in 0..5 {
-        let status = send(&app, attempt(format!("198.51.100.{n}"), None, "yanlis-tahmin-0001")).await.0;
+        let status = send(&app, attempt(format!("100.64.0.{n}"), 40001, "yanlis-tahmin-0001")).await.0;
         assert!(status == StatusCode::UNAUTHORIZED || status == StatusCode::TOO_MANY_REQUESTS, "{status}");
     }
-    assert_eq!(send(&app, attempt("198.51.100.99".into(), None, ADMIN_PW)).await.0, StatusCode::TOO_MANY_REQUESTS, "uydurma adres kilidi aşmaz");
-    assert_eq!(send(&app, attempt("198.51.100.99".into(), Some("yanlis-anahtar-0123456789"), ADMIN_PW)).await.0, StatusCode::TOO_MANY_REQUESTS);
-    // Vekilden gelen istekte gerçek istemci adresi geçerlidir: başka adresteki kullanıcı kilitlenmemiştir.
-    assert_eq!(send(&app, attempt("203.0.113.7".into(), Some(SECRET), ADMIN_PW)).await.0, StatusCode::SEE_OTHER);
-    assert!(state.auth().audit.recent("giriş", 20).iter().any(|e| e.ip == "203.0.113.7"));
-    assert!(state.auth().audit.recent("giriş", 20).iter().all(|e| !e.ip.starts_with("198.51.100.")), "uydurma adres günlüğe de geçmez");
-}
-
-/// Vekil, kendinden imzalı sertifikayı yalnızca sunucunun kendi adı ve adresleri için üretir.
-#[tokio::test]
-async fn certificates_are_issued_only_for_the_servers_own_names() {
-    let (app, _) = setup();
-    let ask = |domain: &str| anon(Method::GET, &format!("/tls-ask?domain={domain}")).body(Body::empty()).unwrap();
-    for own in ["127.0.0.1", "localhost", "redox.local", "REDOX.local."] {
-        assert_eq!(send(&app, ask(own)).await.0, StatusCode::OK, "{own}");
-    }
-    for foreign in ["", "uydurma-ad-4821.example.com", "192.0.2.77", "2001:db8::77", &"a".repeat(300)] {
-        assert_eq!(send(&app, ask(foreign)).await.0, StatusCode::FORBIDDEN, "{foreign}");
-    }
+    assert_eq!(send(&app, attempt("100.64.0.99".into(), 40001, ADMIN_PW)).await.0, StatusCode::TOO_MANY_REQUESTS, "uydurma adres kilidi aşmaz");
+    assert_eq!(send(&app, attempt("100.64.0.99".into(), 40002, ADMIN_PW)).await.0, StatusCode::TOO_MANY_REQUESTS, "tabloda olmayan bağlantı vekil sayılmaz");
+    // Vekilin bağlantısında gerçek istemci adresi geçerlidir: başka adresteki kullanıcı kilitlenmemiştir.
+    assert_eq!(send(&app, attempt("100.101.102.103".into(), 40000, ADMIN_PW)).await.0, StatusCode::SEE_OTHER);
+    let entries = state.auth().audit.recent("giriş", 20);
+    assert!(entries.iter().any(|e| e.ip == "100.101.102.103"));
+    assert!(entries.iter().all(|e| !e.ip.starts_with("100.64.0.")), "uydurma adres günlüğe de geçmez");
+    std::fs::remove_file(&table).unwrap();
 }

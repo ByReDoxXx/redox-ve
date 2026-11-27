@@ -5,7 +5,7 @@
 use super::*;
 
 /// Oturum olmadan da açılan adresler.
-const PUBLIC: [&str; 9] = ["/tls-ask", "/login", "/login/key", "/login/oidc", "/login/oidc/callback", "/healthz", "/lang", "/assets/{file}", "/assets/fonts/{file}"];
+const PUBLIC: [&str; 8] = ["/login", "/login/key", "/login/oidc", "/login/oidc/callback", "/healthz", "/lang", "/assets/{file}", "/assets/fonts/{file}"];
 
 /// İzleyicinin (ve salt okunur token'ın) okuyabildiği adresler. Yedeklerin içeriği, konuk diskleri, ekran,
 /// konsol, kullanıcılar, günlük ve destek paketi burada **olamaz**.

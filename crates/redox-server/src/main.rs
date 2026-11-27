@@ -30,8 +30,8 @@ struct ServeOptions {
     state_file: Option<PathBuf>,
     task_delay: Duration,
     behind_tls_proxy: bool,
-    /// Vekilin isteklere eklediği gizli değeri tutan dosya.
-    proxy_secret_file: Option<PathBuf>,
+    /// TLS vekilinin kullanıcı kimliği (`tailscaled` için 0).
+    proxy_uid: Option<u32>,
     tls_cert: Option<PathBuf>,
     tls_key: Option<PathBuf>,
     webauthn_origin: Option<redox_server::webauthn::Relying>,
@@ -89,7 +89,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
         state_file: None,
         task_delay: Duration::from_millis(1500),
         behind_tls_proxy: false,
-        proxy_secret_file: None,
+        proxy_uid: None,
         tls_cert: None,
         tls_key: None,
         webauthn_origin: None,
@@ -145,7 +145,7 @@ fn serve_options(args: &[String]) -> Result<ServeOptions, String> {
             "--users" => opts.users = PathBuf::from(value()?),
             "--state" => opts.state_file = Some(PathBuf::from(value()?)),
             "--behind-tls-proxy" => opts.behind_tls_proxy = true,
-            "--proxy-secret-file" => opts.proxy_secret_file = Some(PathBuf::from(value()?)),
+            "--proxy-uid" => opts.proxy_uid = Some(value()?.parse().map_err(|_| "--proxy-uid bir kullanıcı kimliği (sayı) olmalı".to_string())?),
             "--tls-cert" => opts.tls_cert = Some(PathBuf::from(value()?)),
             "--tls-key" => opts.tls_key = Some(PathBuf::from(value()?)),
             "--syslog" => opts.syslog = Some(value()?.clone()),
@@ -237,7 +237,7 @@ fn check_exposure(addr: &SocketAddr, opts: &ServeOptions) -> Result<(), String> 
     }
     Err(format!(
         "{addr} bu makinenin dışından erişilebilir bir adres ve sunucu TLS sonlandırmaz.\n\
-         Önerilen: 127.0.0.1 üzerinde dinleyin ve önüne TLS'li bir ters vekil (Caddy, nginx) koyun:\n\
+         Önerilen: 127.0.0.1 üzerinde dinleyin ve paneli Tailscale ile açın (sudo tailscale serve --bg http://127.0.0.1:8006) ya da önüne TLS'li bir ters vekil koyun:\n\
          \x20   redox serve --addr 127.0.0.1:8006 --behind-tls-proxy\n\
          Şifresiz HTTP'yi bilerek açmak için (yalnızca yalıtılmış ağda): --allow-plain-http"
     ))
@@ -383,15 +383,11 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     };
     let mut auth = Auth::new(users, Some(opts.users.clone()), opts.behind_tls_proxy, Cost::Production);
     auth.direct_tls = tls.is_some();
-    if let Some(path) = &opts.proxy_secret_file {
+    if let Some(uid) = opts.proxy_uid {
         if !opts.behind_tls_proxy {
-            return Err("--proxy-secret-file yalnızca --behind-tls-proxy ile kullanılır".to_string());
+            return Err("--proxy-uid yalnızca --behind-tls-proxy ile kullanılır".to_string());
         }
-        let secret = std::fs::read_to_string(path).map_err(|e| format!("{} okunamadı: {e}", path.display()))?.trim().to_string();
-        if secret.len() < 16 {
-            return Err(format!("{}: vekil anahtarı en az 16 karakter olmalı", path.display()));
-        }
-        auth.proxy_secret = Some(secret);
+        auth.proxy_owner = Some(redox_server::proxy::ProxyOwner::new(uid, addr.port()));
     }
     auth.webauthn = opts.webauthn_origin.clone();
     match &opts.syslog {
@@ -706,8 +702,8 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     }
     if opts.behind_tls_proxy {
         say!("TLS vekili arkasında: çerezler Secure, HSTS açık, X-Forwarded-For'a güveniliyor.");
-        if opts.proxy_secret_file.is_none() {
-            complain!("UYARI: --proxy-secret-file verilmedi; yerel adrese doğrudan bağlanan bir süreç istemci adresini uydurabilir.");
+        if opts.proxy_uid.is_none() {
+            complain!("UYARI: --proxy-uid verilmedi; yerel adrese doğrudan bağlanan bir süreç istemci adresini uydurabilir.");
         }
     } else if tls.is_some() {
         say!("TLS açık: panel https ile sunuluyor.");

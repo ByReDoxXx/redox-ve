@@ -364,6 +364,9 @@ fn ipv6_clients_are_counted_per_network() {
     assert!(auth.login("2001:db8:1:3::1", "admin", PW, 1_001).is_ok(), "başka ağ etkilenmez");
     assert_eq!(attempt_key("::ffff:10.0.0.1", "Admin"), "::ffff:10.0.0.1|admin", "IPv4 eşlemeli adres tek başına sayılır");
     assert!(attempt_key("ip", &"x".repeat(500)).len() < 80, "uzun ad anahtarı büyütmez");
+    // Tailscale cihazları aynı /64'ü paylaşır: her biri ayrı sayılır, biri öbürünü kilitlemez.
+    assert_ne!(attempt_key("fd7a:115c:a1e0:ab12:4843:cd96:6258:b240", "admin"), attempt_key("fd7a:115c:a1e0:ab12:4843:cd96:6258:b241", "admin"));
+    assert_eq!(attempt_key("fd7a:115c:a1e1::1", "admin"), attempt_key("fd7a:115c:a1e1::2", "admin"), "başka ağlar yine /64 sayılır");
 }
 
 /// Doğru parolanın ardından gelen güvenlik anahtarı adımı deneme hakkından yemez; hatalı parola sayılır.

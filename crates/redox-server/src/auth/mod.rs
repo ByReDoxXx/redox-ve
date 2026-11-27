@@ -200,10 +200,10 @@ pub struct Auth {
     hashing: (Mutex<usize>, Condvar),
     /// TLS arkasında: çerezler `Secure` olur, HSTS gönderilir, X-Forwarded-For'a güvenilir.
     pub behind_tls_proxy: bool,
-    /// Vekilin her isteğe eklediği gizli değer (`--proxy-secret-file`). Verildiyse X-Forwarded-For yalnızca bu
-    /// değeri taşıyan istekte dikkate alınır: sunucudaki başka bir hesap, yerel adrese doğrudan bağlanıp
-    /// uydurma bir istemci adresiyle giriş kilidini aşamaz.
-    pub proxy_secret: Option<String>,
+    /// Vekilin tanınması (`--proxy-uid`). Verildiyse X-Forwarded-For yalnızca o kullanıcının açtığı bağlantıda
+    /// dikkate alınır: sunucudaki başka bir hesap, yerel adrese doğrudan bağlanıp uydurma bir istemci adresiyle
+    /// giriş kilidini aşamaz.
+    pub proxy_owner: Option<crate::proxy::ProxyOwner>,
     /// Sunucu TLS'i kendisi sonlandırıyor: çerezler `Secure` olur (X-Forwarded-For'a güvenilmez).
     pub direct_tls: bool,
     /// Dizin sunucusu (`--ldap`); `ldap` işaretli kullanıcılar parolalarıyla yalnızca buradan doğrulanır.
@@ -229,7 +229,9 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 fn attempt_key(client: &str, name: &str) -> String {
     let name: String = name.to_lowercase().chars().take(MAX_NAME_CHARS).collect();
     match client.parse::<std::net::Ipv6Addr>() {
-        Ok(v6) if v6.to_ipv4_mapped().is_none() => {
+        // Tailscale'in adresleri (fd7a:115c:a1e0::/48) cihaz başınadır ve birçok cihaz aynı /64'ü paylaşır: ağa
+        // göre sayılsalardı bir cihaz öbürlerinin girişini de kilitlerdi.
+        Ok(v6) if v6.to_ipv4_mapped().is_none() && v6.segments()[..3] != [0xfd7a, 0x115c, 0xa1e0] => {
             let s = v6.segments();
             format!("{:x}:{:x}:{:x}:{:x}::/64|{name}", s[0], s[1], s[2], s[3])
         }
@@ -266,7 +268,7 @@ impl Auth {
             attempts: Mutex::new(HashMap::new()),
             hashing: (Mutex::new(0), Condvar::new()),
             behind_tls_proxy,
-            proxy_secret: None,
+            proxy_owner: None,
             direct_tls: false,
             ldap: None,
             webauthn: None,

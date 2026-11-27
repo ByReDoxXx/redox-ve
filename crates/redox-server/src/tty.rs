@@ -124,12 +124,14 @@ pub struct Options {
     pub scheme: String,
     pub port: u16,
     pub state: PathBuf,
+    /// Panelin adresini tutan dosya (vekil kullanılıyorsa). Dosya yoksa adres şema ve kapıdan kurulur.
+    pub url_file: Option<PathBuf>,
     /// Ekranı bir kez yazıp çık (betikler ve testler için).
     pub once: bool,
 }
 
 pub fn parse_options(args: &[String]) -> Result<Options, String> {
-    let mut o = Options { listen: "127.0.0.1:8006".into(), scheme: "https".into(), port: 8006, state: PathBuf::from("/var/lib/redox/state.json"), once: false };
+    let mut o = Options { listen: "127.0.0.1:8006".into(), scheme: "https".into(), port: 8006, state: PathBuf::from("/var/lib/redox/state.json"), url_file: None, once: false };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut value = || it.next().cloned().ok_or(format!("{arg} bir değer ister"));
@@ -144,7 +146,8 @@ pub fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--port" => o.port = value()?.parse().map_err(|_| "--port bir kapı numarası olmalı".to_string())?,
             "--state" => o.state = PathBuf::from(value()?),
-            other => return Err(format!("bilinmeyen seçenek: {other}\nkullanım: redox tty [--once] [--listen 127.0.0.1:8006] [--scheme https] [--port 8006] [--state DOSYA]")),
+            "--url-file" => o.url_file = Some(PathBuf::from(value()?)),
+            other => return Err(format!("bilinmeyen seçenek: {other}\nkullanım: redox tty [--once] [--listen 127.0.0.1:8006] [--scheme https] [--port 8006] [--state DOSYA] [--url-file DOSYA]")),
         }
     }
     Ok(o)
@@ -153,6 +156,14 @@ pub fn parse_options(args: &[String]) -> Result<Options, String> {
 /// Yönetim hizmeti yanıt veriyor mu? (Kısa süre beklenir: ekran takılmasın.)
 fn healthy(listen: &str) -> bool {
     ureq::AgentBuilder::new().timeout(Duration::from_millis(900)).build().get(&format!("http://{listen}/healthz")).call().is_ok()
+}
+
+/// Adres dosyasının ilk satırı; yalnızca düz bir http(s) adresi kabul edilir (ekrana olduğu gibi yazılır).
+fn published_url(path: Option<&Path>) -> Option<String> {
+    let text = std::fs::read_to_string(path?).ok()?;
+    let line = text.lines().next()?.trim();
+    let plain = (line.starts_with("https://") || line.starts_with("http://")) && line.len() <= 200 && line.chars().all(|c| c.is_ascii_graphic());
+    plain.then(|| line.to_string())
 }
 
 /// Durum dosyasından `(çalışan, toplam)` konuk sayısı.
@@ -168,7 +179,11 @@ pub fn gather(o: &Options) -> Screen {
     let local_only = o.scheme == "http" && o.listen.starts_with("127.");
     // Panel adresi, dışarıya giden arayüzün adresidir; bulunamazsa geri döngü dışındaki ilk adres.
     let primary = crate::host::primary_ip().filter(|ip| addresses.iter().any(|(_, a)| a == ip)).or_else(|| addresses.iter().find(|(name, _)| name != "lo").map(|(_, a)| a.clone()));
-    let url = if local_only { Some(format!("http://{} (yalnızca bu sunucudan)", o.listen)) } else { primary.map(|address| format!("{}://{address}:{}", o.scheme, o.port)) };
+    let url = match published_url(o.url_file.as_deref()) {
+        Some(url) => Some(url),
+        None if local_only => Some(format!("http://{} (yalnızca bu sunucudan)", o.listen)),
+        None => primary.map(|address| format!("{}://{address}:{}", o.scheme, o.port)),
+    };
     Screen {
         hostname: crate::host::hostname(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -290,6 +305,21 @@ mod tests {
         for bad in ["--scheme ftp", "--port çok", "--listen", "--bilinmeyen"] {
             assert!(parse_options(&args(bad)).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_published_address_is_shown_only_if_it_is_a_plain_url() {
+        let file = std::env::temp_dir().join(format!("redox-adres-{}", std::process::id()));
+        assert_eq!(published_url(Some(&file)), None, "dosya yok");
+        assert_eq!(published_url(None), None);
+        std::fs::write(&file, "https://sunucu.ag-adi.ts.net\n").unwrap();
+        assert_eq!(published_url(Some(&file)).as_deref(), Some("https://sunucu.ag-adi.ts.net"));
+        for bad in ["", "sunucu.ts.net", "https://x\u{1b}[2J", "https://a b"] {
+            std::fs::write(&file, bad).unwrap();
+            assert_eq!(published_url(Some(&file)), None, "{bad:?}");
+        }
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(parse_options(&["--url-file".to_string(), "/etc/redox/panel.url".to_string()]).unwrap().url_file, Some(PathBuf::from("/etc/redox/panel.url")));
     }
 
     #[test]
