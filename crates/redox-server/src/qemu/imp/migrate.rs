@@ -53,8 +53,13 @@ fn disk_devices(d: &QemuDriver, g: &Guest) -> Result<Vec<String>, String> {
 }
 
 fn mirror_jobs(sock: &Path) -> Result<Vec<Value>, String> {
+    block_jobs(sock, JOB_PREFIX)
+}
+
+/// Adı `prefix` ile başlayan disk işleri.
+pub(super) fn block_jobs(sock: &Path, prefix: &str) -> Result<Vec<Value>, String> {
     let reply = qmp(sock, &["query-block-jobs"])?;
-    Ok(reply.first().and_then(Value::as_array).map(|jobs| jobs.iter().filter(|job| job["device"].as_str().is_some_and(|id| id.starts_with(JOB_PREFIX))).cloned().collect()).unwrap_or_default())
+    Ok(reply.first().and_then(Value::as_array).map(|jobs| jobs.iter().filter(|job| job["device"].as_str().is_some_and(|id| id.starts_with(prefix))).cloned().collect()).unwrap_or_default())
 }
 
 fn kill_and_clean(d: &QemuDriver, vmid: VmId) {

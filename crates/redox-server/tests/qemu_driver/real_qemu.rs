@@ -413,3 +413,51 @@ pub(super) fn real_qemu_guest_gets_its_cpu_weight_and_memory_guarantee() {
     assert!(!group.exists(), "kapanan konuğun grubu kaldırılır");
     let _ = std::fs::remove_dir_all(&real.dir);
 }
+
+/// Çalışırken depolama taşıma, gerçek QEMU'da: konuk diske yazmayı sürdürürken iki diski de başka bir dizine
+/// geçer; eski dosyalar silinir, konuk durmaz ve yeni alandan yeniden açıldığında verisi yerindedir.
+#[test]
+pub(super) fn real_qemu_moves_a_running_guests_disks_to_another_storage() {
+    let Some(mut real) = real() else { return };
+    let fast = real.dir.join("hizli");
+    real.cfg.storages = vec![("hizli".to_string(), fast.clone())];
+    let d = QemuDriver::new(real.cfg.clone()).unwrap();
+    let mut g = guest(&real.cfg, "gercek-depo");
+    (g.cores, g.mem_total_mb) = (2, 1024);
+    g.hw.disks.push(redox_core::hw::ExtraDisk { id: 1, size_gb: 1, serial: 1 });
+    d.create(&g).unwrap();
+    d.add_disk(&g, 1, 1).unwrap();
+    let (main, extra) = (real.cfg.disk_of(&g), real.cfg.extra_disk_of(&g, 1));
+    d.apply(&g, Action::Start).unwrap();
+    real.boot();
+    real.ask("depmod -a 2>/dev/null; modprobe virtio_pci 2>/dev/null; modprobe virtio_blk 2>/dev/null; mount -t devtmpfs dev /dev 2>/dev/null; sleep 1");
+    real.ask("echo birinci-disk | dd of=/dev/vda bs=512 seek=10 conv=notrunc 2>/dev/null; echo ikinci-disk | dd of=/dev/vdb bs=512 seek=7 conv=notrunc 2>/dev/null; sync");
+    real.ask("(i=0; while true; do i=$((i+1)); echo sayac-$i | dd of=/dev/vda bs=512 seek=2000 conv=notrunc 2>/dev/null; echo $i > /tmp/sayac; done) >/dev/null 2>&1 & true");
+    let count = |real: &Real| -> u64 { real.ask("cat /tmp/sayac").pop().unwrap().parse().unwrap() };
+    let before = count(&real);
+
+    d.move_storage_live(&g, "hizli").unwrap();
+    let (new_main, new_extra) = (fast.join(main.file_name().unwrap()), fast.join(extra.file_name().unwrap()));
+    assert!(new_main.exists() && new_extra.exists() && !main.exists() && !extra.exists(), "diskler yeni alanda, eski dosyalar silinmiş olmalı");
+    assert_eq!(status(&d, &g), GuestStatus::Running);
+    let after = count(&real);
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(after > before && count(&real) > after, "konuk taşıma boyunca ve sonrasında yazmayı sürdürmeli");
+    // Taşınan konuk yeniden taşınabilir ve canlı yedeği etkilenmez: diskler yeni dosyalarından okunur.
+    g.storage = "hizli".to_string();
+    assert_eq!(real.ask("dd if=/dev/vdb bs=512 skip=7 count=1 2>/dev/null | head -c 11; echo").pop().as_deref(), Some("ikinci-disk"));
+    real.ask("kill %1 2>/dev/null; sleep 1; sync");
+    let last = count(&real);
+
+    // Yeni alandan sıfırdan açılış: veri yerinde.
+    d.apply(&g, Action::Stop).unwrap();
+    d.apply(&g, Action::Start).unwrap();
+    real.boot();
+    real.ask("depmod -a 2>/dev/null; modprobe virtio_pci 2>/dev/null; modprobe virtio_blk 2>/dev/null; mount -t devtmpfs dev /dev 2>/dev/null; sleep 1");
+    assert_eq!(real.ask("dd if=/dev/vda bs=512 skip=10 count=1 2>/dev/null | head -c 12; echo").pop().as_deref(), Some("birinci-disk"));
+    let on_disk = real.ask("dd if=/dev/vda bs=512 skip=2000 count=1 2>/dev/null | head -n 1").pop().unwrap();
+    let written: u64 = on_disk.trim_start_matches("sayac-").parse().unwrap();
+    assert!(written + 1 >= last && written <= last + 1, "diskteki son yazı konuğun saydığıyla tutmalı: {on_disk}, sayaç {last}");
+    d.apply(&g, Action::Stop).unwrap();
+    let _ = std::fs::remove_dir_all(&real.dir);
+}

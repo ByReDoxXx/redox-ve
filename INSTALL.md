@@ -110,7 +110,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # all must pass (550 tests on Linux; with Node installed the live console client's 7 tests run too)
+cargo test --workspace          # all must pass (553 tests on Linux; with Node installed the live console client's 7 tests run too)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -315,7 +315,9 @@ What the driver offers, from the tabs of a guest page:
   disks on a second disk or a mounted share. The directory must belong to the `redox` user. Backups, media and
   containers always stay in the data directory (`local`). The server refuses to start if a storage that still
   holds guests is removed from the service line.
-- **Moving a guest to another storage:** in the clone tab of a stopped VM, or `redox vm move 103 fast`. All disks
+- **Moving a guest to another storage:** in the clone tab of a VM, or `redox vm move 103 fast`. A running VM is
+  moved without stopping it (its disks are mirrored to the new storage, then switched over); if it has snapshots it
+  must be stopped first. For a stopped guest all disks
   are copied to the target first, put in place when every copy is complete, and only then removed from the old
   location: an interrupted move leaves the guest where it was. Snapshots travel with the disks. Suspended guests,
   linked clones and templates with linked clones cannot be moved. Containers cannot be moved.

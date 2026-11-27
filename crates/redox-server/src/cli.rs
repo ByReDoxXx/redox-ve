@@ -63,7 +63,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox vm|ct clone <kimlik> <yeni-ad>
   redox vm disk add <kimlik> <GB> | vm nic add <kimlik> <nat|köprü>   (çalışan sanal makineye de takılır)
   redox vm resize <kimlik> <GB>
-  redox vm move <kimlik> <depolama>      (kapalı sanal makinenin disklerini başka depolama alanına taşır)
+  redox vm move <kimlik> <depolama>      (sanal makinenin disklerini başka depolama alanına taşır; çalışırken de olur)
   redox vm balloon <kimlik> <MB>         (bellek hedefi; çalışırken de değişir, 0: belleğin tamamı)
   redox vm cores <kimlik> <sayı>         (çalışan konuğu <sayı> çekirdeğe çıkarır; önce kapalıyken max-cores=<en fazla> verin)
   redox vm memory <kimlik> <MB>          (çalışan konuğun belleğini <MB> değerine çıkarır; önce kapalıyken max-memory=<en fazla> verin)

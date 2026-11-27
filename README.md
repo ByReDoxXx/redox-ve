@@ -49,6 +49,7 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
   cloud-init settings, including a static address, can be edited later from the panel.
 - Selectable CPU model per VM, and a memory balloon whose target can be changed while the VM runs.
 - Cores and memory can be added to a running VM (`redox vm cores 103 6`, `redox vm memory 103 8192`), up to a per-VM maximum.
+- A running VM's disks can be moved to another storage without stopping it (`redox vm move 103 fast`).
 - CPU shares and memory reservation per VM (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): who gets the CPU when the server runs short, and memory that is not taken back; both can be changed while the guest runs.
 - A status screen on the server's own console: name, addresses, where the web interface is, whether the service answers and how many guests run; Enter logs in.
 - Import `vmdk`, `vdi`, `vhdx` disks and OVA archives; export a guest as OVA.
@@ -429,11 +430,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-550 tests pass on Linux and 467 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+553 tests pass on Linux and 468 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
 tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
 7 tests run as well.
 
-Five driver tests run against **real QEMU** with a Linux kernel as the guest and check the result from
+Six driver tests run against **real QEMU** with a Linux kernel as the guest and check the result from
 inside the guest. They are skipped unless you point them at the binaries:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (any kernel whose
 initial file system has a shell at `/bin/sh`, such as a Debian installer's `vmlinuz` and `initrd.gz`).
@@ -466,6 +467,7 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
 - Storage is always a directory of image files. It may sit on ZFS, LVM or NFS (detected and shown), but there is no built-in zvol or logical-volume pool management.
 - Restoring a file into a running guest goes through the guest agent, so the guest needs `qemu-guest-agent` and the agent must allow its file commands (some distributions, such as RHEL, block them by default). A single file is written as the agent's user and does not keep its owner or permissions; a folder is unpacked with the guest's own `tar` and must already exist in the guest. Containers are not covered. Writing into the guest (single file and folder) is tested with the driver's own code against a real guest agent (qemu-ga 10.2 in a Linux guest); reading the file out of the backup is still tested only with a fake `guestfish`, and the whole path has not been tried with a Windows guest.
 - Cores and memory can be added to a running VM but not removed, and only up to the "maximum cores" and "maximum memory" set while it was stopped. Memory is added in steps of 128 MB, at most 8 times per start (a stop and start makes the added memory ordinary memory and frees the slots); to lower memory while running there is only the balloon. A snapshot with memory state taken before cores or memory were added can only be rolled back to with the guest stopped. Both are tested with the driver's own code on real QEMU with a Linux guest, including suspend and resume afterwards; bringing new cores and memory online through the guest agent is tested against a real agent (qemu-ga 10.2) as well. Neither was tried with a Windows guest.
+- Moving a running VM to another storage mirrors only the current content of its disks, so a guest that has snapshots (or a disk that depends on a backup) must be stopped first; stopped guests are moved by copying the files, snapshots included. If a multi-disk guest's switch-over fails part-way, the error says so and the move must be retried before the guest is stopped. Tested on real QEMU with a guest that keeps writing; not tried with large disks or a slow target.
 - Containers cannot be moved to another storage or to another server.
 - The live console has no clipboard or audio (text can be typed in as keystrokes).
 - The interface is in Turkish and English only.

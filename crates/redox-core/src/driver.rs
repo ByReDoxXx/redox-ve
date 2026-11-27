@@ -286,6 +286,11 @@ pub trait Hypervisor: Send + Sync {
     /// Hedef: taşıma olmadı; bekleyen konuk kapatılır.
     fn migrate_abort(&self, _guest: &Guest) {}
 
+    /// Çalışan konuğun disklerini, konuğu durdurmadan `target` depolama alanına taşır.
+    fn move_storage_live(&self, _guest: &Guest, _target: &str) -> Result<(), String> {
+        Err("bu sürücü çalışan konuğun disklerini taşıyamaz".to_string())
+    }
+
     /// UEFI donanım yazılımı kurulu mu?
     fn uefi(&self) -> bool {
         false

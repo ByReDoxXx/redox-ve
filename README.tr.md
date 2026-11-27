@@ -44,6 +44,7 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
   cloud-init ayarları, sabit adres dahil, sonradan panelden düzenlenir.
 - Sanal makine başına seçilebilen işlemci modeli ve hedefi çalışırken değişen bellek balonu.
 - Çalışan sanal makineye çekirdek ve bellek ekleme (`redox vm cores 103 6`, `redox vm memory 103 8192`); üst sınır konuk başına verilir.
+- Çalışan sanal makinenin diskleri, konuk durdurulmadan başka depolama alanına taşınır (`redox vm move 103 hizli`).
 - Sanal makine başına işlemci payı ve bellek garantisi (`redox vm set 103 cpu-shares=200 mem-reserve=4096`): sunucu sıkışınca işlemciyi kimin alacağı ve geri alınmayacak bellek; ikisi de konuk çalışırken değişir.
 - Sunucunun kendi konsolunda durum ekranı: ad, adresler, panelin adresi, hizmetin yanıt verip vermediği ve çalışan konuk sayısı; Enter ile oturum açılır.
 - `vmdk`, `vdi`, `vhdx` disklerini ve OVA arşivlerini içe aktarma; konuğu OVA olarak dışa aktarma.
@@ -431,11 +432,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 550, Windows'ta 467 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+Linux'ta 553, Windows'ta 468 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
 testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
 7 testi de çalışır.
 
-Sürücü testlerinden beşi **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
+Sürücü testlerinden altısı **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
 içinden doğrular. İkililer gösterilmedikçe atlanırlar:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (başlangıç dosya sisteminde
 `/bin/sh` kabuğu bulunan herhangi bir çekirdek; örneğin bir Debian kurucusunun `vmlinuz` ve `initrd.gz` dosyaları).
@@ -468,6 +469,7 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 - Depolama her zaman imaj dosyalarının durduğu bir dizindir. Dizin ZFS, LVM ya da NFS üzerinde olabilir (tanınır ve gösterilir), ama yerleşik zvol ya da mantıksal birim havuzu yönetimi yoktur.
 - Çalışan konuğa dosya geri yükleme konuk ajanı üzerinden yapılır: konukta `qemu-guest-agent` çalışmalı ve ajan dosya komutlarına izin vermelidir (RHEL gibi bazı dağıtımlar bunları varsayılan olarak engeller). Tek dosya ajanın kullanıcısıyla yazılır, sahibi ve izinleri korunmaz; klasör konuğun kendi `tar` programıyla açılır ve hedef dizin konukta var olmalıdır. Konteynerler kapsam dışıdır. Konuğun içine yazma (tek dosya ve klasör), sürücünün kendi koduyla gerçek bir konuk ajanına karşı sınanır (Linux konukta qemu-ga 10.2); dosyanın yedekten okunması hâlâ yalnızca sahte `guestfish` ile sınanıyor ve yolun tamamı Windows konukla denenmedi.
 - Çalışan sanal makineye çekirdek ve bellek eklenir ama çıkarılmaz; eklenebilecek miktar, konuk kapalıyken verilen "en fazla çekirdek" ve "en fazla bellek" değerleriyle sınırlıdır. Bellek 128 MB'lık adımlarla ve bir açılışta en fazla 8 kez eklenir (konuk kapatılıp açılınca eklenen bellek olağan belleğe katılır, yuvalar boşalır); çalışırken belleği düşürmenin yolu yalnızca balondur. Çekirdek ya da bellek eklenmeden önce alınmış bellek durumlu anlık görüntüye ancak konuk kapalıyken dönülür. İkisi de sürücünün kendi koduyla gerçek QEMU'da bir Linux konukla, ardından askıya alıp geri dönerek sınanır; yeni çekirdeklerin ve belleğin konuk ajanıyla etkinleştirilmesi de gerçek bir ajana (qemu-ga 10.2) karşı sınanır. İkisi de Windows konukla denenmedi.
+- Çalışan sanal makineyi başka depolama alanına taşımak yalnızca disklerin şimdiki içeriğini aynalar; bu yüzden anlık görüntüsü (ya da yedeğe bağlı diski) olan konuk önce kapatılmalıdır. Kapalı konuklar dosyaları kopyalanarak, görüntüleriyle birlikte taşınır. Çok diskli konukta geçiş yarıda kalırsa hata bunu söyler ve taşıma, konuk kapatılmadan yeniden denenmelidir. Gerçek QEMU'da, yazmayı sürdüren bir konukla sınandı; büyük disklerle ya da yavaş bir hedefle denenmedi.
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
 - Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).
 - Arayüz yalnızca Türkçe ve İngilizcedir.

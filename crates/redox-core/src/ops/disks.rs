@@ -61,6 +61,24 @@ impl Cluster {
         Ok(())
     }
 
+    /// Konuğun diskleri, konuk **çalışırken** `target` alanına taşınabilir mi? Çalışırken yalnızca disklerin
+    /// şimdiki içeriği taşınır: dosyanın içindeki anlık görüntüler gelmez, bu yüzden görüntüsü olan konuk ve
+    /// diski bir yedeğe dayanan konuk önce kapatılır.
+    pub fn check_storage_move_live(&self, vmid: VmId, target: &str) -> Result<(), Error> {
+        self.check_storage_move(vmid, target)?;
+        let g = self.guest(vmid)?;
+        if g.kind != GuestKind::Vm {
+            return Err(Error::InvalidSpec("çalışırken taşıma yalnızca sanal makinelerde kullanılır; konteyneri kapatıp öyle taşıyın".to_string()));
+        }
+        if !g.snapshots.is_empty() {
+            return Err(Error::InvalidSpec("anlık görüntüsü olan konuk çalışırken taşınamaz (görüntüler disk dosyasının içindedir ve aynalanmaz); görüntüleri silin ya da konuğu kapatıp öyle taşıyın".to_string()));
+        }
+        if g.hw.instant.is_some() {
+            return Err(Error::InvalidSpec("diski bir yedeğe dayanan konuk çalışırken taşınamaz; önce yedekten ayırın".to_string()));
+        }
+        Ok(())
+    }
+
     /// Taşıma bitti: konuğun payı eski alandan düşülür, yenisine eklenir.
     pub fn apply_storage_move(&mut self, vmid: VmId, target: &str) {
         let Ok(g) = self.guest(vmid) else { return };

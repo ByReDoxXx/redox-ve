@@ -15,6 +15,7 @@ mod live;
 mod measure;
 mod migrate;
 mod power;
+mod storage;
 
 pub(super) use host::*;
 pub use hotplug::*;
@@ -23,6 +24,7 @@ pub use live::*;
 pub(super) use measure::*;
 pub use migrate::*;
 pub use power::*;
+pub use storage::*;
 
 const QMP_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_millis(150);

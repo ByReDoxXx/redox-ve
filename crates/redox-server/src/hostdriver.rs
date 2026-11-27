@@ -216,6 +216,10 @@ impl Hypervisor for HostDriver {
         self.vm.live_migration()
     }
 
+    fn move_storage_live(&self, guest: &Guest, target: &str) -> Result<(), String> {
+        self.of(guest)?.move_storage_live(guest, target)
+    }
+
     fn migrate_layout(&self, guest: &Guest) -> Option<u8> {
         self.of(guest).ok()?.migrate_layout(guest)
     }

@@ -43,5 +43,7 @@ Her diski ayrı bir ZFS birimine (zvol) ya da mantıksal birime koyan yerleşik 
 
 ## Depolama alanları arasında taşıma
 
-`redox vm move 103 hizli` ya da *Çoğalt ve Taşı* sekmesi. Konuk kapalı olmalıdır; diskler ve anlık görüntüler birlikte
-taşınır.
+`redox vm move 103 hizli` ya da *Çoğalt ve Taşı* sekmesi. Kapalı konuk, dosyaları kopyalanarak anlık görüntüleriyle
+birlikte taşınır. Çalışan sanal makine **durdurulmadan** taşınır: diskleri konuk çalışırken yeni alana aynalanır, sonra
+oraya geçirilir ve eski dosyalar silinir. Yalnızca şimdiki içerik aynalandığı için anlık görüntüsü olan çalışan konuk
+taşınmak için kapatılmalıdır.

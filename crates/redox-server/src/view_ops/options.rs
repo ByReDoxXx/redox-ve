@@ -207,6 +207,10 @@ pub(super) fn schedules_card(p: &Page, g: &Guest) -> Markup {
 
 /// Konuğun disklerini aynı düğümdeki başka bir depolama alanına taşıma formu.
 pub(super) fn storage_card(p: &Page, g: &Guest, stopped: bool) -> Markup {
+    // Çalışan sanal makine de taşınır (sürücü yapabiliyorsa): diskler konuk durdurulmadan aynalanır.
+    let live = !stopped && p.hotplug && g.kind == GuestKind::Vm && g.lock.is_none();
+    let blocked = live && (!g.snapshots.is_empty() || g.hw.instant.is_some());
+    let stopped = stopped || (live && !blocked);
     let others: Vec<_> = p.cluster.storages.iter().filter(|s| s.available_on(&g.node) && s.id != g.storage && s.content.iter().any(|c| c == "disk")).collect();
     let size = g.total_disk_gb();
     html! {
@@ -217,7 +221,9 @@ pub(super) fn storage_card(p: &Page, g: &Guest, stopped: bool) -> Markup {
                     h3 { (tx("Diskleri başka alana taşı")) }
                     p {
                         (tx("Konuğun bütün diskleri (ek diskler dahil) seçilen alana kopyalanır, kopya tamamlanınca eski yerlerinden silinir; anlık görüntüler disklerle birlikte gelir. "))
-                        (tx("Süre disklerin dolu kısmıyla orantılıdır. Konuk kapalı olmalıdır; yarıda kalan taşıma konuğu eski alanında bırakır."))
+                        (tx("Süre disklerin dolu kısmıyla orantılıdır; yarıda kalan taşıma konuğu eski alanında bırakır. "))
+                        (tx("Çalışan sanal makine durdurulmadan taşınır: diskleri yeni alana aynalanır, sonra oraya geçirilir. Anlık görüntüsü olan konuk çalışırken taşınmaz; görüntüler yalnızca kapalıyken taşınır."))
+                        @if blocked { " " strong { (tx("Bu konuğun anlık görüntüsü ya da yedeğe bağlı diski var: taşımak için kapatın.")) } }
                     }
                 }
                 @if others.is_empty() {

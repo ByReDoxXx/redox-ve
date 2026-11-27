@@ -104,7 +104,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # hepsi geçmeli (Linux'ta 550 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
+cargo test --workspace          # hepsi geçmeli (Linux'ta 553 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -275,8 +275,10 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   yükleme) seçilen alanda durur. Yedekler, kurulum kalıpları ve konteynerler her zaman veri dizinindedir
   (`local`). Üzerinde konuk olan bir alanı hizmet satırından çıkarırsanız sunucu başlamaz ve hangi konukların orada
   olduğunu söyler.
-- **Konuğu başka depolama alanına taşıma:** kapalı sanal makinenin *Çoğalt ve Taşı* sekmesindeki **Depolama alanı**
-  bölümünden ya da `redox vm move 103 hizli` ile bütün diskleri (ek diskler dahil) başka bir alana taşınır. Diskler önce
+- **Konuğu başka depolama alanına taşıma:** sanal makinenin *Çoğalt ve Taşı* sekmesindeki **Depolama alanı**
+  bölümünden ya da `redox vm move 103 hizli` ile bütün diskleri (ek diskler dahil) başka bir alana taşınır. Çalışan
+  sanal makine durdurulmadan taşınır (diskleri yeni alana aynalanır, sonra oraya geçirilir); anlık görüntüsü varsa
+  önce kapatılmalıdır. Kapalı konukta diskler önce
   hedefe kopyalanır, hepsi tamamlanınca yerlerine konur ve ancak ondan sonra eski yerlerinden silinir: yarıda kalan
   taşıma konuğu eski alanında bırakır ve hedefte dosya kalmaz. Anlık görüntüler disklerle birlikte gelir. Süre
   disklerin dolu kısmıyla orantılıdır ve hedefte konuğun diskleri kadar boş yer gerekir. Askıdaki konuk, bağlı klon ve

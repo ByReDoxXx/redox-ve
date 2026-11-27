@@ -179,13 +179,26 @@ impl AppState {
         outcome.map_err(Error::Driver)
     }
 
-    /// Kapalı konuğun disklerini başka bir depolama alanına taşır.
+    /// Konuğun disklerini başka bir depolama alanına taşır. Kapalı konukta dosyalar kopyalanır; çalışan sanal
+    /// makinede (sürücü yapabiliyorsa) diskler konuk durdurulmadan aynalanıp yeni yerine geçirilir.
     pub fn storage_move(&self, vmid: VmId, target: &str, user: &str) -> Result<TaskId, Error> {
         let kind = self.kind_of(vmid)?;
         if !self.driver().storage_supports(target, kind) {
             return Err(Error::InvalidSpec("konteynerler ek depolama alanlarında tutulamaz; yalnızca sanal makine diskleri taşınır".to_string()));
         }
         let (to, to2, to3) = (target.to_string(), target.to_string(), target.to_string());
+        let running = self.lock().guest(vmid)?.status != redox_core::GuestStatus::Stopped;
+        if running && kind == redox_core::GuestKind::Vm && self.driver().hotplug(redox_core::GuestKind::Vm) {
+            return self.run_op(
+                vmid,
+                user,
+                format!("{kind} move {vmid} {target}"),
+                None,
+                move |c| c.check_storage_move_live(vmid, &to),
+                move |d, g| d.move_storage_live(g, &to2),
+                move |c, ()| c.apply_storage_move(vmid, &to3),
+            );
+        }
         self.run_op(
             vmid,
             user,

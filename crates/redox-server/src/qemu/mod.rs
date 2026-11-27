@@ -987,6 +987,20 @@ impl Hypervisor for QemuDriver {
         Ok(())
     }
 
+    fn move_storage_live(&self, guest: &Guest, target: &str) -> Result<(), String> {
+        // Yeni dosyada değişiklik haritası yoktur: sonraki artımlı yedek diskin tamamını okur.
+        self.cbt_invalidate(guest.vmid);
+        #[cfg(unix)]
+        {
+            imp::move_storage_live(self, guest, target)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, target);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
     fn import_disk(&self, guest: &Guest, id: u8, source: &Path) -> Result<(), String> {
         self.cbt_invalidate(guest.vmid);
         let disk = self.cfg.extra_disk_of(guest, id);

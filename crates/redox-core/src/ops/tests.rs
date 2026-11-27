@@ -1195,3 +1195,29 @@ fn cpu_shares_and_memory_reservations_are_validated_and_reservations_must_fit_th
     c.guest_mut(other).unwrap().status = GuestStatus::Stopped;
     c.update_guest(103, &set(None, Some(4096)), "u", NOW).unwrap();
 }
+
+#[test]
+fn a_running_vm_moves_between_storages_only_without_snapshots() {
+    use crate::model::{Storage, StorageKind};
+    let mut c = cluster();
+    let node = c.guest(100).unwrap().node.clone();
+    c.storages.push(Storage { id: "hizli".into(), node: Some(node.clone()), kind: StorageKind::Dir, content: vec!["disk".into()], used_gb: 0, total_gb: 5000 });
+    assert_eq!(c.guest(100).unwrap().status, GuestStatus::Running);
+    c.check_storage_move_live(100, "hizli").unwrap();
+    // Kapalıyken geçerli olan kurallar burada da geçerlidir.
+    let here = c.guest(100).unwrap().storage.clone();
+    assert!(c.check_storage_move_live(100, &here).unwrap_err().to_string().contains("zaten"));
+    assert!(c.check_storage_move_live(100, "yok").is_err());
+    // Görüntüler disk dosyasının içindedir ve aynalanmaz: görüntüsü olan konuk çalışırken taşınmaz.
+    c.add_snapshot(100, "once", NOW);
+    assert!(c.check_storage_move_live(100, "hizli").unwrap_err().to_string().contains("anlık görüntüsü olan konuk çalışırken taşınamaz"));
+    c.check_storage_move(100, "hizli").unwrap();
+    c.remove_snapshot(100, "once");
+    c.guest_mut(100).unwrap().hw.instant = Some("vm-100-1".into());
+    assert!(c.check_storage_move_live(100, "hizli").unwrap_err().to_string().contains("yedeğe dayanan"));
+    c.guest_mut(100).unwrap().hw.instant = None;
+    let ct = c.guests.iter().find(|g| g.kind == GuestKind::Ct && g.node == node).map(|g| g.vmid);
+    if let Some(ct) = ct {
+        assert!(c.check_storage_move_live(ct, "hizli").unwrap_err().to_string().contains("yalnızca sanal makinelerde"));
+    }
+}

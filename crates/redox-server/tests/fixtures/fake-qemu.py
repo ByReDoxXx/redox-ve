@@ -502,6 +502,29 @@ while True:
                         mig["jobs"][arguments["job-id"]] = arguments["device"]
                     hot("blockdev-mirror %s %s" % (arguments["device"], arguments["target"]))
                     send({"return": {}})
+            elif command == "drive-mirror":
+                # Çalışırken depolama taşıma: disk yeni dosyasına kopyalanır, iş "hazır" bekler.
+                if arguments["device"] not in devices or arguments.get("copy-mode") != "write-blocking" or arguments.get("format") != "qcow2":
+                    send({"error": {"class": "GenericError", "desc": "Cannot find device='%s'" % arguments["device"]}})
+                elif os.path.exists(sock_path + ".nospace"):
+                    send({"error": {"class": "GenericError", "desc": "Could not create file: No space left on device"}})
+                else:
+                    with open(devices[arguments["device"]], "rb") as src, open(arguments["target"], "wb") as dst:
+                        dst.write(src.read())
+                    if not os.path.exists(sock_path + ".nomirror"):
+                        mig["jobs"][arguments["job-id"]] = arguments["device"]
+                        mig.setdefault("moves", {})[arguments["job-id"]] = arguments["target"]
+                    hot("drive-mirror %s %s" % (arguments["device"], arguments["target"]))
+                    send({"return": {}})
+            elif command == "block-job-complete":
+                job = arguments["device"]
+                # "nopivot-<aygıt>" işaretiyle o diskin geçişi başarısız olur.
+                if job not in mig.get("moves", {}) or os.path.exists("%s.nopivot-%s" % (sock_path, mig["jobs"].get(job))):
+                    send({"error": {"class": "GenericError", "desc": "The active block job '%s' cannot be completed" % job}})
+                else:
+                    devices[mig["jobs"].pop(job)] = mig["moves"].pop(job)
+                    hot("block-job-complete %s" % job)
+                    send({"return": {}})
             elif command == "migrate_cancel":
                 hot("migrate_cancel")
                 send({"return": {}})

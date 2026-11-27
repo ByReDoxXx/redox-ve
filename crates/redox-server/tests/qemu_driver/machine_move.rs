@@ -301,10 +301,20 @@ pub(super) fn storage_move_runs_as_a_task_and_updates_the_records() {
     let size = state.snapshot().guest(id).unwrap().total_disk_gb();
     std::fs::write(cfg.disk_path(id), "icerik").unwrap();
 
-    // Çalışan konuk taşınmaz.
+    // Çalışan sanal makine durdurulmadan taşınır ve kayıtlar güncellenir; anlık görüntüsü varsa önce kapatılmalıdır.
     state.run_action(id, Action::Start, "admin").unwrap();
-    assert!(matches!(state.storage_move(id, "hizli", "admin"), Err(Error::RequiresStopped { .. })));
+    state.snapshot_create(id, "once", "admin").unwrap();
+    assert!(matches!(state.storage_move(id, "hizli", "admin"), Err(Error::InvalidSpec(m)) if m.contains("anlık görüntüsü olan konuk çalışırken taşınamaz")));
+    state.snapshot_delete(id, "once", "admin").unwrap();
+    state.storage_move(id, "hizli", "admin").unwrap();
+    let live = state.snapshot();
+    assert_eq!((live.tasks[0].command.as_str(), live.tasks[0].status, live.guest(id).unwrap().storage.as_str(), live.guest(id).unwrap().status), (format!("vm move {id} hizli").as_str(), TaskStatus::Ok, "hizli", GuestStatus::Running), "{:?}", live.tasks[0].message);
+    assert!(fast.join(format!("vm-{id}-disk-0.qcow2")).exists() && !cfg.disk_path(id).exists());
+    assert_eq!(live.storages.iter().find(|s| s.id == "hizli").unwrap().used_gb, size, "pay yeni alana geçti");
+    // Kapalıyken geri taşınır (dosya kopyası); sonra asıl sınama kapalı konukla sürer.
     state.run_action(id, Action::Stop, "admin").unwrap();
+    state.storage_move(id, "local", "admin").unwrap();
+    assert!(cfg.disk_path(id).exists() && state.snapshot().storages.iter().find(|s| s.id == "hizli").unwrap().used_gb == 0);
     assert!(state.storage_move(id, "yok", "admin").is_err());
 
     state.storage_move(id, "hizli", "admin").unwrap();
@@ -321,5 +331,65 @@ pub(super) fn storage_move_runs_as_a_task_and_updates_the_records() {
     let args = std::fs::read_to_string(format!("{}.args", cfg.qmp_path(id).display())).unwrap();
     assert!(args.contains(&fast.join(format!("vm-{id}-disk-0.qcow2")).display().to_string()), "{args}");
     state.run_action(id, Action::Stop, "admin").unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+pub(super) fn a_running_vms_disks_move_to_another_storage_without_stopping() {
+    if !python_available() {
+        return;
+    }
+    let (mut cfg, dir) = config();
+    let fast = dir.join("hizli");
+    cfg.storages = vec![("hizli".to_string(), fast.clone())];
+    let d = QemuDriver::new(cfg.clone()).unwrap();
+    let mut g = guest(&cfg, "canli-depo");
+    d.create(&g).unwrap();
+    d.add_disk(&g, 1, 1).unwrap();
+    g.hw.disks = vec![redox_core::hw::ExtraDisk { id: 1, size_gb: 1, serial: 1 }];
+    let (main, extra) = (cfg.disk_of(&g), cfg.extra_disk_of(&g, 1));
+    std::fs::write(&main, "ana-disk-icerigi").unwrap();
+    std::fs::write(&extra, "ek-disk-icerigi").unwrap();
+    let (new_main, new_extra) = (fast.join(main.file_name().unwrap()), fast.join(extra.file_name().unwrap()));
+    let log = || std::fs::read_to_string(format!("{}.hot", cfg.qmp_path(g.vmid).display())).unwrap_or_default();
+    let marker = |name: &str| format!("{}.{name}", cfg.qmp_path(g.vmid).display());
+
+    assert!(d.move_storage_live(&g, "hizli").unwrap_err().contains("çalışmıyor"));
+    d.apply(&g, Action::Start).unwrap();
+    assert!(d.move_storage_live(&g, "local").unwrap_err().contains("aynı dizinde"));
+
+    // Hedef dosya açılamazsa (yer yok) ve ayna yarıda düşerse: konuk eski alanında kalır, hedefte iz kalmaz.
+    std::fs::write(marker("nospace"), b"").unwrap();
+    assert!(d.move_storage_live(&g, "hizli").unwrap_err().contains("yeni alana aynalanamadı"));
+    std::fs::remove_file(marker("nospace")).unwrap();
+    std::fs::write(marker("nomirror"), b"").unwrap();
+    assert!(d.move_storage_live(&g, "hizli").unwrap_err().contains("yarıda kesildi"));
+    std::fs::remove_file(marker("nomirror")).unwrap();
+    assert!(main.exists() && extra.exists() && !new_main.exists() && !new_extra.exists(), "başarısız taşıma hedefte dosya bırakmaz");
+    assert_eq!(status(&d, &g), GuestStatus::Running);
+
+    // İkinci diskin geçişi başarısız olursa: geçen diskin bayat eski dosyası silinmiştir, geçmeyen disk yerindedir
+    // ve hata bunu açıkça söyler; aynı taşıma yeniden denenince kalan disk de geçer.
+    std::fs::write(marker("nopivot-xd1"), b"").unwrap();
+    let split = d.move_storage_live(&g, "hizli").unwrap_err();
+    assert!(split.contains("1 disk yeni alana geçti") && split.contains("KAPATMADAN"), "{split}");
+    assert!(new_main.exists() && !main.exists() && extra.exists() && !new_extra.exists());
+    std::fs::remove_file(marker("nopivot-xd1")).unwrap();
+    d.move_storage_live(&g, "hizli").unwrap();
+    assert!(!main.exists() && !extra.exists(), "eski dosyalar silinir");
+    assert_eq!((std::fs::read_to_string(&new_main).unwrap(), std::fs::read_to_string(&new_extra).unwrap()), ("ana-disk-icerigi".to_string(), "ek-disk-icerigi".to_string()));
+    assert!(log().ends_with(&format!("drive-mirror xd1 {}\nblock-job-complete tasi-xd1\n", new_extra.display())), "{}", log());
+    assert_eq!(status(&d, &g), GuestStatus::Running, "konuk hiç durmadı");
+
+    // Kayıt yeni alanı gösterince konuk oradan yeniden açılır.
+    g.storage = "hizli".to_string();
+    d.apply(&g, Action::Stop).unwrap();
+    d.apply(&g, Action::Start).unwrap();
+    let args = std::fs::read_to_string(format!("{}.args", cfg.qmp_path(g.vmid).display())).unwrap();
+    assert!(args.contains(&format!("file={}", new_main.display())) && args.contains(&format!("file={}", new_extra.display())), "{args}");
+    // Geri taşıma da çalışır.
+    d.move_storage_live(&g, "local").unwrap();
+    assert!(main.exists() && extra.exists() && !new_main.exists() && !new_extra.exists());
+    d.apply(&g, Action::Stop).unwrap();
     let _ = std::fs::remove_dir_all(dir);
 }

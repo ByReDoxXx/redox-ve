@@ -43,4 +43,7 @@ There is no built-in pool management that puts every disk on its own ZFS volume 
 
 ## Moving between storages
 
-`redox vm move 103 fast` or the *Clone and Move* tab. The guest must be stopped; disks and snapshots move together.
+`redox vm move 103 fast` or the *Clone and Move* tab. A stopped guest is moved by copying its files, snapshots
+included. A running virtual machine is moved **without stopping it**: its disks are mirrored to the new storage while
+it keeps running, then switched over, and the old files are removed. Only the current content is mirrored, so a
+running guest that has snapshots must be stopped to be moved.
