@@ -372,6 +372,13 @@ impl AppState {
             Some((bridge, _)) if known.iter().any(|k| k == bridge) => spec.clone(),
             _ => redox_core::NAT.to_string(),
         }).collect();
+        // Eşin bildirdiği OCI başvurusu izlenmez: yoksa eş, bu sunucuyu kendi seçtiği bir adresten (iç ağdaki bir
+        // makine dahil) imaj indirmeye yollayabilirdi. İçerik zaten yedekten gelir; konteyner yerel bir şablonla açılır.
+        let os = if redox_core::oci::oci_reference(&remote.os).is_some() {
+            self.driver().templates().into_iter().next().unwrap_or_else(|| remote.os.clone())
+        } else {
+            remote.os.clone()
+        };
         let spec = GuestSpec {
             vmid: None,
             name: if replica { redox_core::replica_name(&remote.name) } else { remote.name.clone() },
@@ -381,12 +388,15 @@ impl AppState {
             memory_mb: remote.mem_total_mb.min(node.mem_total_mb),
             disk_gb: remote.disk_gb,
             storage: storage.id.clone(),
-            os: remote.os.clone(),
+            os,
             bridge: if known.contains(&remote.bridge) { remote.bridge.clone() } else { redox_core::NAT.to_string() },
             onboot: false,
             iso: None,
             hw,
         };
+        if redox_core::oci::oci_reference(&spec.os).is_some() {
+            return Err("eş sunucudaki konteyner bir OCI imajından oluşturulmuş; bu sunucuda onu açacak yerel şablon yok".to_string());
+        }
         let backup = peer.backup_and_wait(remote.vmid, Duration::from_secs(6 * 3600))?;
         // Eşte bıraktığımız geçici yedek her durumda silinir.
         let made = (|| {
