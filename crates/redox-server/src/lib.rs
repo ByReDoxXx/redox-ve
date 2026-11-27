@@ -130,6 +130,7 @@ pub fn app(state: AppState) -> Router {
         .route("/support", get(ui_admin::support_bundle))
         .route("/cluster/import", post(ui::peer_import))
         .route("/cluster/migrate", post(ui::peer_migrate))
+        .route("/cluster/send", post(ui::peer_send))
         .route("/cluster/replica", post(ui::replica_action))
         .route("/help", get(ui::help))
         .route("/cmd", post(ui::command))

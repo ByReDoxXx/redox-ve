@@ -124,6 +124,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox peer list                 (birleşik görünümdeki eş sunucular)
   redox peer import <eş> <kimlik> (eşteki kapalı sanal makineyi bu sunucuya kopyalar)
   redox peer migrate <eş> <kimlik> (eşteki çalışan sanal makineyi kapatmadan bu sunucuya taşır)
+  redox peer send <eş> <kimlik>   (bu sunucudaki çalışan sanal makineyi kapatmadan eşe taşır)
+  redox balance                   (yük dengeleme önerisi: sunucu sıkışmışsa hangi konuk hangi eşe taşınmalı)
   redox task list
 ";
 
@@ -161,6 +163,7 @@ pub enum View {
     Maintenance,
     Lockdown,
     Profile,
+    Balance,
     /// Yanıt olduğu gibi (girintili JSON) yazılır.
     Json,
     /// Hazır imaj kataloğu.
@@ -468,6 +471,8 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["job", "remove", name] => req("DELETE", format!("/jobs/{name}"), None, View::Done("yedek işi silindi")),
         ["storage", "list"] => get("/storage", View::Storage),
         ["peer", "list"] => get("/peers", View::Peers),
+        ["balance"] => get("/balance", View::Balance),
+        ["peer", "send", peer, id] => req("POST", format!("/peers/{peer}/send/{}", vmid(id)?), None, View::Done("canlı taşıma başladı; sonuç: redox task list")),
         ["support"] => get("/support", View::Json),
         ["profile", "export"] => get("/profile", View::Json),
         ["profile", verb @ ("diff" | "apply"), file] => {
@@ -638,6 +643,15 @@ pub fn render(view: View, v: &Value) -> String {
             "çoğaltma yok",
         ),
         View::Json => serde_json::to_string_pretty(v).unwrap_or_default(),
+        View::Balance => {
+            let head = format!("işlemci %{}  bellek %{}", n(v, "cpu_pct"), n(v, "mem_pct"));
+            let moves: Vec<String> = v["moves"].as_array().into_iter().flatten().map(|m| format!("  {:<6} {:<16} -> {:<12} ({}; sonra burada %{}, eşte %{})   redox peer send {} {}", n(m, "vmid"), s(m, "name"), s(m, "peer"), s(m, "reason"), n(m, "here_mem_pct"), n(m, "peer_mem_pct"), s(m, "peer"), n(m, "vmid"))).collect();
+            match (v["busy"].as_bool() == Some(true), moves.is_empty()) {
+                (false, _) => format!("{head}: sunucu sıkışmış değil, öneri yok"),
+                (true, true) => format!("{head}: sunucu sıkışmış, ama öneri üretilemedi: {}", s(v, "note")),
+                (true, false) => format!("{head}: sunucu sıkışmış. Öneriler:\n{}", moves.join("\n")),
+            }
+        }
         View::Profile => {
             let lines = |key: &str| v[key].as_array().map(|all| all.iter().filter_map(Value::as_str).map(|l| format!("  {l}")).collect::<Vec<_>>()).unwrap_or_default();
             if v["differences"].is_array() {
@@ -873,6 +887,13 @@ mod tests {
         assert!(render(View::Peers, &json!([])).contains("tanımlı değil"));
         assert_eq!(parse(&["peer".to_string(), "list".to_string()]).unwrap().path, "/peers");
         assert_eq!(parse(&args("support")).unwrap().path, "/support");
+        assert_eq!(parse(&args("balance")).unwrap().path, "/balance");
+        assert_eq!(parse(&args("peer send ankara 103")).unwrap().path, "/peers/ankara/send/103");
+        assert_eq!(render(View::Balance, &json!({"cpu_pct": 20, "mem_pct": 30, "busy": false, "moves": []})), "işlemci %20  bellek %30: sunucu sıkışmış değil, öneri yok");
+        let advice = render(View::Balance, &json!({"cpu_pct": 20, "mem_pct": 90, "busy": true, "moves": [{"vmid": 103, "name": "db", "peer": "ankara", "reason": "6000 MB bellek kullanıyor", "here_mem_pct": 75, "peer_mem_pct": 40}]}));
+        assert!(advice.contains("sunucu sıkışmış. Öneriler:") && advice.contains("redox peer send ankara 103"), "{advice}");
+        let english = crate::i18n::lines_to_english(&advice);
+        assert!(english.contains("the server is busy. Advice:") && english.contains("(uses 6000 MB of memory; afterwards 75% here, 40% on the peer)   redox peer send ankara 103"), "{english}");
         assert_eq!(parse(&args("profile export")).unwrap().path, "/profile");
         let file = std::env::temp_dir().join(format!("redox-profil-{}.json", std::process::id()));
         std::fs::write(&file, r#"{"kind":"redox-profile","options":{}}"#).unwrap();

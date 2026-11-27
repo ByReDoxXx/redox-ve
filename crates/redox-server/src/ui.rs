@@ -227,7 +227,9 @@ pub async fn storage(State(st): State<AppState>,
 pub async fn peers(State(st): State<AppState>,
     Extension(me): Extension<Identity>, headers: HeaderMap, Query(query): Query<PageQuery>) -> Html<String> {
     let ctx = Ctx::new(&st, &headers, query, &me);
-    Html(view::peers(&ctx.page(Current::Peers, "/cluster"), &st.peers().views()))
+    let views = st.peers().views();
+    let balance = crate::state::balance::recommend(&st.snapshot(), &views);
+    Html(view::peers(&ctx.page(Current::Peers, "/cluster"), &views, &balance))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -244,6 +246,19 @@ pub async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Id
     match st.import_from_peer(f.peer.trim(), vmid, &me.user) {
         Ok(()) => flash("/cluster", "notice", &tfmt(format!("{} sunucusundaki {vmid} buraya kopyalanıyor; sonuç görevlerde görünecek.", f.peer.trim()))),
         Err(e) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
+    }
+}
+
+/// Yük dengeleme önerisindeki "Gönder" düğmesi: buradaki çalışan konuk kapatılmadan eşe taşınır.
+pub async fn peer_send(State(st): State<AppState>, Extension(me): Extension<Identity>, Form(f): Form<ImportForm>) -> Redirect {
+    let Some(vmid) = parse_vmid(&f.vmid) else {
+        return flash("/cluster", "error", (tx("Geçersiz konuk kimliği.")));
+    };
+    let (st2, peer, user) = (st.clone(), f.peer.trim().to_string(), me.user.clone());
+    match tokio::task::spawn_blocking(move || st2.migrate_to_peer(&peer, vmid, None, &user)).await {
+        Ok(Ok(())) => flash("/cluster", "notice", &tfmt(format!("{vmid} kapatılmadan {} sunucusuna taşınıyor; sonuç görevlerde görünecek.", f.peer.trim()))),
+        Ok(Err(e)) => flash("/cluster", "error", &(capitalize(&e.to_string()) + ".")),
+        Err(_) => flash("/cluster", "error", (tx("İşlem başlatılamadı."))),
     }
 }
 

@@ -14,6 +14,7 @@ mod maintenance;
 mod migrate;
 mod ratelimit;
 mod backup;
+pub mod balance;
 mod guest;
 mod hardware;
 mod netguard;

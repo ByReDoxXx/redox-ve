@@ -88,6 +88,8 @@ pub fn routes() -> Router<AppState> {
         .route("/profile/apply", post(profile_apply))
         .route("/peers/{name}/import/{vmid}", post(peer_import))
         .route("/peers/{name}/migrate/{vmid}", post(peer_migrate))
+        .route("/peers/{name}/send/{vmid}", post(peer_send))
+        .route("/balance", get(balance))
         .route("/guests/{vmid}/migrate/prepare", post(migrate_prepare))
         .route("/guests/{vmid}/migrate", post(migrate_out))
         .route("/pools", get(pools).post(pool_put))
@@ -175,6 +177,26 @@ async fn peer_migrate(State(st): State<AppState>, Extension(me): Extension<Ident
     // Eşle konuşan iş, istek iş parçacığını tutmaz.
     let user = me.user.clone();
     tokio::task::spawn_blocking(move || st.migrate_from_peer(&name, vmid, &user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Yük dengeleme önerisi: bu sunucu sıkışmışsa hangi sanal makinenin hangi eşe taşınmasının işe yarayacağı.
+/// Yalnızca öneridir; bir şey taşınmaz.
+async fn balance(State(st): State<AppState>) -> Json<crate::state::balance::Balance> {
+    Json(st.balance())
+}
+
+#[derive(serde::Deserialize, Default)]
+struct SendBody {
+    /// Bu sunucunun o eşteki adı; verilmezse eşin eş listesinden bulunur.
+    #[serde(default, rename = "as")]
+    as_name: Option<String>,
+}
+
+/// Bu sunucudaki çalışan sanal makineyi eş sunucuya canlı taşıtır (iş eşte yürür); sonuç görev günlüklerindedir.
+async fn peer_send(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, vmid)): Path<(String, VmId)>, body: Option<Json<SendBody>>) -> Result<StatusCode, ApiError> {
+    let (as_name, user) = (body.and_then(|Json(b)| b.as_name), me.user.clone());
+    tokio::task::spawn_blocking(move || st.migrate_to_peer(&name, vmid, as_name.as_deref(), &user)).await.map_err(|e| ApiError::from(redox_core::Error::Driver(e.to_string())))??;
     Ok(StatusCode::ACCEPTED)
 }
 

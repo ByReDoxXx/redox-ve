@@ -108,4 +108,6 @@ Client (connects to a running server; REDOX_URL is its address, REDOX_TOKEN an A
   redox peer list                 (peer servers in the combined view)
   redox peer import <peer> <id>   (copies a stopped virtual machine from the peer to this server)
   redox peer migrate <peer> <id>  (moves a running virtual machine from the peer to this server without stopping it)
+  redox peer send <peer> <id>     (moves a running virtual machine from this server to the peer without stopping it)
+  redox balance                   (load balancing advice: which guest to move to which peer when this server is busy)
   redox task list

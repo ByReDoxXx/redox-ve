@@ -29,6 +29,17 @@ Not every guest can be moved live: UEFI or virtual TPM, an attached installation
 
 **Evacuating a server for maintenance:** `redox maintenance on --evacuate <peer>` (or *Evacuate My Guests Here* next to the peer on the *Cluster* page) puts this server into maintenance mode and moves its running virtual machines to the peer one by one, without stopping them. Guests that cannot be migrated live stay where they are; add `--drain` to stop those instead (they start again when maintenance ends). The peer does the pulling, so it must list this server in its own `--peers` file; if it cannot be recognised by address, give the name it has there with `--as`. The moved guests keep running on the peer when maintenance ends. To bring one back, use *Migrate Live* from this server: the guest returns with the same ID and replaces the stopped copy that was left behind (its backups stay attached). A left-behind copy that has been started by hand is treated as a guest in its own right and is never replaced. Tested with fake QEMU between two servers; the migration underneath is the same one tested on real QEMU.
 
+## Load balancing advice
+
+When this server is busy (memory or CPU at 80% or more), the *Cluster* page shows a **Load balancing advice** card and
+`redox balance` prints the same thing: which running virtual machine would help if it were live-migrated to which
+peer, and what the memory use would be on both sides afterwards. Nothing is moved automatically; each line has a
+*Send* button (`redox peer send <peer> <id>`), which live-migrates that virtual machine from this server to the peer.
+
+The advice only covers running virtual machines that can be live-migrated, never suggests a peer that would itself
+go above 70% memory or that already uses the same ID, and lists at most three moves. It is computed from the last
+state read from the peers, so apply it one move at a time.
+
 ## Server profile
 
 A profile is one server's management settings in a file, so that several servers can be kept alike:

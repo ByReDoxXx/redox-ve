@@ -29,6 +29,17 @@ Her konuk canlı taşınamaz: UEFI ya da sanal TPM, takılı kurulum kalıbı, c
 
 **Sunucuyu bakım için boşaltma:** `redox maintenance on --evacuate <eş>` (ya da *Küme* sayfasında eşin yanındaki *Konuklarımı Buraya Boşalt*) bu sunucuyu bakım kipine alır ve çalışan sanal makinelerini teker teker, kapatmadan eşe taşır. Canlı taşınamayan konuklar yerinde kalır; onları kapatmak için `--drain` ekleyin (bakım bitince yeniden başlatılırlar). Taşımayı eş yürüttüğü için eşin kendi `--peers` dosyasında bu sunucu tanımlı olmalıdır; adresinden tanınamıyorsa oradaki adını `--as` ile verin. Taşınan konuklar bakım bitince eşte çalışmayı sürdürür. Birini geri getirmek için bu sunucudan *Canlı Taşı* kullanın: konuk aynı kimlikle döner ve geride kalan kapalı kopyanın yerini alır (yedekleri ona bağlı kalır). Elle başlatılmış bir kopya ise kendi başına bir konuk sayılır ve üzerine yazılmaz. İki sunucu arasında sahte QEMU ile sınandı; alttaki taşıma, gerçek QEMU'da sınananla aynıdır.
 
+## Yük dengeleme önerisi
+
+Bu sunucu sıkıştığında (bellek ya da işlemci %80 ve üstü) *Küme* sayfasında **Yük dengeleme önerisi** kartı görünür;
+`redox balance` aynı şeyi yazar: çalışan hangi sanal makinenin hangi eşe canlı taşınmasının işe yarayacağı ve
+taşımadan sonra iki taraftaki bellek kullanımı. Kendiliğinden bir şey taşınmaz; her satırda bir *Gönder* düğmesi
+vardır (`redox peer send <eş> <kimlik>`), o sanal makineyi bu sunucudan eşe canlı taşır.
+
+Öneri yalnızca canlı taşınabilen çalışan sanal makineleri kapsar, taşımadan sonra kendisi %70 belleğin üstüne
+çıkacak ya da aynı kimliği zaten kullanan bir eşi önermez ve en çok üç taşıma listeler. Eşlerin son okunan
+durumundan hesaplanır; bu yüzden taşımaları birer birer uygulayın.
+
 ## Sunucu profili
 
 Profil, bir sunucunun yönetim ayarlarının bir dosyadaki halidir; birkaç sunucuyu aynı düzende tutmak içindir:

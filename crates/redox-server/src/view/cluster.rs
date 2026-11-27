@@ -376,7 +376,38 @@ fn replica_row(p: &Page, peers: &[crate::peers::PeerView], r: &redox_core::repli
 }
 
 /// Birleşik görünüm: bu sunucu ve eş sunucuların konukları tek sayfada, salt okunur.
-pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
+/// Yük dengeleme önerisi: yalnızca sunucu sıkışmışken görünür.
+fn balance_card(p: &Page, b: &crate::state::balance::Balance) -> Markup {
+    html! {
+        @if b.busy {
+            div class="card" {
+                header { h2 { (tx("Yük dengeleme önerisi")) } (tip("Bu sunucu sıkışmış: hangi sanal makinenin hangi eşe taşınmasının işe yarayacağı. Kendiliğinden bir şey taşınmaz.")) span class="note" { (tfmt(format!("işlemci %{} · bellek %{}", b.cpu_pct, b.mem_pct))) } }
+                @if b.moves.is_empty() {
+                    p class="empty" { (tx("Bu sunucu sıkışmış, ama bir öneri üretilemedi:")) " " (crate::i18n::message(b.note.as_deref().unwrap_or(""))) "." }
+                } @else {
+                    div class="tw" { table {
+                        thead { tr { th { (tx("Konuk")) } th { (tx("Gerekçe")) } th { (tx("Hedef")) } th { (tx("Sonra bellek (burada / eşte)")) } @if p.admin && p.real { th { span class="sr" { (tx("Gönder")) } } } } }
+                        tbody { @for m in &b.moves { tr {
+                            td class="name" { a href={ "/guests/" (m.vmid) } { span class="mono dim" { (m.vmid) } " " (m.name) } }
+                            td class="muted" { (crate::i18n::message(&m.reason)) }
+                            td class="mono" { (m.peer) }
+                            td class="mono" { "%" (m.here_mem_pct) " / %" (m.peer_mem_pct) }
+                            @if p.admin && p.real { td class="act" {
+                                form method="post" action="/cluster/send" {
+                                    input type="hidden" name="peer" value=(m.peer); input type="hidden" name="vmid" value=(m.vmid);
+                                    button class="btn sm" type="submit" { (icon("migrate")) (tx("Gönder")) }
+                                }
+                            } }
+                        } } }
+                    } }
+                }
+                footer { (tx("Öneri, eşlerin son okunan durumuna göre hesaplanır ve yalnızca canlı taşınabilen çalışan sanal makineleri kapsar. Sırayla uygulayın: her taşımadan sonra öneri yeniden hesaplanır.")) }
+            }
+        }
+    }
+}
+
+pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state::balance::Balance) -> String {
     let c = p.cluster;
     let local = c.summary();
     let online = peers.iter().filter(|v| v.online()).count();
@@ -392,6 +423,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView]) -> String {
     let body = html! {
         (page_head(html! { (tx("Küme")) }, sub(facts), html! {}, "peer list", &[]))
         div class="stack" {
+            (balance_card(p, balance))
             (replicas_card(p, peers))
             @if p.admin {
                 div class="card" {

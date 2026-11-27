@@ -424,3 +424,28 @@ pub(super) async fn a_server_profile_is_exported_compared_and_applied() {
         assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN, "{path}");
     }
 }
+
+// ---------- Yük dengeleme önerisi ----------
+
+#[tokio::test]
+pub(super) async fn balance_advice_is_shown_only_when_the_server_is_busy() {
+    let (app, state) = setup_real();
+    let (status, v) = api(&app, get("/api/v1/balance")).await;
+    assert_eq!((status, v["busy"].as_bool(), v["moves"].as_array().map(Vec::len)), (StatusCode::OK, Some(false), Some(0)), "{v}");
+    assert!(!page(&app, "/cluster").await.contains("Yük dengeleme önerisi"), "sıkışık değilken kart görünmez");
+    // Sunucu sıkışınca (eş tanımlı değilken) öneri üretilemediği açıkça söylenir.
+    state.mutate(|c| {
+        let n = &mut c.nodes[0];
+        n.mem_used_mb = n.mem_total_mb * 9 / 10;
+    });
+    let (_, v) = api(&app, get("/api/v1/balance")).await;
+    assert!(v["busy"].as_bool() == Some(true) && v["mem_pct"].as_u64().is_some_and(|p| p >= 85) && v["note"].as_str().unwrap().contains("eş sunucu yok"), "{v}");
+    let shown = page(&app, "/cluster").await;
+    assert!(shown.contains("Yük dengeleme önerisi") && shown.contains("bir öneri üretilemedi"), "{shown}");
+    // Eşe gönderme: tanımsız eş ve yetkisiz kullanıcı.
+    let (status, v) = api(&app, post_json("/api/v1/peers/yok/send/103", &json!({}))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(post_ok(&app, "/cluster/send", "peer=yok&vmid=103").await.contains("error="));
+    let (status, _, _) = send(&app, form_body(as_viewer(Method::POST, "/cluster/send"), "peer=yok&vmid=103")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

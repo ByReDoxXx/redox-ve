@@ -83,6 +83,8 @@ pub const OPERATIONS: &[(&str, &str, &str)] = &[
     ("delete", "/media/{name}", "Delete media"),
     ("get", "/peers", "Peer servers and their last known state"),
     ("get", "/support", "Support bundle: a state dump without secrets, for bug reports (administrators only)"),
+    ("get", "/balance", "Load balancing advice: which VM to live-migrate to which peer when this server is busy"),
+    ("post", "/peers/{name}/send/{vmid}", "Live-migrate a running virtual machine from this server to a peer"),
     ("get", "/profile", "This server's profile: start options, pools and backup jobs"),
     ("post", "/profile/diff", "Compare a profile with this server"),
     ("post", "/profile/apply", "Apply the pools and backup jobs of a profile to this server"),

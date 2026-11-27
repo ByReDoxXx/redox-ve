@@ -63,7 +63,7 @@ impl AppState {
 
     /// Bu sunucunun, eşin kendi eş listesindeki adı. Taşımayı eş yürütür (çekme düzeni) ve bu sunucuyu o adla
     /// arar. Ad verilmemişse eşin listesinde adresi bu sunucunun adına ya da adresine uyan tek kayıt seçilir.
-    fn name_on_peer(&self, peer: &crate::peers::Peer, given: Option<&str>) -> Result<String, String> {
+    pub(super) fn name_on_peer(&self, peer: &crate::peers::Peer, given: Option<&str>) -> Result<String, String> {
         let seen = peer.peers_seen()?;
         if let Some(name) = given {
             return if seen.iter().any(|(n, _, _)| n == name) { Ok(name.to_string()) } else { Err(format!("eş sunucu bu sunucuyu \"{name}\" adıyla tanımıyor (eşin --peers dosyasına bakın)")) };
