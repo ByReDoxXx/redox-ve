@@ -2010,7 +2010,7 @@ pub static EXACT: &[(&str, &str)] = &[
     ("İşlemci, bellek ve donanım yazılımı", "CPU, memory and firmware"),
     ("İşlemciyi en çok kullanan çalışan konuklar.", "The running guests that use the most CPU."),
     ("İşlemler", "Actions"),
-    ("İşletim", "OS"),
+    ("İşletim", "Operations"),
     ("İşletim sistemi", "Operating system"),
     ("Şablon", "Template"),
     ("Şablon başlatılamaz; ondan saniyeler içinde bağlı klonlar üretilir.", "A template cannot be started; linked clones are made from it in seconds."),
