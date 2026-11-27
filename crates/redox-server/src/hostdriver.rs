@@ -220,6 +220,42 @@ impl Hypervisor for HostDriver {
         self.of(guest)?.move_storage_live(guest, target)
     }
 
+    fn fault_tolerance(&self) -> bool {
+        self.vm.fault_tolerance()
+    }
+
+    fn ft_standby_start(&self, guest: &Guest, disk_bytes: u64, link: &redox_core::FtLink, key: &str) -> Result<(), String> {
+        self.of(guest)?.ft_standby_start(guest, disk_bytes, link, key)
+    }
+
+    fn ft_protect(&self, guest: &Guest, link: &redox_core::FtLink, key: &str) -> Result<(), String> {
+        self.of(guest)?.ft_protect(guest, link, key)
+    }
+
+    fn ft_drop_secondary(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.ft_drop_secondary(guest)
+    }
+
+    fn ft_take_over(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.ft_take_over(guest)
+    }
+
+    fn ft_hold(&self, guest: &Guest, hold: bool) -> Result<(), String> {
+        self.of(guest)?.ft_hold(guest, hold)
+    }
+
+    fn ft_fence(&self, guest: &Guest) -> Result<(), String> {
+        self.of(guest)?.ft_fence(guest)
+    }
+
+    fn ft_standby_stop(&self, guest: &Guest) {
+        self.vm.ft_standby_stop(guest);
+    }
+
+    fn ft_status(&self, guest: &Guest) -> Option<redox_core::FtStatus> {
+        self.of(guest).ok()?.ft_status(guest)
+    }
+
     fn disk_mirroring(&self) -> bool {
         self.vm.disk_mirroring()
     }

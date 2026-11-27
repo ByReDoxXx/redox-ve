@@ -50,6 +50,35 @@ pub trait Remote: Send + Sync {
     fn delete(&self, name: &str) -> Result<(), String>;
 }
 
+/// Hata toleransında iki sunucu arasındaki bağlantı noktaları.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FtLink {
+    /// Bu sunucuda kapıların dinleyeceği adres.
+    pub bind: String,
+    /// Karşı tarafların adresleri.
+    pub primary_host: String,
+    pub secondary_host: String,
+    /// Birincilde açılan iki karşılaştırma kapısı.
+    pub mirror_port: u16,
+    pub compare_port: u16,
+    /// İkizde açılan disk ve bellek kapıları.
+    pub nbd_port: u16,
+    pub migrate_port: u16,
+    /// Birincilde yalnızca 127.0.0.1'de kullanılan iki iç kapı.
+    pub local_ports: (u16, u16),
+}
+
+/// Hata toleransında QEMU'nun o anki hali.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FtStatus {
+    /// Süreç duruyor ama sorulara yanıt vermiyor; öbür alanlar bilinmiyor.
+    pub unresponsive: bool,
+    /// İki taraf eşzamanlı çalışıyor.
+    pub engaged: bool,
+    pub paused: bool,
+    pub error: Option<String>,
+}
+
 /// Bir konuğun disk yansıtmasının o anki hali.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MirrorProbe {
@@ -350,6 +379,49 @@ pub trait Hypervisor: Send + Sync {
     /// Hedef: kopyanın disklerini yeni oluşturulmuş konuğun diskleri yapar.
     fn replica_adopt(&self, _id: &str, _guest: &Guest) -> Result<(), String> {
         Err("bu sürücü disk kopyası tutamaz".to_string())
+    }
+
+    /// Bu sürücü hata toleransını (eşzamanlı ikiz) destekliyor mu?
+    fn fault_tolerance(&self) -> bool {
+        false
+    }
+
+    /// Yedek taraf: konuğun ikizini birincilin bağlanacağı biçimde açar.
+    fn ft_standby_start(&self, _guest: &Guest, _disk_bytes: u64, _link: &FtLink, _key: &str) -> Result<(), String> {
+        Err("bu sürücü hata toleransını desteklemiyor".to_string())
+    }
+
+    /// Yedek taraf: ikizi kapatır.
+    fn ft_standby_stop(&self, _guest: &Guest) {}
+
+    /// Birincil: diski eşitler, ağı bağlar ve ikizle eşzamanlı çalışmaya geçer. Uzun sürebilir.
+    fn ft_protect(&self, _guest: &Guest, _link: &FtLink, _key: &str) -> Result<(), String> {
+        Err("bu sürücü hata toleransını desteklemiyor".to_string())
+    }
+
+    /// Birincil ya da ikiz QEMU'sunun hali; süreç yoksa `None`.
+    fn ft_status(&self, _guest: &Guest) -> Option<FtStatus> {
+        None
+    }
+
+    /// Birincil: ikizi bırakır, konuk tek başına sürer.
+    fn ft_drop_secondary(&self, _guest: &Guest) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Yedek taraf: ikiz konuğun kendisi olur.
+    fn ft_take_over(&self, _guest: &Guest) -> Result<(), String> {
+        Err("bu sürücü hata toleransını desteklemiyor".to_string())
+    }
+
+    /// Konuğu duraklatır (`true`) ya da sürdürür.
+    fn ft_hold(&self, _guest: &Guest, _hold: bool) -> Result<(), String> {
+        Err("bu sürücü hata toleransını desteklemiyor".to_string())
+    }
+
+    /// Hakem karşı tarafı seçti: buradaki konuk hemen sonlandırılır.
+    fn ft_fence(&self, _guest: &Guest) -> Result<(), String> {
+        Err("bu sürücü hata toleransını desteklemiyor".to_string())
     }
 
     /// UEFI donanım yazılımı kurulu mu?

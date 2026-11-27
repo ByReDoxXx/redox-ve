@@ -31,6 +31,10 @@ impl Cluster {
         if let Some(task) = guest.lock {
             return Err(Error::Locked { vmid, task });
         }
+        // Hata toleranslı konuk sarılmış diskle çalışır: yedek, anlık görüntü, taşıma ve aygıt işlemleri yapılamaz.
+        if self.protection(vmid).is_some() && guest.status != GuestStatus::Stopped {
+            return Err(Error::InvalidSpec(format!("{vmid} hata toleransıyla çalışırken bu işlem yapılamaz; önce hata toleransını kapatıp konuğu yeniden başlatın")));
+        }
         if let Some(what) = need_stopped {
             if guest.status != GuestStatus::Stopped {
                 return Err(Error::RequiresStopped { vmid, what: what.to_string() });

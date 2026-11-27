@@ -12,6 +12,9 @@ impl Cluster {
         if guest.status != GuestStatus::Stopped {
             return Err(Error::NotStopped(vmid));
         }
+        if self.protection(vmid).is_some() {
+            return Err(Error::InvalidSpec(format!("{vmid} hata toleransı açıkken silinemez; önce hata toleransını kapatın")));
+        }
         // Sürücü diskleri bu denetimden hemen sonra siler: bağlı klonların dayandığı şablon burada korunmalı.
         self.no_linked_clones(vmid, "silinemez")?;
         Ok(guest)

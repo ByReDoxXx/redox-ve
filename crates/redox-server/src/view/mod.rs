@@ -11,6 +11,7 @@ mod account;
 mod backups;
 mod cluster;
 mod forms;
+mod ft;
 mod guests;
 mod mirrors;
 mod switches;

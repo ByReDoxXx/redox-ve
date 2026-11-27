@@ -9,6 +9,7 @@ pub mod command;
 pub mod driver;
 pub mod error;
 pub mod fmt;
+pub mod ft;
 pub mod hw;
 pub mod jobs;
 pub mod metrics;
@@ -24,8 +25,9 @@ pub mod vswitch;
 
 pub use approvals::Approval;
 pub use cluster::{Cluster, ClusterSummary};
-pub use driver::{BackupSize, BalloonStats, FsUsage, Hypervisor, MirrorProbe, Probe, Remote, SimDriver, SnapshotOp};
+pub use driver::{BackupSize, BalloonStats, FsUsage, Hypervisor, FtLink, FtStatus, MirrorProbe, Probe, Remote, SimDriver, SnapshotOp};
 pub use error::{Error, ErrorKind};
+pub use ft::{ft_blocker, ft_key, FtSide, FtState, Protection, Standby};
 pub use hw::Hardware;
 pub use ops::migrate::{migrate_blocker, valid_migrate_host, valid_migrate_key, MIGRATED_TAG};
 pub use jobs::{BackupJob, JobStep, MAX_JOBS};

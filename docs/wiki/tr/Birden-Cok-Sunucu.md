@@ -106,6 +106,66 @@ konuk kaynakta çalışmayı sürdürür ve iki yerde birden başlatmak veriyi b
 * Yazma hızını sunucular arası ağ belirler. UEFI, sanal TPM, konteyner, şablon ve bağlı diskler desteklenmez.
 * Kopya, eşin taşıma kapılarından (`--migrate-ports`) TLS ve tek kullanımlık anahtarla şifreli gider.
 
+## Hata toleransı
+
+Korunan sanal makinenin ikinci bir sunucuda **eşzamanlı çalışan bir ikizi** vardır (QEMU COLO). Sunucu ölürse konuk
+**yeniden başlamadan ikizde sürer**: bellek, süreçler ve disk yerindedir.
+
+**Üç sunucu** gerekir: birincil, ikiz sunucusu ve bir **hakem**. Birincilin `--peers` dosyasına ikiz sunucusunu ve
+hakemi, ikiz sunucusununkine de hakemi **aynı adla** yazın. Konuğun köprüsü iki sunucuda da bulunmalıdır (dağıtık
+anahtar bunu sağlar).
+
+```
+redox ft on 103 yedek hakem        # 103 kapalıyken: <kimlik> <ikiz sunucusu> <hakem>
+redox vm start 103                 # ikiz kendiliğinden kurulur
+redox ft list                      # hazırlanıyor, korunuyor, korumasız (nedeniyle) …
+redox ft twins                     # ikiz sunucusunda
+redox ft off 103
+```
+
+Aynı işlemler *Küme* sayfasındaki **Hata toleransı** kartındadır.
+
+**Hangi konuk korunabilir.** **Tek diskli** ve **köprüye bağlı tek kartlı**, ek donanımı olmayan bir sanal makine:
+çalışırken ekleme, balon, UEFI, TPM, aygıt aktarımı, paylaşılan klasör, ISO, cloud-init, VLAN etiketi, konuk güvenlik
+duvarı ve hız sınırı olamaz. Konuk `q35` yerine eski **`pc` (i440fx) makine türüyle** açılır: QEMU 10.2'de `q35`
+üzerinde COLO, ikizi ilk denetim noktasında çökertiyor. `q35` ile kurulmuş bir konuk, özellikle Windows, `pc`
+üzerinde açılmak için sürücü değişikliği isteyebilir; güvenmeden önce bunu deneyin.
+
+**Neyin sözü verilir.** **Ağda görünmüş** olan her şey korunur: bir paket birincilden ancak ikiz aynısını ürettiyse
+ya da iki taraf aynı hale getirildikten (denetim noktası) sonra çıkar. İkiz konsolu ve ağ dışındaki girdileri görmez
+ve denetim noktaları arasında (en çok yaklaşık 20 saniye) kendi başına çalışır. Son denetim noktasından beri ağdan
+hiç dışarı çıkmamış iş **kaybolabilir**.
+
+**Hiçbir zaman iki yerde birden değil.** İki sunucu birbirini kaybettiğinde her biri ötekini ölmüş sanabilir. Kararı
+hakem verir: **ilk soran kazanır**, öbürü kendi kopyasını sonlandırır.
+
+| Ne olursa | Sonuç |
+|---|---|
+| İkiz sunucusu ölür ya da donar | Konuğun ağı yaklaşık 5 saniye durur, sonra tek başına sürer; 2 dakika sonra yeniden korunmaya çalışılır |
+| Birincil sunucu ölür | İkiz devralır; ağ yaklaşık 5 saniye durur |
+| İkisinin arası kopar | İkisi de hakeme sorar; biri sürer, öbürü kopyasını sonlandırır |
+| Birincil hakeme de ulaşamaz | Hakem yanıt verene kadar konuğu **duraklatır** |
+| İkiz hakeme ulaşamaz | Beklemeyi sürdürür; hakemsiz asla devralmaz |
+
+Durdurma, yeniden başlatma ve korumayı kapatma önce hakemin oyunu alır; böylece ikiz, bilerek durdurduğunuz bir
+konuğu asla devralamaz. Devralmadan sonra eski birincil *yedek sunucu devraldı* gösterir ve o konuğu **başlatmayı
+reddeder**. Konuğun öbür sunucuda kapalı olduğundan emin olduktan sonra, eski kaydı serbest bırakmak için orada hata
+toleransını kapatın (`redox ft off`); diski güncel değildir.
+
+**Sınırlar**
+
+* Korunurken **yedek, anlık görüntü, askıya alma, duraklatma, taşıma ve disk işlemi yoktur**; zamanlanmış yedekler de
+  buna dahildir (bu iletiyle başarısız olurlar). Yedek almak için korumayı kapatıp konuğu yeniden başlatın.
+* Konuğun iki kopyada farklı çıkan ağ paketleri, denetim noktasına kadar yaklaşık **3 saniye** tutulur. Ağ ağırlıklı
+  ya da gecikmeye duyarlı işler korumasız hallerinden çok daha yavaş olabilir. Başarım **ölçülmedi**.
+* Devralmadan sonra yeni konuk **korumasızdır**; yeniden korumak için o sunucuda hata toleransını açın.
+* Disk yazmaları ve bellek, TLS ve tek kullanımlık anahtarla gider. İki **paket karşılaştırma bağlantısı
+  şifresizdir** ve konuğun ağ trafiğinin bir kopyasını taşır: ayrılmış, güvenilen bir ağ kullanın.
+* İki sunucuda aynı işlemci ve aynı QEMU sürümü gerekir. Korunan her konuk iki tarafta da bellek kullanır.
+* Birincildeki RedoX hizmeti durdurulmuşken ikiz donarsa konuğun ağı kapalı kalır.
+* Linux konukla ve üç sunucu **tek fiziksel makinedeyken** denendi. Ayrı fiziksel sunucularda, Windows konukla, yük
+  altında ve uzun süre denenmedi. Güvenmeden önce kendi düzeninizde sınayın.
+
 ## Çoğaltma (yedek kopya)
 
 ```bash

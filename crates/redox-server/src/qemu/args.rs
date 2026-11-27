@@ -97,10 +97,13 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
         model => model,
     };
     let cpu = redox_core::hw::cpu_arg(cpu, g.hw.nested);
+    // Hata toleransında eski "pc" (i440fx) makinesi kullanılır: QEMU 10.2'de q35 ile COLO'nun ilk denetim
+    // noktasında ikiz çöker (memory_region_add_subregion_common doğrulaması).
+    let machine = if g.hw.ft { "pc" } else { "q35" };
     if cfg.kvm {
-        push(&["-machine", &format!("q35,accel=kvm{smm}"), "-cpu", &cpu]);
+        push(&["-machine", &format!("{machine},accel=kvm{smm}"), "-cpu", &cpu]);
     } else {
-        push(&["-machine", &format!("q35,accel=tcg{smm}"), "-cpu", &cpu]);
+        push(&["-machine", &format!("{machine},accel=tcg{smm}"), "-cpu", &cpu]);
     }
     if uefi {
         let (code, _) = cfg.ovmf_files(secure);
@@ -141,8 +144,13 @@ pub fn build_args_layout(cfg: &QemuConfig, g: &Guest, layout: u8) -> Vec<String>
     }
     // Disk hız sınırı her diske ayrı uygulanır (okuma ve yazma toplamı).
     let throttle = disk_throttle(g);
-    push(&["-drive", &format!("file={},if=virtio,format=qcow2{throttle}", opt(&cfg.disk_of(g)))]);
-    if ports {
+    if g.hw.ft {
+        push(&["-drive", &super::ft_args::primary_drive(&cfg.disk_of(g))]);
+    } else {
+        push(&["-drive", &format!("file={},if=virtio,format=qcow2{throttle}", opt(&cfg.disk_of(g)))]);
+    }
+    // Hata toleranslı konuğa çalışırken aygıt takılmaz (ve "pc" makinesinde PCIe kök portu yoktur).
+    if ports && !g.hw.ft {
         for i in 0..HOTPLUG_PORTS {
             push(&["-device", &format!("pcie-root-port,id=hp{i},chassis={},slot={}", i + 1, i + 1)]);
         }

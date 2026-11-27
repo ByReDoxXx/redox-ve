@@ -23,6 +23,7 @@ mod media_ova;
 mod offsite_machine;
 mod peers;
 mod platform;
+mod real_ft;
 mod real_mirror;
 mod real_qemu;
 mod suspend_hotplug_net;

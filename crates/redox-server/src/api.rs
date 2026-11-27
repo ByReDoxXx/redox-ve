@@ -90,6 +90,13 @@ pub fn routes() -> Router<AppState> {
         .route("/peers/{name}/migrate/{vmid}", post(peer_migrate))
         .route("/peers/{name}/send/{vmid}", post(peer_send))
         .route("/balance", get(balance))
+        .route("/ft/protections", get(ft_protections).post(ft_enable))
+        .route("/ft/protections/{vmid}", delete_route(ft_disable))
+        .route("/ft/standby", get(ft_standbys).post(ft_prepare))
+        .route("/ft/standby/{origin}/{vmid}", delete_route(ft_discard))
+        .route("/ft/standby/{origin}/{vmid}/beat", post(ft_beat))
+        .route("/ft/arbitrate", post(ft_arbitrate))
+        .route("/ft/arbitrate/{key}", get(ft_winner))
         .route("/mirrors", get(mirrors).post(mirror_enable))
         .route("/mirrors/{vmid}", delete_route(mirror_disable))
         .route("/mirror-stores", get(mirror_stores).post(mirror_prepare))
@@ -203,6 +210,79 @@ async fn vswitches(State(st): State<AppState>) -> Json<Vec<crate::state::vswitch
 async fn vswitch_put(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(switch): Json<redox_core::VSwitch>) -> Result<StatusCode, ApiError> {
     st.vswitch_put(switch, &me.user)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- Hata toleransı ----------
+
+async fn ft_protections(State(st): State<AppState>) -> Json<Vec<redox_core::Protection>> {
+    Json(st.snapshot().protections)
+}
+
+#[derive(serde::Deserialize)]
+struct FtBody {
+    vmid: VmId,
+    peer: String,
+    witness: String,
+}
+
+async fn ft_enable(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(body): Json<FtBody>) -> Result<StatusCode, ApiError> {
+    st.ft_enable(body.vmid, &body.peer, &body.witness, &me.user)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn ft_disable(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(vmid): Path<VmId>) -> Result<StatusCode, ApiError> {
+    let user = me.user.clone();
+    blocking(move || st.ft_disable(vmid, &user)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Burada duran ikizler.
+async fn ft_standbys(State(st): State<AppState>) -> Json<Vec<redox_core::Standby>> {
+    Json(st.snapshot().standbys)
+}
+
+/// Birincil sunucu çağırır: ikiz açılır ve diskleri ile belleği beklenir.
+async fn ft_prepare(State(st): State<AppState>, Extension(me): Extension<Identity>, Extension(crate::ClientIp(ip)): Extension<crate::ClientIp>, Json(request): Json<crate::state::ft::FtPrepare>) -> ApiResult<serde_json::Value> {
+    let primary = request.primary_host.clone().unwrap_or(ip);
+    let (user, host) = (me.user.clone(), st.migrate_settings().host);
+    let (nbd_port, migrate_port) = blocking(move || st.ft_standby_prepare(&request, &primary, &user)).await?;
+    Ok(Json(json!({ "nbd_port": nbd_port, "migrate_port": migrate_port, "host": host })))
+}
+
+#[derive(serde::Deserialize)]
+struct BeatBody {
+    generation: u32,
+    alive: bool,
+}
+
+async fn ft_beat(State(st): State<AppState>, Path((origin, vmid)): Path<(String, VmId)>, Json(body): Json<BeatBody>) -> ApiResult<serde_json::Value> {
+    let standby = blocking(move || Ok(st.ft_standby_beat(&origin, vmid, body.generation, body.alive))).await?;
+    Ok(Json(json!({ "standby": standby })))
+}
+
+#[derive(serde::Deserialize)]
+struct GenerationQuery {
+    generation: u32,
+}
+
+async fn ft_discard(State(st): State<AppState>, Path((origin, vmid)): Path<(String, VmId)>, axum::extract::Query(q): axum::extract::Query<GenerationQuery>) -> Result<StatusCode, ApiError> {
+    blocking(move || st.ft_standby_discard(&origin, vmid, q.generation)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize)]
+struct ArbitrateBody {
+    key: String,
+    side: redox_core::FtSide,
+}
+
+/// Hakem: bir koruma için ilk oy isteyen taraf kazanır.
+async fn ft_arbitrate(State(st): State<AppState>, Json(body): Json<ArbitrateBody>) -> ApiResult<serde_json::Value> {
+    Ok(Json(json!({ "winner": st.ft_vote(&body.key, body.side)? })))
+}
+
+async fn ft_winner(State(st): State<AppState>, Path(key): Path<String>) -> Json<serde_json::Value> {
+    Json(json!({ "winner": st.ft_winner(&key) }))
 }
 
 // ---------- Eşzamanlı disk yansıtma ----------

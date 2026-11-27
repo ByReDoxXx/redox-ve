@@ -20,6 +20,7 @@ mod assets_metrics;
 mod auth;
 mod backup_features;
 mod console;
+mod ft;
 mod guest_ops;
 mod ha_shares;
 mod hardware;

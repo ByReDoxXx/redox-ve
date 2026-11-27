@@ -20,6 +20,7 @@ mod cbt;
 mod machine;
 
 mod args;
+pub mod ft_args;
 mod config;
 mod qmp;
 
@@ -560,6 +561,87 @@ impl Hypervisor for QemuDriver {
         {
             let _ = guest;
             false
+        }
+    }
+
+    fn fault_tolerance(&self) -> bool {
+        cfg!(unix)
+    }
+
+    fn ft_standby_start(&self, guest: &Guest, disk_bytes: u64, link: &redox_core::FtLink, key: &str) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::ft_standby_start(self, guest, disk_bytes, link, key);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, disk_bytes, link, key);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn ft_protect(&self, guest: &Guest, link: &redox_core::FtLink, key: &str) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::ft_protect(self, guest, link, key);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, link, key);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn ft_drop_secondary(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::ft_drop_secondary(self, guest);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn ft_take_over(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::ft_take_over(self, guest);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn ft_hold(&self, guest: &Guest, hold: bool) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::ft_hold(self, guest, hold);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest, hold);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn ft_fence(&self, guest: &Guest) -> Result<(), String> {
+        #[cfg(unix)]
+        return imp::ft_fence(self, guest);
+        #[cfg(not(unix))]
+        {
+            let _ = (guest);
+            Err("QEMU sürücüsü yalnızca Linux'ta çalışır".to_string())
+        }
+    }
+
+    fn ft_standby_stop(&self, guest: &Guest) {
+        #[cfg(unix)]
+        imp::ft_standby_stop(self, guest);
+        #[cfg(not(unix))]
+        let _ = guest;
+    }
+
+    fn ft_status(&self, guest: &Guest) -> Option<redox_core::FtStatus> {
+        #[cfg(unix)]
+        return imp::ft_status(self, guest);
+        #[cfg(not(unix))]
+        {
+            let _ = guest;
+            None
         }
     }
 

@@ -10,6 +10,7 @@ use crate::host::HostSample;
 
 mod approvals;
 mod failover;
+pub mod ft;
 mod maintenance;
 mod migrate;
 pub mod mirrors;
@@ -206,6 +207,8 @@ struct Inner {
     vswitch_file: std::sync::OnceLock<PathBuf>,
     /// Disk yansıtma bekçisinin tur arası bilgisi.
     mirrors: mirrors::MirrorWatch,
+    /// Hata toleransının tur arası bilgisi.
+    ft: ft::FtWatch,
     /// Çerezi olmayan ziyaretçiye gösterilecek dil İngilizce mi? (`--lang en`)
     english: std::sync::atomic::AtomicBool,
     /// API hız sınırı: (dakikadaki istek sınırı; 0 kapalı, kullanıcı → (dakika, o dakikadaki istek sayısı)).
@@ -247,6 +250,7 @@ impl AppState {
             migrate: Mutex::new(MigrateSettings::default()),
             vswitch_file: Default::default(),
             mirrors: Default::default(),
+            ft: Default::default(),
             english: std::sync::atomic::AtomicBool::new(false),
             api_rate: Mutex::new((0, HashMap::new())),
             report: Mutex::new((None, None)),

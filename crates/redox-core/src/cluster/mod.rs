@@ -59,6 +59,13 @@ pub struct Cluster {
     pub mirrors: Vec<crate::mirrors::Mirror>,
     #[serde(default)]
     pub mirror_stores: Vec<crate::mirrors::MirrorStore>,
+    /// Hata toleransı: buradaki korunan konuklar, eşler için burada çalışan ikizler ve (hakem olarak) verilen kararlar.
+    #[serde(default)]
+    pub protections: Vec<crate::ft::Protection>,
+    #[serde(default)]
+    pub standbys: Vec<crate::ft::Standby>,
+    #[serde(default)]
+    pub ft_votes: Vec<crate::ft::FtVote>,
     /// Dağıtık anahtarlar (ada göre sıralı): eşlerle birebir aynı tanımla paylaşılan konuk ağları.
     #[serde(default)]
     pub vswitches: Vec<crate::vswitch::VSwitch>,
@@ -105,6 +112,9 @@ impl Cluster {
             vswitches: Vec::new(),
             mirrors: Vec::new(),
             mirror_stores: Vec::new(),
+            protections: Vec::new(),
+            standbys: Vec::new(),
+            ft_votes: Vec::new(),
             maintenance_resume: Vec::new(),
             guest_fs: Vec::new(),
             approvals: Vec::new(),

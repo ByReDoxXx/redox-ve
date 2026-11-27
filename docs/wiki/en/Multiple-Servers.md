@@ -107,6 +107,67 @@ sync*: if the mirror broke before the source died, the copy is that old.
   disks are not supported.
 * The copy goes over the peer's migration ports (`--migrate-ports`), encrypted with TLS and a one-time key.
 
+## Fault tolerance
+
+A protected virtual machine has a **twin running in lock-step** on a second server (QEMU COLO). If the server dies,
+the guest **continues on the twin without rebooting**: memory, processes and disk are there.
+
+It needs **three servers**: the primary, the twin server and a **witness**. Give the primary's `--peers` file entries
+for the twin server and the witness, and give the twin server an entry for the witness **under the same name**. The
+guest's bridge must exist on both servers (a distributed switch does this).
+
+```
+redox ft on 103 yedek hakem        # while VM 103 is stopped: <id> <twin server> <witness>
+redox vm start 103                 # the twin is built automatically
+redox ft list                      # preparing, protected, unprotected (with the reason) …
+redox ft twins                     # on the twin server
+redox ft off 103
+```
+
+The *Cluster* page has the same in the **Fault tolerance** card.
+
+**What guest can be protected.** A virtual machine with **one disk** and **one bridged network card**, and no extra
+hardware: no hot-add, balloon, UEFI, TPM, passthrough, shared folders, ISO, cloud-init, VLAN tag, guest firewall or
+rate limits. It starts with the older **`pc` (i440fx) machine type** instead of `q35`: with QEMU 10.2, COLO crashes the
+twin at its first checkpoint on `q35`. A guest installed on `q35`, Windows in particular, may need driver changes to
+boot on `pc`; check this before you rely on it.
+
+**What is guaranteed.** Everything that became **visible on the network** survives: a packet leaves the primary only
+when the twin has produced the same one, or after the two have been made identical (a checkpoint). The twin does not
+see the console or anything else that is not network traffic, and between checkpoints (at most about 20 seconds) it
+runs on its own. Work that never left the guest over the network since the last checkpoint **can be lost**.
+
+**Never in two places.** When the two servers lose each other, each may think the other is dead. The witness decides:
+**the first one to ask wins**, and the other ends its own copy.
+
+| What happens | Result |
+|---|---|
+| Twin server dies or freezes | The guest's network stops for about 5 seconds, then it continues alone; protection is retried after 2 minutes |
+| Primary server dies | The twin takes over; the network stops for about 5 seconds |
+| The link between the two breaks | Both ask the witness; one continues, the other ends its copy |
+| The primary cannot reach the witness either | It **pauses** the guest until the witness answers |
+| The twin cannot reach the witness | It keeps waiting; it never takes over without the witness |
+
+Stopping, restarting or turning protection off first claims the witness vote, so the twin can never take over a guest
+you stopped on purpose. After a take-over the old primary shows *the standby server took over* and **refuses to start**
+that guest. Only after you have made sure the guest is off on the other server, turn fault tolerance off there
+(`redox ft off`) to release the old record; its disk is out of date.
+
+**Limits**
+
+* While protected there are **no backups, snapshots, suspend, pause, migration or disk operations**, scheduled backups
+  included (they fail with that message). To back up, turn protection off and restart the guest.
+* Network packets of the guest that differ between the two copies are held for about **3 seconds** until a
+  checkpoint. Chatty or latency-sensitive workloads can be much slower than unprotected ones. Performance was **not**
+  measured.
+* After a take-over the new guest is **unprotected**; to protect it again, turn fault tolerance on on that server.
+* Disk writes and memory are sent with TLS and a one-time key. The two **packet comparison connections are not
+  encrypted** and carry a copy of the guest's network traffic: use a dedicated, trusted network.
+* Both servers need the same CPU and the same QEMU version. Each protected guest uses its memory on both.
+* If the RedoX service on the primary is stopped while the twin hangs, the guest's network stays blocked.
+* Tested with a Linux guest, with the three servers **on one physical machine**. It has not been tested on separate
+  physical servers, with Windows guests, under load or for long periods. Test your own setup before you rely on it.
+
 ## Replication (standby copy)
 
 ```bash

@@ -44,6 +44,16 @@ pub(super) fn free_port(range: (u16, u16), bind: &str) -> Result<u16, String> {
     (range.0..=range.1).find(|port| std::net::TcpListener::bind((bind, *port)).is_ok()).ok_or_else(|| format!("boş kapı yok ({}-{}); aralığı --migrate-ports ile genişletin", range.0, range.1))
 }
 
+/// Aralıktan şu an boş olan `count` ayrı kapı seçer.
+pub(super) fn free_port_set(range: (u16, u16), bind: &str, count: usize) -> Result<Vec<u16>, String> {
+    let found: Vec<u16> = (range.0..=range.1).filter(|port| std::net::TcpListener::bind((bind, *port)).is_ok()).take(count).collect();
+    if found.len() == count {
+        Ok(found)
+    } else {
+        Err(format!("yeterince boş kapı yok ({count} gerekli, {}-{}); aralığı --migrate-ports ile genişletin", range.0, range.1))
+    }
+}
+
 /// Aralıktan şu an boş olan iki kapı seçer.
 fn free_ports(range: (u16, u16), bind: &str) -> Result<(u16, u16), String> {
     let mut found = Vec::new();

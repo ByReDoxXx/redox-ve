@@ -135,6 +135,10 @@ pub struct Hardware {
     pub restart: bool,
     /// Sunucuyla paylaşılan klasörler (yalnızca sanal makinelerde; konukta 9p ile bağlanır).
     pub shares: Vec<Share>,
+    /// Hata toleransına uygun açılış: disk, çalışırken ikizin diskine bağlanabilsin diye sarılır. Yalnızca
+    /// korumayı açıp kapatan işlemler değiştirir.
+    #[serde(default)]
+    pub ft: bool,
     /// Birinci kartın VLAN etiketi (1-4094); 0 etiketsiz. Yalnızca köprüye bağlı kartta.
     /// Ek kartların etiketi ağ tanımında durur: `vmbr1:20`.
     pub vlan: u16,

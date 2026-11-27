@@ -493,7 +493,11 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
     tokio::spawn(async move {
         loop {
             let st = mirrors.clone();
-            let _ = tokio::task::spawn_blocking(move || st.mirror_tick()).await;
+            let _ = tokio::task::spawn_blocking(move || {
+                st.mirror_tick();
+                st.ft_tick();
+            })
+            .await;
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });

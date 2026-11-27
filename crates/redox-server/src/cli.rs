@@ -126,6 +126,7 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox peer migrate <eş> <kimlik> (eşteki çalışan sanal makineyi kapatmadan bu sunucuya taşır)
   redox peer send <eş> <kimlik>   (bu sunucudaki çalışan sanal makineyi kapatmadan eşe taşır)
   redox balance                   (yük dengeleme önerisi: sunucu sıkışmışsa hangi konuk hangi eşe taşınmalı)
+  redox ft list | on <kimlik> <ikiz-eş> <hakem-eş> | off <kimlik> | twins   (hata toleransı)
   redox mirror list | add <kimlik> <eş> | off <kimlik> [--delete-copy]   (eşzamanlı disk yansıtma)
   redox mirror copies | promote <kaynak> <kimlik> | delete-copy <kaynak> <kimlik>   (burada tutulan kopyalar)
   redox switch list | set <vds-ad> <vni> <adres,adres> [--mtu <n>] | push <ad> | remove <ad> [--everywhere]   (dağıtık anahtar)
@@ -169,6 +170,8 @@ pub enum View {
     Balance,
     Switches,
     SwitchPeers,
+    Protections,
+    Standbys,
     Mirrors,
     MirrorStores,
     Promoted,
@@ -480,6 +483,10 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["storage", "list"] => get("/storage", View::Storage),
         ["peer", "list"] => get("/peers", View::Peers),
         ["balance"] => get("/balance", View::Balance),
+        ["ft", "list"] => get("/ft/protections", View::Protections),
+        ["ft", "twins"] => get("/ft/standby", View::Standbys),
+        ["ft", "on", id, peer, witness] => req("POST", "/ft/protections".to_string(), Some(json!({ "vmid": vmid(id)?, "peer": peer, "witness": witness })), View::Done("hata toleransı açıldı; konuğu başlatınca ikizi kurulur. Durum: redox ft list")),
+        ["ft", "off", id] => req("DELETE", format!("/ft/protections/{}", vmid(id)?), None, View::Done("hata toleransı kapatıldı")),
         ["mirror", "list"] => get("/mirrors", View::Mirrors),
         ["mirror", "add", id, peer] => req("POST", "/mirrors".to_string(), Some(json!({ "vmid": vmid(id)?, "peer": peer })), View::Done("yansıtma açıldı; durumu: redox mirror list")),
         ["mirror", "off", id] => req("DELETE", format!("/mirrors/{}", vmid(id)?), None, View::Done("yansıtma kapatıldı; eşteki kopya duruyor")),
@@ -721,6 +728,15 @@ pub fn render(view: View, v: &Value) -> String {
             "tutulan kopya yok",
         ),
         View::Promoted => format!("kopyadan {} numaralı konuk oluşturuldu; başlatmak için: redox vm start {}", n(v, "vmid"), n(v, "vmid")),
+        View::Protections => or_none(
+            rows(&|p| {
+                let state = serde_json::from_value::<redox_core::FtState>(p["state"].clone()).map_or("bilinmiyor", redox_core::FtState::label);
+                let why = p["error"].as_str().map(|e| format!("\n  neden: {e}")).unwrap_or_default();
+                format!("{:<6} {state}\n  ikiz sunucusu: {}\n  hakem: {}{why}", n(p, "vmid"), s(p, "peer"), s(p, "witness"))
+            }),
+            "korunan konuk yok",
+        ),
+        View::Standbys => or_none(rows(&|x| format!("{:<6} <- {}/{}\n  hakem: {}", n(x, "vmid"), s(x, "origin"), n(x, "source"), s(x, "witness"))), "burada ikiz yok"),
         View::Balance => {
             let head = format!("işlemci %{}  bellek %{}", n(v, "cpu_pct"), n(v, "mem_pct"));
             let moves: Vec<String> = v["moves"].as_array().into_iter().flatten().map(|m| format!("  {:<6} {:<16} -> {:<12} ({}; sonra burada %{}, eşte %{})   redox peer send {} {}", n(m, "vmid"), s(m, "name"), s(m, "peer"), s(m, "reason"), n(m, "here_mem_pct"), n(m, "peer_mem_pct"), s(m, "peer"), n(m, "vmid"))).collect();
@@ -998,6 +1014,15 @@ mod tests {
         assert!(render(View::Promoted, &json!({"vmid": 120})).contains("redox vm start 120"));
         let english = crate::i18n::lines_to_english(&listed);
         assert!(english.contains("in sync") && english.contains("reason: "), "{english}");
+        let on = parse(&args("ft on 103 ankara izmir")).unwrap();
+        assert_eq!((on.path.as_str(), on.body.clone().unwrap()), ("/ft/protections", json!({"vmid": 103, "peer": "ankara", "witness": "izmir"})));
+        assert_eq!(parse(&args("ft off 103")).unwrap().path, "/ft/protections/103");
+        assert!(parse(&args("ft on x ankara izmir")).is_err() && parse(&args("ft on 103 ankara")).is_err());
+        let listed = render(View::Protections, &json!([{"vmid": 103, "peer": "ankara", "witness": "izmir", "state": "unprotected", "error": "ikiz kayboldu"}]));
+        assert!(listed.contains("korumasız") && listed.contains("ikiz sunucusu: ankara") && listed.contains("hakem: izmir") && listed.contains("neden: ikiz kayboldu"), "{listed}");
+        let english = crate::i18n::lines_to_english(&listed);
+        assert!(english.contains("unprotected") && english.contains("twin server: ankara") && english.contains("witness: izmir"), "{english}");
+        assert!(render(View::Standbys, &json!([{"vmid": 103, "origin": "pve-a", "source": 103, "witness": "izmir"}])).contains("<- pve-a/103"));
         assert_eq!(parse(&args("profile export")).unwrap().path, "/profile");
         let file = std::env::temp_dir().join(format!("redox-profil-{}.json", std::process::id()));
         std::fs::write(&file, r#"{"kind":"redox-profile","options":{}}"#).unwrap();

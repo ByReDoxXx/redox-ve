@@ -215,6 +215,13 @@ fn peer_error(e: ureq::Error) -> String {
     }
 }
 
+/// Yedek sunucunun ikiz için verdiği yanıt.
+pub struct FtOpened {
+    pub nbd_port: u16,
+    pub migrate_port: u16,
+    pub host: Option<String>,
+}
+
 /// Hedefin kopya için verdiği yanıt.
 pub struct MirrorOpened {
     pub generation: u32,
@@ -235,6 +242,49 @@ pub fn url_host(url: &str) -> Option<String> {
 }
 
 impl Peer {
+    pub fn ft_prepare(&self, request: &crate::state::ft::FtPrepare) -> Result<FtOpened, String> {
+        let body = serde_json::to_value(request).map_err(|e| e.to_string())?;
+        let reply: serde_json::Value = self.request("POST", "/api/v1/ft/standby", Duration::from_secs(60)).send_json(body).map_err(peer_error)?.into_json().map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())?;
+        let port = |name: &str| reply[name].as_u64().and_then(|p| u16::try_from(p).ok()).ok_or_else(|| "eş sunucunun yanıtı anlaşılamadı".to_string());
+        Ok(FtOpened { nbd_port: port("nbd_port")?, migrate_port: port("migrate_port")?, host: reply["host"].as_str().filter(|h| redox_core::valid_migrate_host(h)).map(str::to_string) })
+    }
+
+    /// Kısa zaman aşımlı çağrı: hata toleransının kararları saniyeler içinde verilmelidir.
+    fn quick(&self, method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
+        let request = ureq::AgentBuilder::new().timeout(Duration::from_secs(3)).redirects(0).build().request(method, &format!("{}{path}", self.url)).set("Authorization", &format!("Bearer {}", self.token));
+        let response = match body {
+            Some(body) => request.send_json(body),
+            None => request.call(),
+        }
+        .map_err(peer_error)?;
+        if response.status() == 204 {
+            return Ok(serde_json::Value::Null);
+        }
+        response.into_json().map_err(|_| "eş sunucunun yanıtı anlaşılamadı".to_string())
+    }
+
+    /// Dönen değer: yedek sunucuda ikiz duruyor mu?
+    pub fn ft_beat(&self, origin: &str, vmid: redox_core::VmId, generation: u32, alive: bool) -> Result<bool, String> {
+        let reply = self.quick("POST", &format!("/api/v1/ft/standby/{origin}/{vmid}/beat"), Some(serde_json::json!({ "generation": generation, "alive": alive })))?;
+        reply["standby"].as_bool().ok_or_else(|| "eş sunucunun yanıtı anlaşılamadı".to_string())
+    }
+
+    pub fn ft_discard(&self, origin: &str, vmid: redox_core::VmId, generation: u32) -> Result<(), String> {
+        self.request("DELETE", &format!("/api/v1/ft/standby/{origin}/{vmid}?generation={generation}"), Duration::from_secs(30)).call().map(|_| ()).map_err(peer_error)
+    }
+
+    /// Hakemden oy ister; kazanan tarafı döndürür.
+    pub fn ft_arbitrate(&self, key: &str, side: redox_core::FtSide) -> Result<redox_core::FtSide, String> {
+        let reply = self.quick("POST", "/api/v1/ft/arbitrate", Some(serde_json::json!({ "key": key, "side": side })))?;
+        serde_json::from_value(reply["winner"].clone()).map_err(|_| "hakemin yanıtı anlaşılamadı".to_string())
+    }
+
+    /// Oy vermeden sorar: karar verildiyse kazanan.
+    pub fn ft_winner(&self, key: &str) -> Result<Option<redox_core::FtSide>, String> {
+        let reply = self.quick("GET", &format!("/api/v1/ft/arbitrate/{key}"), None)?;
+        serde_json::from_value(reply["winner"].clone()).map_err(|_| "hakemin yanıtı anlaşılamadı".to_string())
+    }
+
     pub fn host_name(&self) -> Option<String> {
         url_host(&self.url)
     }

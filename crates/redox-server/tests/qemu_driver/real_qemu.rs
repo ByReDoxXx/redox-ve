@@ -28,6 +28,16 @@ pub(super) fn real() -> Option<Real> {
     real_from("REDOX_REAL_INITRD")
 }
 
+/// Gerçek ağlı konukla yapılandırma: sürücünün köprü ağı ucu, ad alanında hazır bekleyen TAP arayüzüne çevrilir
+/// (`qemu-bridge-helper` kök yetkisi ister).
+pub(super) fn real_net(tap: &str) -> Option<Real> {
+    let r = real_from("REDOX_REAL_INITRD_NET")?;
+    let wrapped = std::fs::read_to_string(&r.cfg.qemu_bin).unwrap();
+    let rewrite = format!("#!/bin/sh\nn=$#; i=0\nwhile [ $i -lt $n ]; do a=\"$1\"; shift; case \"$a\" in bridge,id=net0,*) a='tap,id=net0,ifname={tap},script=no,downscript=no';; esac; set -- \"$@\" \"$a\"; i=$((i+1)); done\n");
+    write_script(Path::new(&r.cfg.qemu_bin), &wrapped.replacen("#!/bin/sh\n", &rewrite, 1));
+    Some(r)
+}
+
 /// İçinde konuk ajanı bulunan konukla yapılandırma.
 pub(super) fn real_agent() -> Option<Real> {
     real_from("REDOX_REAL_INITRD_AGENT")

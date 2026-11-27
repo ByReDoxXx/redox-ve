@@ -63,6 +63,8 @@ impl AppState {
         if action == Action::Start {
             self.lock().check_not_in_maintenance()?;
         }
+        // Korunan konukta, ikizin aynı konuğu ayrıca çalıştırmayacağından emin olunmadan eylem yapılmaz.
+        self.ft_before_action(vmid, action)?;
         let task = self.mutate(|c| c.begin_action(vmid, action, user, now()))?;
         if self.0.task_delay.is_zero() {
             self.finish(task, vmid, action);

@@ -426,6 +426,7 @@ pub fn peers(p: &Page, peers: &[crate::peers::PeerView], balance: &crate::state:
             (balance_card(p, balance))
             (replicas_card(p, peers))
             (super::mirrors::mirror_cards(p, peers))
+            (super::ft::ft_card(p, peers))
             (super::switches::switch_card(p, switches, !peers.is_empty()))
             @if p.admin {
                 div class="card" {

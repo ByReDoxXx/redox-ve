@@ -127,6 +127,12 @@ impl Cluster {
         if self.mirrors.iter().any(|m| m.vmid == vmid) {
             return Err(Error::InvalidSpec(format!("{vmid} zaten yansıtılıyor")));
         }
+        if self.standby_of(vmid).is_some() {
+            return Err(Error::InvalidSpec(format!("{vmid} bir hata toleransı ikizi; yansıtılmaz")));
+        }
+        if self.protection(vmid).is_some() {
+            return Err(Error::InvalidSpec(format!("{vmid} için hata toleransı açık; diski o zaten eşitler")));
+        }
         if self.mirrors.len() >= MAX_MIRRORS {
             return Err(Error::InvalidSpec(format!("en fazla {MAX_MIRRORS} konuk yansıtılabilir")));
         }

@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use super::{cpu_pct, last_line, lock, parse_qmp_line, parse_stat_ticks, parse_vmrss_kb, QemuDriver, QmpLine};
 
+mod ft;
 mod host;
 mod hotplug;
 mod limits;
@@ -18,6 +19,7 @@ mod mirror;
 mod power;
 mod storage;
 
+pub use ft::*;
 pub(super) use host::*;
 pub use hotplug::*;
 pub use limits::*;

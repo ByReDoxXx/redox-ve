@@ -87,7 +87,7 @@ fn store_row(p: &Page, s: &MirrorStore) -> Markup {
 pub(super) fn mirror_cards(p: &Page, peers: &[crate::peers::PeerView]) -> Markup {
     let c = p.cluster;
     let can_add = p.admin && p.real && !peers.is_empty();
-    let candidates: Vec<&Guest> = c.guests.iter().filter(|g| mirror_blocker(g).is_none() && c.mirror(g.vmid).is_none()).collect();
+    let candidates: Vec<&Guest> = c.guests.iter().filter(|g| mirror_blocker(g).is_none() && c.mirror(g.vmid).is_none() && c.protection(g.vmid).is_none() && c.standby_of(g.vmid).is_none()).collect();
     html! {
         @if can_add || !c.mirrors.is_empty() {
             div class="card" {
