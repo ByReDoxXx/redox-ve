@@ -566,6 +566,9 @@ impl Hypervisor for LxcDriver {
         let mut child = {
             let mut attach = self.tool("lxc-attach");
             attach.args(["-n", &container_name(g.vmid), "--clear-env", "--", "/bin/sh", "-c", command]).stdin(Stdio::null()).stdout(writer).stderr(stderr);
+            // Kendi süreç grubunda: süre dolunca yalnızca lxc-attach değil, konteynerde başlattığı komut da sonlandırılır.
+            #[cfg(unix)]
+            std::os::unix::process::CommandExt::process_group(&mut attach, 0);
             attach.spawn().map_err(|e| format!("lxc-attach çalıştırılamadı: {e}"))?
         };
         let captured = std::sync::Arc::new((Mutex::new((Vec::new(), false)), std::sync::atomic::AtomicBool::new(false)));
@@ -589,6 +592,8 @@ impl Hypervisor for LxcDriver {
             match child.try_wait() {
                 Ok(Some(status)) => break Some(status),
                 Ok(None) if started.elapsed() >= EXEC_TIMEOUT => {
+                    // Grubun tamamı: lxc-attach öldürülünce konteynerdeki komut sahipsiz kalıp çalışmayı sürdürürdü.
+                    let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", child.id())]).stderr(Stdio::null()).status();
                     let _ = child.kill();
                     let _ = child.wait();
                     break None;
