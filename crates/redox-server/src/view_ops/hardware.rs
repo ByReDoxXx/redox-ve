@@ -154,68 +154,68 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
             div class="notice" role="status" { (icon("alert")) span { (tx("Donanım ayarları yalnızca konuk kapalıyken değişir.")) @if hot { (tx(" Disk ve ağ kartı çalışırken de eklenebilir.")) } } }
         }
         div class="stack" {
-            div class="card" {
-                header { h2 { @if vm { (tx("İşlemci, bellek ve donanım yazılımı")) } @else { (tx("İşlemci ve bellek")) } } }
-                div class="form" {
-                    div class="field" { label for="cores" { (tx("Çekirdek")) } input id="cores" form="hw" name="cores" type="text" inputmode="numeric" value=(f.cores) disabled[off]; span class="hint" tabindex="0" role="note" { (tx("Konuğa verilen sanal işlemci çekirdeği sayısı.")) } }
-                    div class="field" { label for="memory_mb" { (tx("Bellek (MB)")) } input id="memory_mb" form="hw" name="memory_mb" type="text" inputmode="numeric" value=(f.memory_mb) disabled[off]; span class="hint" tabindex="0" role="note" { (tx("Konuğa ayrılan bellek.")) } }
-                    @if vm {
-                        div class="field" {
-                            label for="firmware" { (tx("Donanım yazılımı")) }
-                            select id="firmware" form="hw" name="firmware" disabled[off] {
-                                option value="bios" selected[f.firmware == "bios"] { "BIOS (SeaBIOS)" }
-                                option value="uefi" selected[f.firmware == "uefi"] { "UEFI" }
-                                option value="uefi-secure" selected[f.firmware == "uefi-secure"] { (tx("UEFI + güvenli önyükleme")) }
+            @if vm {
+                section class="sect" {
+                    div class="about" { h2 { (tx("İşlemci")) } p { (tx("Konuğun gördüğü çekirdek sayısı ve işlemci modeli.")) } }
+                    div class="card" {
+                        div class="form" {
+                            div class="field" { label for="cores" { (tx("Çekirdek")) } input id="cores" form="hw" name="cores" type="text" inputmode="numeric" value=(f.cores) disabled[off]; span class="help" { (tx("Konuğa verilen sanal işlemci çekirdeği sayısı.")) } }
+                            div class="field" {
+                                label for="cpu_type" { (tx("İşlemci türü")) }
+                                select id="cpu_type" form="hw" name="cpu_type" disabled[off] {
+                                    option value="" selected[f.cpu_type.is_empty()] { (tx("Sunucunun işlemcisi (host)")) }
+                                    @for model in redox_core::hw::CPU_TYPES { option value=(model) selected[f.cpu_type == model] { (model) } }
+                                }
+                                span class="help" { (tx("En hızlısı sunucunun kendi işlemcisidir. Konuğu farklı işlemcili bir sunucuya taşıyacaksanız ikisinin de desteklediği ortak bir model seçin. Başka üreticinin modeli (Intel sunucuda EPYC gibi) kabul edilmez.")) }
                             }
-                            span class="hint" tabindex="0" role="note" { (tx("Kurulu bir işletim sistemi, donanım yazılımı değişince açılmayabilir.")) }
+                            div class="field" { label for="max_cores" { (tx("En fazla çekirdek")) } input id="max_cores" form="hw" name="max_cores" type="text" inputmode="numeric" value=(f.max_cores) disabled[off]; span class="help" { (tx("Çalışırken çıkılabilecek çekirdek sayısı; 0 ise çalışan konuğa çekirdek eklenmez. Konuk bu kadar çekirdek yuvasıyla açılır, kullanılmayan yuvalar işlemci harcamaz.")) } }
+                            div class="field" { label for="numa_node" { (tx("NUMA düğümü")) } input id="numa_node" form="hw" name="numa_node" type="text" inputmode="numeric" value=(f.numa_node) disabled[off]; span class="help" { (tx("Belleği ve (çekirdek listesi boşsa) sanal çekirdekleri sunucunun bu NUMA düğümüne bağlar. Boş: bağ yok.")) } }
                         }
-                        div class="field" {
-                            label for="numa_node" { (tx("NUMA düğümü")) }
-                            input id="numa_node" form="hw" name="numa_node" type="text" inputmode="numeric" value=(f.numa_node) disabled[off];
-                            span class="hint" tabindex="0" role="note" { (tx("Belleği ve (çekirdek listesi boşsa) sanal çekirdekleri sunucunun bu NUMA düğümüne bağlar. Boş: bağ yok.")) }
+                        div class="opts" {
+                            label { input type="checkbox" form="hw" name="nested" value="1" checked[f.nested.is_some()] disabled[off]; b { (tx("Konuğa VT-x / AMD-V göster")) } span { (tx("Konuk kendi sanal makinelerini çalıştırabilir (KVM, Hyper-V, WSL2, Docker Desktop). Sunucunun KVM modülünde iç içe sanallaştırma açık olmalıdır; qemu64 ve kvm64 modelleriyle kullanılamaz.")) } }
                         }
-                        div class="field" {
-                            span class="label" { (tx("Büyük sayfalar")) }
-                            label class="check" { input type="checkbox" form="hw" name="hugepages" value="1" checked[f.hugepages.is_some()] disabled[off]; (tx("Belleği 2 MB'lık sayfalardan ayır")) }
-                            span class="hint" tabindex="0" role="note" { (tx("Sunucuda önceden boş büyük sayfa ayrılmış olmalıdır (vm.nr_hugepages). Bellek balonu ve çalışırken bellek ekleme ile birlikte kullanılamaz.")) }
+                    }
+                }
+                section class="sect" {
+                    div class="about" { h2 { (tx("Bellek")) } p { (tx("Açılış belleği, çalışırken büyütme sınırı ve bellek geri alma.")) } }
+                    div class="card" {
+                        div class="form" {
+                            div class="field" { label for="memory_mb" { (tx("Bellek (MB)")) } input id="memory_mb" form="hw" name="memory_mb" type="text" inputmode="numeric" value=(f.memory_mb) disabled[off]; span class="help" { (tx("Konuğa ayrılan bellek.")) } }
+                            div class="field" { label for="max_memory_mb" { (tx("En fazla bellek (MB)")) } input id="max_memory_mb" form="hw" name="max_memory_mb" type="text" inputmode="numeric" value=(f.max_memory_mb) disabled[off]; span class="help" { (tx("Çalışırken çıkılabilecek bellek; 0 ise çalışan konuğa bellek eklenmez. Konuk boş bellek yuvalarıyla açılır, eklenmemiş bellek sunucuda yer tutmaz.")) } }
                         }
-                        div class="field" {
-                            span class="label" { (tx("Güvenlik yongası")) }
-                            label class="check" { input type="checkbox" form="hw" name="tpm" value="1" checked[f.tpm.is_some()] disabled[off]; (tx("Sanal TPM 2.0")) }
-                            span class="hint" tabindex="0" role="note" { (tx("Sanal TPM 2.0. Windows 11 ve disk şifreleme (BitLocker) için gerekir.")) }
+                        div class="opts" {
+                            label { input type="checkbox" form="hw" name="balloon" value="1" checked[f.balloon.is_some()] disabled[off]; b { (tx("Balon aygıtını tak")) } span { (tx("Konuğun belleği çalışırken küçültülüp büyütülebilir. Konukta virtio balon sürücüsü gerekir (Linux'ta hazır; Windows'ta virtio-win).")) } }
+                            label { input type="checkbox" form="hw" name="hugepages" value="1" checked[f.hugepages.is_some()] disabled[off]; b { (tx("Belleği 2 MB'lık sayfalardan ayır")) } span { (tx("Sunucuda önceden boş büyük sayfa ayrılmış olmalıdır (vm.nr_hugepages). Bellek balonu ve çalışırken bellek ekleme ile birlikte kullanılamaz.")) } }
                         }
-                        div class="field" {
-                            label for="cpu_type" { (tx("İşlemci türü")) }
-                            select id="cpu_type" form="hw" name="cpu_type" disabled[off] {
-                                option value="" selected[f.cpu_type.is_empty()] { (tx("Sunucunun işlemcisi (host)")) }
-                                @for model in redox_core::hw::CPU_TYPES { option value=(model) selected[f.cpu_type == model] { (model) } }
+                    }
+                }
+                section class="sect" {
+                    div class="about" { h2 { (tx("Aygıtlar")) } p { (tx("Açılış donanım yazılımı ve konuğa takılan sanal aygıtlar.")) } }
+                    div class="card" {
+                        div class="form" {
+                            div class="field" {
+                                label for="firmware" { (tx("Donanım yazılımı")) }
+                                select id="firmware" form="hw" name="firmware" disabled[off] {
+                                    option value="bios" selected[f.firmware == "bios"] { "BIOS (SeaBIOS)" }
+                                    option value="uefi" selected[f.firmware == "uefi"] { "UEFI" }
+                                    option value="uefi-secure" selected[f.firmware == "uefi-secure"] { (tx("UEFI + güvenli önyükleme")) }
+                                }
+                                span class="help" { (tx("Kurulu bir işletim sistemi, donanım yazılımı değişince açılmayabilir.")) }
                             }
-                            span class="hint" tabindex="0" role="note" { (tx("En hızlısı sunucunun kendi işlemcisidir. Konuğu farklı işlemcili bir sunucuya taşıyacaksanız ikisinin de desteklediği ortak bir model seçin. Başka üreticinin modeli (Intel sunucuda EPYC gibi) kabul edilmez.")) }
                         }
-                        div class="field" {
-                            span class="label" { (tx("İç içe sanallaştırma")) }
-                            label class="check" { input type="checkbox" form="hw" name="nested" value="1" checked[f.nested.is_some()] disabled[off]; (tx("Konuğa VT-x / AMD-V göster")) }
-                            span class="hint" tabindex="0" role="note" { (tx("Konuk kendi sanal makinelerini çalıştırabilir (KVM, Hyper-V, WSL2, Docker Desktop). Sunucunun KVM modülünde iç içe sanallaştırma açık olmalıdır; qemu64 ve kvm64 modelleriyle kullanılamaz.")) }
+                        div class="opts" {
+                            label { input type="checkbox" form="hw" name="tpm" value="1" checked[f.tpm.is_some()] disabled[off]; b { (tx("Sanal TPM 2.0")) } span { (tx("Sanal TPM 2.0. Windows 11 ve disk şifreleme (BitLocker) için gerekir.")) } }
+                            label { input type="checkbox" form="hw" name="sound" value="1" checked[f.sound.is_some()] disabled[off]; b { (tx("Ses kartı tak")) } span { (tx("Konuğa Intel HD Audio kartı takılır. Ses canlı konsoldan “Sesi Aç” ile dinlenir; mikrofon taşınmaz.")) } }
                         }
-                        div class="field" {
-                            label for="max_cores" { (tx("En fazla çekirdek")) }
-                            input id="max_cores" form="hw" name="max_cores" type="text" inputmode="numeric" value=(f.max_cores) disabled[off];
-                            span class="hint" tabindex="0" role="note" { (tx("Çalışırken çıkılabilecek çekirdek sayısı; 0 ise çalışan konuğa çekirdek eklenmez. Konuk bu kadar çekirdek yuvasıyla açılır, kullanılmayan yuvalar işlemci harcamaz.")) }
-                        }
-                        div class="field" {
-                            label for="max_memory_mb" { (tx("En fazla bellek (MB)")) }
-                            input id="max_memory_mb" form="hw" name="max_memory_mb" type="text" inputmode="numeric" value=(f.max_memory_mb) disabled[off];
-                            span class="hint" tabindex="0" role="note" { (tx("Çalışırken çıkılabilecek bellek; 0 ise çalışan konuğa bellek eklenmez. Konuk boş bellek yuvalarıyla açılır, eklenmemiş bellek sunucuda yer tutmaz.")) }
-                        }
-                        div class="field" {
-                            span class="label" { (tx("Ses")) }
-                            label class="check" { input type="checkbox" form="hw" name="sound" value="1" checked[f.sound.is_some()] disabled[off]; (tx("Ses kartı tak")) }
-                            span class="hint" tabindex="0" role="note" { (tx("Konuğa Intel HD Audio kartı takılır. Ses canlı konsoldan “Sesi Aç” ile dinlenir; mikrofon taşınmaz.")) }
-                        }
-                        div class="field" {
-                            span class="label" { (tx("Bellek balonu")) }
-                            label class="check" { input type="checkbox" form="hw" name="balloon" value="1" checked[f.balloon.is_some()] disabled[off]; (tx("Balon aygıtını tak")) }
-                            span class="hint" tabindex="0" role="note" { (tx("Konuğun belleği çalışırken küçültülüp büyütülebilir. Konukta virtio balon sürücüsü gerekir (Linux'ta hazır; Windows'ta virtio-win).")) }
+                    }
+                }
+            } @else {
+                section class="sect" {
+                    div class="about" { h2 { (tx("İşlemci ve bellek")) } p { (tx("Kapsayıcıya ayrılan çekirdek ve bellek.")) } }
+                    div class="card" {
+                        div class="form" {
+                            div class="field" { label for="cores" { (tx("Çekirdek")) } input id="cores" form="hw" name="cores" type="text" inputmode="numeric" value=(f.cores) disabled[off]; span class="help" { (tx("Konuğa verilen sanal işlemci çekirdeği sayısı.")) } }
+                            div class="field" { label for="memory_mb" { (tx("Bellek (MB)")) } input id="memory_mb" form="hw" name="memory_mb" type="text" inputmode="numeric" value=(f.memory_mb) disabled[off]; span class="help" { (tx("Konuğa ayrılan bellek.")) } }
                         }
                     }
                 }
