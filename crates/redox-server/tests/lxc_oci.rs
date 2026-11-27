@@ -311,13 +311,14 @@ fn unpacking_inside_a_user_namespace_applies_root_ownership() {
     std::fs::create_dir_all(&root).unwrap();
     let tar = dir.join("katman.tar");
     std::fs::write(&tar, layer((0, 0), &[("etc/", b'5', "", ""), ("etc/ad", b'0', "", "kutu")])).unwrap();
-    let out = Command::new("unshare").arg("-Ur").arg(env!("CARGO_BIN_EXE_redox")).arg("oci-unpack").arg(&root).args(["tar", "1000"]).stdin(std::fs::File::open(&tar).unwrap()).output().unwrap();
+    let out = Command::new("unshare").arg("-Ur").arg(env!("CARGO_BIN_EXE_redox")).arg("oci-unpack").arg(&root).args(["tar", "10000"]).stdin(std::fs::File::open(&tar).unwrap()).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "996");
+    // Kalan bütçe: 4 bayt veri ve iki girdinin sabit bedeli (2 × 1024) düşülür.
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7948");
     assert_eq!(std::fs::metadata(root.join("etc/ad")).unwrap().uid(), me(&dir).0, "ad alanının kökü bu kullanıcıdır");
     // Ad alanında karşılığı olmayan kimlik açık bir hatadır.
     std::fs::write(&tar, layer((1234, 1234), &[("baskasi", b'0', "", "1")])).unwrap();
-    let out = Command::new("unshare").arg("-Ur").arg(env!("CARGO_BIN_EXE_redox")).arg("oci-unpack").arg(&root).args(["tar", "1000"]).stdin(std::fs::File::open(&tar).unwrap()).output().unwrap();
+    let out = Command::new("unshare").arg("-Ur").arg(env!("CARGO_BIN_EXE_redox")).arg("oci-unpack").arg(&root).args(["tar", "10000"]).stdin(std::fs::File::open(&tar).unwrap()).output().unwrap();
     assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("sahipliği ayarlanamadı"));
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -361,6 +361,9 @@ mod unix {
         Ok(())
     }
 
+    /// Oluşturulan her girdinin bütçeden düşen sabit bedeli (bayt).
+    pub const ENTRY_COST: u64 = 1024;
+
     /// Bir katmanı `root` içine açar. `budget`: yazılabilecek en fazla bayt (katmanlar boyunca azalır).
     /// `chown`: arşivdeki sahiplikler uygulansın mı (kök ya da eşlenmiş kök olarak çalışırken).
     pub fn unpack(input: &mut dyn Read, root: &Path, budget: &mut u64, chown: bool) -> Result<(), String> {
@@ -394,6 +397,9 @@ mod unix {
                 body(input, entry.size, None)?;
                 continue;
             }
+            // Verisi olmayan girdiler (dizin, bağ, boş dosya) de yer tutar: bedelsiz olsalar küçücük bir katman
+            // milyonlarca girdiyle dosya sisteminin düğümlerini tüketebilirdi.
+            *budget = budget.checked_sub(ENTRY_COST).ok_or("imaj konteynere ayrılan diske sığmıyor; disk boyutunu büyütün")?;
             let parent = directory(root, &parts, true)?.expect("oluşturma istendi");
             let path = parent.join(os(&last));
             match entry.kind {
