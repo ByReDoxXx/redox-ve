@@ -12,6 +12,7 @@ pub mod fmt;
 pub mod ft;
 pub mod fwsets;
 pub mod health;
+pub mod hostnet;
 pub mod hw;
 pub mod jobs;
 pub mod metrics;

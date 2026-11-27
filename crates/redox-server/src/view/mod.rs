@@ -13,6 +13,7 @@ mod cluster;
 mod forms;
 mod ft;
 mod health;
+mod hostnet;
 mod fwsets;
 mod guests;
 mod mirrors;

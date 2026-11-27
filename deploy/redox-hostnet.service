@@ -1,0 +1,30 @@
+[Unit]
+Description=RedoX VE sunucu ağları (ağ yardımcısı)
+After=network-online.target
+Wants=network-online.target
+Before=redox.service
+ConditionPathExists=/var/lib/redox/hostnet.json
+StartLimitIntervalSec=0
+
+# Yönetim sunucusu yetkisizdir; ağı yalnızca bu kısa ömürlü birim kurar. Tanım dosyasını yeniden doğrular,
+# yalnızca kendi kurduğu aygıtları değiştirir ve adres ya da varsayılan yol taşıyan arayüze dokunmaz.
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/redox net apply /var/lib/redox/hostnet.json --bridge-conf /etc/qemu/redox-hostnet.conf
+StateDirectory=redox-dnsmasq
+StateDirectoryMode=0755
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_READ_SEARCH
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/qemu /proc/sys/net
+ProtectHome=true
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

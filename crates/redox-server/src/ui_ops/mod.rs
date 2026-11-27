@@ -25,6 +25,8 @@ mod switches;
 mod edit;
 mod files;
 mod health;
+mod hostnet;
+pub use hostnet::*;
 pub use health::*;
 mod firewall;
 pub use firewall::*;

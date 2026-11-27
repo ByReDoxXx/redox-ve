@@ -76,7 +76,7 @@ mkdir -p "$WORK/redox"
 install -m 0755 "$BINARY" "$WORK/redox/redox"
 install -m 0755 "$DEPLOY/install.sh" "$WORK/redox/install.sh"
 install -m 0644 "$DEPLOY/redox-host.service" "$WORK/redox/redox-host.service"
-install -m 0644 "$DEPLOY/redox-net.service" "$DEPLOY/redox-net.path" "$DEPLOY/redox-ksm.service" "$DEPLOY/redox-health.service" "$DEPLOY/redox-health.timer" "$DEPLOY/redox-update.service" "$DEPLOY/redox-update.path" "$WORK/redox/"
+install -m 0644 "$DEPLOY/redox-net.service" "$DEPLOY/redox-net.path" "$DEPLOY/redox-ksm.service" "$DEPLOY/redox-hostnet.service" "$DEPLOY/redox-hostnet.path" "$DEPLOY/redox-dnsmasq@.service" "$DEPLOY/redox-health.service" "$DEPLOY/redox-health.timer" "$DEPLOY/redox-update.service" "$DEPLOY/redox-update.path" "$WORK/redox/"
 MAPS="$MAPS -map $WORK/redox /redox"
 
 # Önyükleme menüleri: ilk seçenek RedoX VE kurulumu olur (BIOS: isolinux, UEFI: grub).

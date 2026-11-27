@@ -106,6 +106,8 @@ pub fn routes() -> Router<AppState> {
         .route("/mirror-stores/{origin}/{vmid}/promote", post(mirror_promote))
         .route("/vswitches", get(vswitches).post(vswitch_put))
         .route("/host/performance", get(host_performance))
+        .route("/host/networks", get(host_nets).post(host_net_put))
+        .route("/host/networks/{name}", delete_route(host_net_delete))
         .route("/host/health", get(host_health))
         .route("/host/update", post(host_update))
         .route("/firewall/sets", get(ip_sets).post(ip_set_put))
@@ -224,6 +226,20 @@ async fn host_health(State(st): State<AppState>) -> Json<serde_json::Value> {
 async fn host_update(State(st): State<AppState>, Extension(me): Extension<Identity>) -> Result<StatusCode, ApiError> {
     st.request_update(&me.user)?;
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn host_nets(State(st): State<AppState>) -> Json<Vec<crate::state::hostnet::HostNetReport>> {
+    Json(st.host_net_report())
+}
+
+async fn host_net_put(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(net): Json<redox_core::hostnet::HostNet>) -> Result<StatusCode, ApiError> {
+    st.host_net_put(net, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn host_net_delete(State(st): State<AppState>, Extension(me): Extension<Identity>, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
+    st.host_net_remove(&name, &me.user)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn ip_sets(State(st): State<AppState>) -> Json<Vec<redox_core::fwsets::IpSet>> {

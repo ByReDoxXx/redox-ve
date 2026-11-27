@@ -109,3 +109,28 @@ pub(super) async fn security_groups_and_address_sets_are_managed_and_used_by_gue
     assert!(post_ok(&app, "/cluster/firewall", "op=remove-group&name=web").await.contains("notice="));
     assert!(api(&app, delete("/api/v1/firewall/sets/ofis")).await.0.is_success());
 }
+
+#[tokio::test]
+pub(super) async fn server_networks_are_defined_from_the_node_page_and_the_api() {
+    let (app, state) = setup();
+    let node = state.snapshot().nodes[0].id.clone();
+    let url = format!("/nodes/{node}");
+    assert!(page(&app, &url).await.contains("Panelden tanımlanmış ağ yok."));
+    assert!(post_ok(&app, "/host/networks", "op=save&kind=guest&name=vnet1&address=10.10.0.1%2F24&dhcp=10.10.0.50-10.10.0.99&nat=1").await.contains("notice="));
+    assert!(post_ok(&app, "/host/networks", "op=save&kind=bond&name=bond0&mode=802.3ad&ports=enp2s0%2C+enp3s0").await.contains("notice="));
+    assert!(post_ok(&app, "/host/networks", "op=save&kind=vlan&parent=bond0&id=20").await.contains("notice="));
+    assert!(post_ok(&app, "/host/networks", "op=save&kind=bridge&name=vmbr7&ports=bond0.20&vlan_aware=1").await.contains("notice="));
+    for bad in ["op=save&kind=guest&name=vnet2&address=10.10.0.9%2F24&dhcp=", "op=save&kind=guest&name=vnet2&address=10.30.0.1%2F24&dhcp=10.30.0.5", "op=save&kind=bridge&name=vmbr8&ports=enp2s0", "op=save&kind=vlan&parent=bond0&id=x", "op=save&kind=bridge&name=a%3Breboot&ports="] {
+        assert!(post_ok(&app, "/host/networks", bad).await.contains("error="), "{bad}");
+    }
+    let shown = page(&app, &url).await;
+    assert!(shown.contains("10.10.0.1/24 · DHCP 10.10.0.50–10.10.0.99 · NAT") && shown.contains("802.3ad · enp2s0, enp3s0") && shown.contains("bond0 · VLAN 20"), "{shown}");
+    assert!(post_ok(&app, "/host/networks", "op=remove&name=bond0").await.contains("error="), "üzerine kurulu tanım varken silinmez");
+    let (status, list) = api(&app, get("/api/v1/host/networks")).await;
+    assert_eq!((status, list.as_array().map(Vec::len)), (StatusCode::OK, Some(4)));
+    let denied = send(&app, as_viewer(Method::POST, "/api/v1/host/networks").header(CONTENT_TYPE, "application/json").body(Body::from(json!({ "kind": "bridge", "name": "vmbr9" }).to_string())).unwrap()).await.0;
+    assert_eq!(denied, StatusCode::FORBIDDEN);
+    assert!(post_ok(&app, "/host/networks", "op=remove&name=vmbr7").await.contains("notice="));
+    assert!(api(&app, request(Method::DELETE, "/api/v1/host/networks/vnet1").body(Body::empty()).unwrap()).await.0.is_success());
+    assert_eq!(state.snapshot().host_nets.len(), 2);
+}

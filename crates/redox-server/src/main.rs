@@ -394,6 +394,10 @@ async fn serve(opts: ServeOptions) -> Result<(), String> {
         state.alerts().add_channel(channel);
     }
     if state.driver().is_real() {
+        // Sunucu ağları: kuran root birimi (redox-hostnet.service) bu dosyayı okur.
+        if let Err(e) = state.set_hostnet_file(opts.data_dir.join("hostnet.json")) {
+            complain!("UYARI: sunucu ağı dosyası yazılamadı: {e}");
+        }
         // Dağıtık anahtar tanımları: ağı kuran root birimi (redox-net.service) bu dosyayı okur.
         if let Err(e) = state.set_vswitch_file(opts.data_dir.join("vswitch.json")) {
             complain!("UYARI: dağıtık anahtar dosyası yazılamadı: {e}");
@@ -723,6 +727,30 @@ fn net_sync(file: &str, rest: &[&str]) -> Result<(), String> {
     if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 
+/// Sunucu ağlarını kurar (redox-hostnet.service).
+fn net_apply(file: &str, rest: &[&str]) -> Result<(), String> {
+    let mut options = redox_server::hostnet::Options::default();
+    let mut rest = rest.iter();
+    while let Some(arg) = rest.next() {
+        let mut path = || rest.next().map(|v| PathBuf::from(*v)).ok_or(format!("{arg} bir yol ister"));
+        match *arg {
+            "--dry-run" => options.dry_run = true,
+            "--no-systemd" => options.systemctl = None,
+            "--bridge-conf" => options.bridge_conf = Some(path()?),
+            "--dns-dir" => options.dns_dir = path()?,
+            other => return Err(format!("bilinmeyen seçenek: {other}")),
+        }
+    }
+    let done = redox_server::hostnet::apply(std::path::Path::new(file), &options)?;
+    for line in &done {
+        say!("{line}");
+    }
+    if done.is_empty() {
+        say!("ağ zaten tanımlara uygun");
+    }
+    Ok(())
+}
+
 /// Ayar dosyasını bir kullanıcıyla dener. Parola `REDOX_PASSWORD` değişkeninden ya da gizli istemden okunur.
 fn ldap_test(file: &str, user: &str) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("{file} okunamadı: {e}"))?;
@@ -814,7 +842,8 @@ fn main() -> ExitCode {
             ["net", "vxlan", bridge, vni, local, peers] => redox_server::vxlan::plan(bridge, vni, local, peers).map(|script| print!("{}", redox_server::i18n::cli_text(&script))),
             ["net", "vxlan", bridge, vni, local, peers, "--unit"] => redox_server::vxlan::unit(bridge, vni, local, peers).map(|unit| print!("{}", redox_server::i18n::cli_text(&unit))),
             ["net", "sync", file, rest @ ..] => net_sync(file, rest),
-            _ => Err("kullanım: redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,<eş-adres>...] [--unit]\n          redox net sync <tanım-dosyası> [--dry-run] [--bridge-conf <dosya>]".to_string()),
+            ["net", "apply", file, rest @ ..] => net_apply(file, rest),
+            _ => Err("kullanım: redox net vxlan <köprü> <vni> <yerel-adres> <eş-adres>[,<eş-adres>...] [--unit]\n          redox net sync <tanım-dosyası> [--dry-run] [--bridge-conf <dosya>]\n          redox net apply <sunucu-ağı-dosyası> [--dry-run] [--bridge-conf <dosya>] [--dns-dir <dizin>] [--no-systemd]".to_string()),
         },
         Some(_) => cli::run(&args).map(|out| {
             use std::io::Write;

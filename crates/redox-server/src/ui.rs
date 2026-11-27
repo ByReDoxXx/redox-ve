@@ -189,7 +189,7 @@ pub async fn node(
         return ctx.not_found(&tfmt(format!("“{id}” adında bir düğüm yok.")));
     };
     let back = with_q(&format!("/nodes/{id}"), &ctx.query.q);
-    Html(view::node(&ctx.page(Current::Node(id.clone()), back), node, &st.update_status())).into_response()
+    Html(view::node(&ctx.page(Current::Node(id.clone()), back), node, &st.update_status(), &st.host_net_report())).into_response()
 }
 
 fn parse_vmid(raw: &str) -> Option<VmId> {

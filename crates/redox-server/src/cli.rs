@@ -136,6 +136,9 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox ldap test <ayar-dosyası> <kullanıcı>    (LDAP ayarını dener)
   redox node perf | health | update      (performans donanımı; disk sağlığı ve bekleyen güncellemeler; güncellemeleri kurma isteği)
   redox tls self-signed <ad> --dir <dizin>   (kendinden imzalı sertifika; sunucuya: serve --tls-cert … --tls-key …)
+  redox hostnet list | remove <ad>                                  (sunucu ağları)
+  redox hostnet bond <ad> <active-backup|802.3ad|balance-xor> <a,b> | vlan <arayüz> <etiket> | bridge <ad> [ports=a,b] [vlan-aware=true]
+  redox hostnet guest <ad> <adres/ön> [dhcp=baş-son] [nat=true]     (DHCP/DNS'li konuk ağı)
   redox firewall set list | save <ad> <adres,adres> | remove <ad>             (kurallarda @ad olarak kullanılan adres kümeleri)
   redox firewall group list | save <ad> in='<kurallar>' out='<kurallar>' | remove <ad>   (güvenlik grupları; konuğa: vm set <kimlik> fw-groups=ad)
   redox switch list | set <vds-ad> <vni> <adres,adres> [--mtu <n>] | push <ad> | remove <ad> [--everywhere]   (dağıtık anahtar)
@@ -534,6 +537,9 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["firewall", "group", "list"] => get("/firewall/groups", View::Json),
         ["firewall", "group", "save", name, pairs @ ..] => req("POST", "/firewall/groups".to_string(), Some(fw_group_body(name, pairs)?), View::Done("güvenlik grubu kaydedildi")),
         ["firewall", "group", "remove", name] => req("DELETE", format!("/firewall/groups/{name}"), None, View::Done("güvenlik grubu silindi")),
+        ["hostnet", "list"] => get("/host/networks", View::Json),
+        ["hostnet", "remove", name] => req("DELETE", format!("/host/networks/{name}"), None, View::Done("sunucu ağı silindi")),
+        ["hostnet", kind @ ("bridge" | "bond" | "vlan" | "guest"), rest @ ..] => req("POST", "/host/networks".to_string(), Some(hostnet_body(kind, rest)?), View::Done("sunucu ağı kaydedildi; ağı kök yardımcısı kurar")),
         ["switch", "list"] => get("/vswitches", View::Switches),
         ["switch", "set", name, vni, members, rest @ ..] => req("POST", "/vswitches".to_string(), Some(switch_body(name, vni, members, rest)?), View::Done("anahtar kaydedildi; eşlere göndermek için: redox switch push <ad>")),
         ["switch", "push", name] => req("POST", format!("/vswitches/{name}/push"), None, View::SwitchPeers),
@@ -583,6 +589,46 @@ fn fw_group_body(name: &str, pairs: &[&str]) -> Result<Value, String> {
         return Err("en az bir kural verin: in='tcp/443' ya da out='udp/53'".to_string());
     }
     serde_json::to_value(redox_core::fwsets::FwGroup { name: name.to_string(), rules, out }).map_err(|e| e.to_string())
+}
+
+/// `redox hostnet …` değerlerini API gövdesine çevirir ve tanımı göndermeden önce doğrular.
+fn hostnet_body(kind: &str, rest: &[&str]) -> Result<Value, String> {
+    use redox_core::hostnet::{BondMode, HostNet};
+    let usage = || "kullanım: redox hostnet bridge <ad> [ports=a,b] [vlan-aware=true] | bond <ad> <kip> <a,b> | vlan <arayüz> <etiket> | guest <ad> <adres/ön> [dhcp=baş-son] [nat=true]".to_string();
+    let list = |text: &str| text.split(',').map(str::trim).filter(|p| !p.is_empty()).map(str::to_string).collect::<Vec<_>>();
+    let net = match (kind, rest) {
+        ("bond", [name, mode, ports]) => HostNet::Bond { name: name.to_string(), mode: BondMode::parse(mode).ok_or_else(|| format!("bond kipi active-backup, 802.3ad ya da balance-xor olmalı: {mode}"))?, ports: list(ports) },
+        ("vlan", [parent, id]) => HostNet::Vlan { name: format!("{parent}.{id}"), parent: parent.to_string(), id: id.parse().map_err(|_| format!("VLAN etiketi bir sayı olmalı: {id}"))? },
+        ("bridge", [name, options @ ..]) => {
+            let (mut ports, mut vlan_aware) = (Vec::new(), false);
+            for option in options {
+                match option.split_once('=') {
+                    Some(("ports", v)) => ports = list(v),
+                    Some(("vlan-aware", v @ ("true" | "false"))) => vlan_aware = v == "true",
+                    _ => return Err(usage()),
+                }
+            }
+            HostNet::Bridge { name: name.to_string(), ports, vlan_aware }
+        }
+        ("guest", [name, address, options @ ..]) => {
+            let (mut dhcp_start, mut dhcp_end, mut nat) = (None, None, false);
+            for option in options {
+                match option.split_once('=') {
+                    Some(("dhcp", v)) => {
+                        let (a, b) = v.split_once('-').ok_or_else(usage)?;
+                        let address = |t: &str| t.parse().map_err(|_| format!("geçersiz adres: {t}"));
+                        (dhcp_start, dhcp_end) = (Some(address(a)?), Some(address(b)?));
+                    }
+                    Some(("nat", v @ ("true" | "false"))) => nat = v == "true",
+                    _ => return Err(usage()),
+                }
+            }
+            HostNet::Guest { name: name.to_string(), address: address.to_string(), dhcp_start, dhcp_end, nat }
+        }
+        _ => return Err(usage()),
+    };
+    net.check()?;
+    serde_json::to_value(net).map_err(|e| e.to_string())
 }
 
 /// `redox switch set` değerlerini API gövdesine çevirir.
@@ -1102,6 +1148,11 @@ mod tests {
         assert_eq!(patch_body(&["cores=2", "max-cores=8"]).unwrap(), json!({"cores": 2, "max_cores": 8}));
         assert_eq!(patch_body(&["cpu-affinity=0-3", "numa-node=", "hugepages=true"]).unwrap(), json!({"cpu_affinity": "0-3", "numa_node": "", "hugepages": true}));
         assert_eq!(parse(&args("node perf")).unwrap().path, "/host/performance");
+        let guest = parse(&args("hostnet guest vnet1 10.10.0.1/24 dhcp=10.10.0.50-10.10.0.99 nat=true")).unwrap();
+        assert_eq!((guest.path.as_str(), guest.body.unwrap()), ("/host/networks", json!({"kind": "guest", "name": "vnet1", "address": "10.10.0.1/24", "dhcp_start": "10.10.0.50", "dhcp_end": "10.10.0.99", "nat": true})));
+        assert_eq!(parse(&args("hostnet vlan bond0 20")).unwrap().body.unwrap()["name"], json!("bond0.20"));
+        assert!(parse(&args("hostnet bond bond0 yuvarlak e1")).unwrap_err().contains("bond kipi"));
+        assert!(parse(&args("hostnet guest vnet1 8.8.8.8/24")).unwrap_err().contains("özel bir IPv4"));
         let set = parse(&args("firewall set save ofis 10.0.0.0/24,192.168.1.5")).unwrap();
         assert_eq!((set.path.as_str(), set.body.unwrap()), ("/firewall/sets", json!({"name": "ofis", "entries": ["10.0.0.0/24", "192.168.1.5"]})));
         let group = parse(&["firewall", "group", "save", "web", "in=tcp/443", "out=udp/53 to @ofis"].map(String::from)).unwrap();

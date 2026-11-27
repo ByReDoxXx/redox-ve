@@ -48,7 +48,7 @@ for unit in redox-host.service redox-net.service redox-net.path; do
 done
 
 # ---------------------------------------------------------------- paketler
-PACKAGES="qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools lxc lxc-templates uidmap acl rsync nftables iproute2 bridge-utils ca-certificates"
+PACKAGES="qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools lxc lxc-templates uidmap acl rsync nftables iproute2 bridge-utils ca-certificates dnsmasq-base"
 [ "$TLS" = 1 ] && PACKAGES="$PACKAGES caddy"
 say "Paketler kuruluyor" "Installing packages"
 if [ -z "$ROOT" ]; then
@@ -102,10 +102,15 @@ else
     cp "$HERE/redox-net.service" "$HERE/redox-net.path" "$ROOT/etc/systemd/system/"
     # KSM birimi yalnızca kopyalanır: açmak yöneticinin kararıdır.
     cp "$HERE/redox-ksm.service" "$ROOT/etc/systemd/system/"
+    cp "$HERE/redox-hostnet.service" "$HERE/redox-hostnet.path" "$HERE/redox-dnsmasq@.service" "$ROOT/etc/systemd/system/"
     cp "$HERE/redox-health.service" "$HERE/redox-health.timer" "$HERE/redox-update.service" "$HERE/redox-update.path" "$ROOT/etc/systemd/system/"
     mkdir -p "$ROOT/etc/qemu"
     [ -f "$VDS_CONF" ] || : > "$VDS_CONF"
     chmod 0644 "$VDS_CONF"
+    HOSTNET_CONF="$ROOT/etc/qemu/redox-hostnet.conf"
+    [ -f "$HOSTNET_CONF" ] || : > "$HOSTNET_CONF"
+    chmod 0644 "$HOSTNET_CONF"
+    grep -qxF "include /etc/qemu/redox-hostnet.conf" "$QEMU_CONF" 2>/dev/null || echo "include /etc/qemu/redox-hostnet.conf" >> "$QEMU_CONF"
     # "include" satırı hedef sistemdeki yolu gösterir ($ROOT'suz).
     grep -qxF "include /etc/qemu/redox-vds.conf" "$QEMU_CONF" 2>/dev/null || echo "include /etc/qemu/redox-vds.conf" >> "$QEMU_CONF"
     chmod 0644 "$QEMU_CONF"
@@ -295,7 +300,7 @@ if [ -n "$ROOT" ]; then
     say "Sınama kipi: dosyalar $ROOT altına yazıldı" "Test mode: files were written under $ROOT"
     exit 0
 fi
-run systemctl enable redox.service redox-firstboot.service redox-banner.service redox-console.service redox-net.service redox-net.path redox-health.timer
+run systemctl enable redox.service redox-firstboot.service redox-banner.service redox-console.service redox-net.service redox-net.path redox-health.timer redox-hostnet.service redox-hostnet.path
 # tty1'i durum ekranı kullanır; öbür sanal konsollarda (Alt+F2) olağan oturum açma durur.
 run systemctl disable getty@tty1.service
 [ "$TLS" = 0 ] || run systemctl enable caddy.service
@@ -310,7 +315,7 @@ if [ ! -s /var/lib/redox/users.json ] && [ -t 0 ] && [ "$DRY_RUN" = 0 ]; then
 fi
 run systemctl restart redox-firstboot.service
 run systemctl restart redox.service
-run systemctl restart redox-net.path
+run systemctl restart redox-net.path redox-hostnet.path
 [ "$TLS" = 0 ] || run systemctl restart caddy.service
 run systemctl restart redox-banner.service
 [ "$DRY_RUN" = 1 ] || sed -n '/Panel/p' /etc/issue
