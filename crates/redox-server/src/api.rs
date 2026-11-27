@@ -83,6 +83,9 @@ pub fn routes() -> Router<AppState> {
         .route("/media/{name}", axum::routing::put(media_put).delete(media_delete))
         .route("/peers", get(peers))
         .route("/support", get(support_bundle))
+        .route("/profile", get(profile))
+        .route("/profile/diff", post(profile_diff))
+        .route("/profile/apply", post(profile_apply))
         .route("/peers/{name}/import/{vmid}", post(peer_import))
         .route("/peers/{name}/migrate/{vmid}", post(peer_migrate))
         .route("/guests/{vmid}/migrate/prepare", post(migrate_prepare))
@@ -141,6 +144,22 @@ async fn cluster(State(st): State<AppState>) -> Json<ClusterSummary> {
 async fn peer_import(State(st): State<AppState>, Extension(me): Extension<Identity>, Path((name, vmid)): Path<(String, VmId)>) -> Result<StatusCode, ApiError> {
     st.import_from_peer(&name, vmid, &me.user)?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// Bu sunucunun profili: başlatma seçenekleri, havuzlar ve yedek işleri (gizli bilgi içermez).
+async fn profile(State(st): State<AppState>) -> Json<serde_json::Value> {
+    Json(st.profile())
+}
+
+/// Verilen profili bu sunucuyla karşılaştırır. Bir şey değiştirmez; yine de yalnızca yöneticiye açıktır.
+async fn profile_diff(State(st): State<AppState>, Json(other): Json<serde_json::Value>) -> ApiResult<serde_json::Value> {
+    Ok(Json(json!({ "differences": st.profile_compare(&other)? })))
+}
+
+/// Profildeki havuzları ve yedek işlerini bu sunucuya uygular; çalışırken değişmeyen farkları `manual` olarak döndürür.
+async fn profile_apply(State(st): State<AppState>, Extension(me): Extension<Identity>, Json(other): Json<serde_json::Value>) -> ApiResult<serde_json::Value> {
+    let (applied, manual) = st.profile_apply(&other, &me.user)?;
+    Ok(Json(json!({ "applied": applied, "manual": manual })))
 }
 
 /// Destek paketi: sorun bildirimi için durum dökümü (parola, token ve denetim günlüğü içermez). Yalnızca yönetici.

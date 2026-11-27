@@ -29,6 +29,22 @@ Her konuk canlı taşınamaz: UEFI ya da sanal TPM, takılı kurulum kalıbı, c
 
 **Sunucuyu bakım için boşaltma:** `redox maintenance on --evacuate <eş>` (ya da *Küme* sayfasında eşin yanındaki *Konuklarımı Buraya Boşalt*) bu sunucuyu bakım kipine alır ve çalışan sanal makinelerini teker teker, kapatmadan eşe taşır. Canlı taşınamayan konuklar yerinde kalır; onları kapatmak için `--drain` ekleyin (bakım bitince yeniden başlatılırlar). Taşımayı eş yürüttüğü için eşin kendi `--peers` dosyasında bu sunucu tanımlı olmalıdır; adresinden tanınamıyorsa oradaki adını `--as` ile verin. Taşınan konuklar bakım bitince eşte çalışmayı sürdürür. Birini geri getirmek için bu sunucudan *Canlı Taşı* kullanın: konuk aynı kimlikle döner ve geride kalan kapalı kopyanın yerini alır (yedekleri ona bağlı kalır). Elle başlatılmış bir kopya ise kendi başına bir konuk sayılır ve üzerine yazılmaz. İki sunucu arasında sahte QEMU ile sınandı; alttaki taşıma, gerçek QEMU'da sınananla aynıdır.
 
+## Sunucu profili
+
+Profil, bir sunucunun yönetim ayarlarının bir dosyadaki halidir; birkaç sunucuyu aynı düzende tutmak içindir:
+
+```
+redox profile export > profil.json      # örnek alınan sunucuda
+redox profile diff profil.json          # başka bir sunucuda: ne farklı?
+redox profile apply profil.json         # havuzları ve yedek işlerini eşitle
+```
+
+İki bölümü vardır. **Seçenekler**, hizmetin başlatma seçenekleri ve sunucunun yapabildikleridir (sürücü, güvenlik
+duvarı, UEFI, dört göz, depolama alanları, taşıma kapıları vb.); hizmet çalışırken değişmezler, bu yüzden yalnızca
+karşılaştırılır ve fark birim dosyasında elle düzeltilir. **Havuzlar** ve **yedek işleri** durumda tutulur ve
+uygulanır: profildekiler eklenir ya da güncellenir, burada olup profilde olmayanlara dokunulmaz (listelenir). Profil
+kullanıcıları, token'ları ve eş sunucu adreslerini taşımaz.
+
 Kendiliğinden devralma için aşağıya bakın.
 
 ## Çoğaltma (yedek kopya)

@@ -18,6 +18,7 @@ mod guest;
 mod hardware;
 mod netguard;
 mod observe;
+mod profile;
 mod remote;
 mod replica;
 mod schedule;

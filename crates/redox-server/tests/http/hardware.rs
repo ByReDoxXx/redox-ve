@@ -368,3 +368,59 @@ pub(super) async fn lockdown_refuses_every_change_until_an_admin_lifts_it() {
     let saved: redox_core::Cluster = serde_json::from_value(serde_json::to_value(state.snapshot()).unwrap()).unwrap();
     assert!(saved.lockdown);
 }
+
+// ---------- Sunucu profili ----------
+
+#[tokio::test]
+pub(super) async fn a_server_profile_is_exported_compared_and_applied() {
+    let (app, state) = setup();
+    state.pool_put(redox_core::Pool { name: "web".into(), cores: 64, memory_mb: 0, disk_gb: 0, guests: 0 }).unwrap();
+    let (status, own) = api(&app, get("/api/v1/profile")).await;
+    assert_eq!((status, own["kind"].as_str()), (StatusCode::OK, Some("redox-profile")));
+    assert!(own["options"]["driver"].is_string() && own["pools"][0]["name"] == "web" && own["jobs"].is_array(), "{own}");
+    let text = own.to_string();
+    assert!(!text.contains("password") && !text.contains("\"token\"") && !text.contains("last_run"), "profil gizli bilgi ve tur durumu taşımaz: {text}");
+
+    // Kendi profiliyle fark yoktur.
+    let (status, v) = api(&app, post_json("/api/v1/profile/diff", &own)).await;
+    assert_eq!((status, v["differences"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "{v}");
+
+    // Başka bir sunucunun profili: farklar adlarıyla listelenir; karşılaştırma bir şey değiştirmez.
+    let mut other = own.clone();
+    other["server"] = json!("ankara");
+    other["options"]["four_eyes"] = json!(true);
+    other["pools"] = json!([{ "name": "web", "cores": 32, "memory_mb": 0, "disk_gb": 0, "guests": 0 }, { "name": "veri", "cores": 8, "memory_mb": 0, "disk_gb": 0, "guests": 0 }]);
+    other["jobs"] = json!([{ "name": "gece", "time": "02:30", "days": 127, "tags": [], "keep": 7, "gfs": own["jobs"].get(0).map(|j| j["gfs"].clone()).unwrap_or(json!({})), "lock_days": 0, "until": null, "verify": true }]);
+    let (_, v) = api(&app, post_json("/api/v1/profile/diff", &other)).await;
+    let lines: Vec<String> = v["differences"].as_array().unwrap().iter().map(|l| l.as_str().unwrap().to_string()).collect();
+    for part in ["seçenek four_eyes", "havuz web: farklı", "havuz veri: burada yok", "yedek işi gece: burada yok"] {
+        assert!(lines.iter().any(|l| l.contains(part)), "{part}: {lines:?}");
+    }
+    assert_eq!(state.snapshot().pools.len(), 1);
+
+    // Uygulama: havuzlar ve yedek işleri gelir; çalışırken değişmeyen seçenek "elle" listesinde kalır.
+    let (status, v) = api(&app, post_json("/api/v1/profile/apply", &other)).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let applied: Vec<&str> = v["applied"].as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect();
+    assert_eq!(applied, ["havuz web", "havuz veri", "yedek işi gece"]);
+    assert!(v["manual"].as_array().unwrap().iter().any(|l| l.as_str().unwrap().contains("four_eyes")) && v["manual"].as_array().unwrap().len() == 1, "{v}");
+    let c = state.snapshot();
+    assert_eq!((c.pools.iter().find(|p| p.name == "web").unwrap().cores, c.pools.len(), c.jobs.iter().find(|j| j.name == "gece").map(|j| (j.time.as_str(), j.verify))), (32, 2, Some(("02:30", true))));
+    assert!(c.tasks[0].command.starts_with("profile apply ankara (3 "), "{}", c.tasks[0].command);
+    // İkinci kez uygulamak bir şey değiştirmez.
+    let (_, again) = api(&app, post_json("/api/v1/profile/apply", &other)).await;
+    assert_eq!(again["applied"].as_array().map(Vec::len), Some(0));
+
+    // Profil olmayan gövde, bozuk kayıt ve yetkisiz kullanıcı reddedilir; bozuk profil yarım uygulanmaz.
+    let (status, v) = api(&app, post_json("/api/v1/profile/apply", &json!({ "pools": [] }))).await;
+    assert!(status == StatusCode::UNPROCESSABLE_ENTITY && v["error"].as_str().unwrap().contains("profili değil"), "{v}");
+    let mut broken = other.clone();
+    broken["pools"] = json!([{ "name": "yeni", "cores": 1, "memory_mb": 0, "disk_gb": 0, "guests": 0 }]);
+    broken["jobs"] = json!([{ "ad": "eksik" }]);
+    assert_eq!(api(&app, post_json("/api/v1/profile/apply", &broken)).await.0, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(!state.snapshot().pools.iter().any(|p| p.name == "yeni"), "bozuk profilin geçerli kısmı da uygulanmaz");
+    for path in ["/api/v1/profile/diff", "/api/v1/profile/apply"] {
+        let viewer = as_viewer(Method::POST, path).header(CONTENT_TYPE, "application/json").body(Body::from(other.to_string())).unwrap();
+        assert_eq!(send(&app, viewer).await.0, StatusCode::FORBIDDEN, "{path}");
+    }
+}

@@ -29,6 +29,22 @@ Not every guest can be moved live: UEFI or virtual TPM, an attached installation
 
 **Evacuating a server for maintenance:** `redox maintenance on --evacuate <peer>` (or *Evacuate My Guests Here* next to the peer on the *Cluster* page) puts this server into maintenance mode and moves its running virtual machines to the peer one by one, without stopping them. Guests that cannot be migrated live stay where they are; add `--drain` to stop those instead (they start again when maintenance ends). The peer does the pulling, so it must list this server in its own `--peers` file; if it cannot be recognised by address, give the name it has there with `--as`. The moved guests keep running on the peer when maintenance ends. To bring one back, use *Migrate Live* from this server: the guest returns with the same ID and replaces the stopped copy that was left behind (its backups stay attached). A left-behind copy that has been started by hand is treated as a guest in its own right and is never replaced. Tested with fake QEMU between two servers; the migration underneath is the same one tested on real QEMU.
 
+## Server profile
+
+A profile is one server's management settings in a file, so that several servers can be kept alike:
+
+```
+redox profile export > profile.json     # on the reference server
+redox profile diff profile.json         # on another server: what differs?
+redox profile apply profile.json        # bring pools and backup jobs in line
+```
+
+It has two parts. **Options** are the service's start options and what the server can do (driver, firewall, UEFI,
+four-eyes, storages, migration ports and so on); they do not change while the service runs, so they are only compared,
+and a difference has to be fixed in the unit file by hand. **Pools** and **backup jobs** live in the state and are
+applied: what the profile has is added or updated, and what exists here but not in the profile is left alone (and
+listed). The profile carries no users, tokens or peer addresses.
+
 For automatic failover see below.
 
 ## Replication (standby copy)

@@ -117,6 +117,8 @@ Kullanıcılar (kullanıcı dosyasını doğrudan düzenler; --users DOSYA ya da
   redox media fetch <https-adresi> [sha256]    (sunucu dosyayı kendisi indirir)
         OVA dışa aktarma: curl -H 'Authorization: Bearer TOKEN' -o vm.ova REDOX_URL/api/v1/guests/KIMLIK/export
         yüklemek için: curl -T debian.iso -H 'Authorization: Bearer TOKEN' REDOX_URL/api/v1/media/debian.iso
+  redox profile export > profil.json | diff <dosya> | apply <dosya>   (sunucu profili: ayarları dışa alır, başka
+        sunucununkiyle karşılaştırır, havuzları ve yedek işlerini uygular)
   redox support > destek.json     (destek paketi: sorun bildirimi için durum dökümü; parola ve token içermez)
   redox tty [--once]              (sunucunun konsolundaki durum ekranı: adres, hizmet, konuklar; Enter ile oturum açılır)
   redox peer list                 (birleşik görünümdeki eş sunucular)
@@ -158,6 +160,7 @@ pub enum View {
     /// Bakım kipi durumu ya da değişikliği.
     Maintenance,
     Lockdown,
+    Profile,
     /// Yanıt olduğu gibi (girintili JSON) yazılır.
     Json,
     /// Hazır imaj kataloğu.
@@ -466,6 +469,12 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["storage", "list"] => get("/storage", View::Storage),
         ["peer", "list"] => get("/peers", View::Peers),
         ["support"] => get("/support", View::Json),
+        ["profile", "export"] => get("/profile", View::Json),
+        ["profile", verb @ ("diff" | "apply"), file] => {
+            let text = std::fs::read_to_string(file).map_err(|e| format!("{file} okunamadı: {e}"))?;
+            let profile: Value = serde_json::from_str(&text).map_err(|e| format!("{file} bir profil dosyası değil: {e}"))?;
+            req("POST", format!("/profile/{verb}"), Some(profile), View::Profile)
+        }
         ["peer", "migrate", peer, id] => req("POST", format!("/peers/{peer}/migrate/{}", vmid(id)?), None, View::Done("canlı taşıma başladı; sonuç: redox task list")),
         ["peer", "import", peer, id] => req("POST", format!("/peers/{peer}/import/{}", vmid(id)?), None, View::Done("kopyalama başladı; sonuç: redox task list")),
         ["task", "list"] => get("/tasks", View::Tasks),
@@ -629,6 +638,20 @@ pub fn render(view: View, v: &Value) -> String {
             "çoğaltma yok",
         ),
         View::Json => serde_json::to_string_pretty(v).unwrap_or_default(),
+        View::Profile => {
+            let lines = |key: &str| v[key].as_array().map(|all| all.iter().filter_map(Value::as_str).map(|l| format!("  {l}")).collect::<Vec<_>>()).unwrap_or_default();
+            if v["differences"].is_array() {
+                let all = lines("differences");
+                if all.is_empty() { "fark yok: bu sunucu profille aynı".to_string() } else { format!("{} fark:\n{}", all.len(), all.join("\n")) }
+            } else {
+                let (applied, manual) = (lines("applied"), lines("manual"));
+                let mut out = if applied.is_empty() { "uygulanacak değişiklik yoktu".to_string() } else { format!("uygulandı:\n{}", applied.join("\n")) };
+                if !manual.is_empty() {
+                    out.push_str(&format!("\nelle düzeltilecek (çalışırken değişmez ya da profilde yok):\n{}", manual.join("\n")));
+                }
+                out
+            }
+        }
         View::Lockdown => if v["on"].as_bool() == Some(true) { "kilit kipi açık: değişiklik yapılamaz" } else { "kilit kipi kapalı" }.to_string(),
         View::Maintenance => match (v["on"].as_bool() == Some(true), v["guests"].as_u64(), v["resume"].as_array().map(Vec::len)) {
             (true, _, _) if v["evacuating"].is_u64() => format!("bakım kipi açık; {} sanal makine kapatılmadan {} sunucusuna taşınıyor (sonuç: redox task list)", v["evacuating"], s(v, "peer")),
@@ -850,6 +873,18 @@ mod tests {
         assert!(render(View::Peers, &json!([])).contains("tanımlı değil"));
         assert_eq!(parse(&["peer".to_string(), "list".to_string()]).unwrap().path, "/peers");
         assert_eq!(parse(&args("support")).unwrap().path, "/support");
+        assert_eq!(parse(&args("profile export")).unwrap().path, "/profile");
+        let file = std::env::temp_dir().join(format!("redox-profil-{}.json", std::process::id()));
+        std::fs::write(&file, r#"{"kind":"redox-profile","options":{}}"#).unwrap();
+        let diff = parse(&["profile".to_string(), "diff".to_string(), file.display().to_string()]).unwrap();
+        assert_eq!((diff.method, diff.path.as_str(), diff.body.unwrap()["kind"].as_str().map(str::to_string)), ("POST", "/profile/diff", Some("redox-profile".to_string())));
+        std::fs::write(&file, "bozuk").unwrap();
+        assert!(parse(&["profile".to_string(), "apply".to_string(), file.display().to_string()]).unwrap_err().contains("profil dosyası değil"));
+        std::fs::remove_file(&file).unwrap();
+        assert!(parse(&args("profile diff /yok/dosya.json")).unwrap_err().contains("okunamadı"));
+        assert_eq!(render(View::Profile, &json!({"differences": []})), "fark yok: bu sunucu profille aynı");
+        assert_eq!(render(View::Profile, &json!({"differences": ["a", "b"]})), "2 fark:\n  a\n  b");
+        assert!(render(View::Profile, &json!({"applied": ["havuz web"], "manual": ["seçenek x"]})).contains("uygulandı:\n  havuz web\nelle düzeltilecek"));
         assert_eq!(render(View::Json, &json!({"a": 1})), "{\n  \"a\": 1\n}");
         let migrate = parse(&args("peer migrate ankara 103")).unwrap();
         assert_eq!((migrate.method, migrate.path.as_str(), migrate.body), ("POST", "/peers/ankara/migrate/103", None));
