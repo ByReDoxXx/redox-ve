@@ -598,8 +598,11 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
 
    ```bash
    echo "allow vmbr0" | sudo tee -a /etc/qemu/bridge.conf
-   sudo chmod u+s /usr/lib/qemu/qemu-bridge-helper
+   sudo dpkg-statoverride --update --add root redox 4750 /usr/lib/qemu/qemu-bridge-helper
    ```
+
+   Yardımcı kök yetkisiyle çalışır; bu komut onu yalnızca `redox` grubuna açar, böylece sunucudaki öbür hesaplar
+   kendilerini konuk ağlarına bağlayamaz. (Sunucuyu başka bir hesapla çalıştırıyorsanız onun grubunu yazın.)
 
 3. Köprü ve konteyner destekli birimi kullanın (sandbox'ı daha gevşektir; nedenleri dosyada):
 

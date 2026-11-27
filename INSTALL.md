@@ -495,8 +495,11 @@ What it does not do yet:
 
    ```bash
    echo "allow vmbr0" | sudo tee -a /etc/qemu/bridge.conf
-   sudo chmod u+s /usr/lib/qemu/qemu-bridge-helper
+   sudo dpkg-statoverride --update --add root redox 4750 /usr/lib/qemu/qemu-bridge-helper
    ```
+
+   The helper runs with root rights; this lets only the `redox` group use it, so other accounts on the server
+   cannot attach themselves to guest networks. (Running the server under another account? Use its group.)
 
 3. Use the unit with bridge and container support (its sandbox is looser; the reasons are in the file):
 

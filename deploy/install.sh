@@ -23,6 +23,21 @@ say() { if [ "$LANGUAGE" = en ]; then echo "==> $2"; else echo "==> $1"; fi; }
 die() { if [ "$LANGUAGE" = en ]; then echo "error: $2" >&2; else echo "hata: $1" >&2; fi; exit 1; }
 run() { if [ "$DRY_RUN" = 1 ]; then echo "+ $*"; else "$@"; fi; }
 
+# QEMU'nun köprü yardımcısı kök yetkisiyle çalışır ve çağırana izinli köprülerde bir ağ ucu açar. Yalnızca
+# redox grubu çalıştırabilir: sunucudaki başka bir hesap kendini konuk ağlarına bağlayamaz. dpkg-statoverride
+# izni paket güncellemelerinde de korur.
+restrict_bridge_helper() {
+    HELPER=/usr/lib/qemu/qemu-bridge-helper
+    if [ -n "$ROOT" ] || [ ! -f "$HELPER" ]; then return 0; fi
+    if command -v dpkg-statoverride >/dev/null 2>&1; then
+        if dpkg-statoverride --list "$HELPER" >/dev/null 2>&1; then run dpkg-statoverride --remove "$HELPER"; fi
+        run dpkg-statoverride --update --add root redox 4750 "$HELPER"
+    else
+        run chown root:redox "$HELPER"
+        run chmod 4750 "$HELPER"
+    fi
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --binary) BINARY="$2"; shift 2 ;;
@@ -115,7 +130,7 @@ else
     grep -qxF "include /etc/qemu/redox-vds.conf" "$QEMU_CONF" 2>/dev/null || echo "include /etc/qemu/redox-vds.conf" >> "$QEMU_CONF"
     chmod 0644 "$QEMU_CONF"
 fi
-[ -n "$ROOT" ] || [ ! -f /usr/lib/qemu/qemu-bridge-helper ] || run chmod u+s /usr/lib/qemu/qemu-bridge-helper
+restrict_bridge_helper
 
 if [ "$TLS" = 1 ]; then
     CADDY="$ROOT/etc/caddy/Caddyfile"
@@ -192,7 +207,7 @@ if [ -n "$BRIDGE_PORT" ]; then
     CONF="$ROOT/etc/qemu/bridge.conf"
     run mkdir -p "$(dirname "$CONF")"
     if [ "$DRY_RUN" = 1 ]; then echo "+ allow vmbr0 >> $CONF"; elif ! grep -qxF "allow vmbr0" "$CONF" 2>/dev/null; then echo "allow vmbr0" >> "$CONF"; fi
-    [ -n "$ROOT" ] || [ ! -f /usr/lib/qemu/qemu-bridge-helper ] || run chmod u+s /usr/lib/qemu/qemu-bridge-helper
+    restrict_bridge_helper
 fi
 
 # ---------------------------------------------------------------- açılış ekranı ve ilk yönetici
