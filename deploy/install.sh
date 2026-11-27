@@ -2,10 +2,10 @@
 # RedoX VE kurulum betiği.
 #
 # Yeni kurulmuş bir Debian 12+/Ubuntu 22.04+ sunucuyu RedoX VE sunucusuna çevirir: paketleri kurar, hizmet
-# kullanıcısını ve systemd birimini hazırlar, https://<adres>:8006 üzerinde (kendinden imzalı sertifikayla)
-# yayına alır ve konsol açılış ekranına panelin adresini yazar. Kök olarak çalıştırılır:
+# kullanıcısını ve systemd birimini hazırlar ve konsol açılış ekranına panelin adresini yazar. Panel yalnızca
+# yerel adreste dinler; dışarıya Tailscale açar (https://<makine>.<ağ>.ts.net). Kök olarak çalıştırılır:
 #
-#   sudo sh deploy/install.sh --binary target/release/redox [--bridge eth0]
+#   sudo sh deploy/install.sh --binary target/release/redox [--bridge eth0] [--no-tailscale]
 #
 # Kurulum ISO'su aynı betiği --from-installer ile çağırır (deploy/iso/).
 set -eu
@@ -15,7 +15,7 @@ BINARY=""
 BRIDGE_PORT=""
 FROM_INSTALLER=0
 DRY_RUN=0
-TLS=1
+TAILSCALE=1
 ROOT="${REDOX_INSTALL_ROOT:-}"   # sınama için: dosyalar bu dizinin altına yazılır
 LANGUAGE="${REDOX_LANG:-tr}"
 
@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
         --binary) BINARY="$2"; shift 2 ;;
         --bridge) BRIDGE_PORT="$2"; shift 2 ;;
         --lang) LANGUAGE="$2"; shift 2 ;;
-        --no-tls) TLS=0; shift ;;
+        --no-tailscale|--no-tls) TAILSCALE=0; shift ;;
         --from-installer) FROM_INSTALLER=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -64,7 +64,6 @@ done
 
 # ---------------------------------------------------------------- paketler
 PACKAGES="qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools lxc lxc-templates uidmap acl rsync nftables iproute2 bridge-utils ca-certificates dnsmasq-base"
-[ "$TLS" = 1 ] && PACKAGES="$PACKAGES caddy"
 say "Paketler kuruluyor" "Installing packages"
 if [ -z "$ROOT" ]; then
     export DEBIAN_FRONTEND=noninteractive
@@ -96,32 +95,59 @@ for bridge in lxcbr0 vmbr0; do
 done
 
 # ---------------------------------------------------------------- systemd birimi
-# Panel yalnızca yerel adreste dinler; dışarıya TLS ile Caddy açar.
+# Panel yalnızca yerel adreste dinler; dışarıya TLS ile Tailscale açar ("tailscale serve"). tailscaled kök olarak
+# çalışır: panel istemci adresini (X-Forwarded-For) yalnızca kökün açtığı bağlantıdan alır (--proxy-uid 0), böylece
+# sunucudaki başka bir hesap yerel adrese bağlanıp uydurma bir adresle giriş kilidini aşamaz.
 LISTEN=127.0.0.1:8006
-[ "$TLS" = 1 ] && LISTEN=127.0.0.1:8005
 UNIT="$ROOT/etc/systemd/system/redox.service"
 if [ "$DRY_RUN" = 1 ]; then
     echo "+ write $UNIT (--addr $LISTEN)"
 else
     mkdir -p "$(dirname "$UNIT")"
-    sed "s|--addr 127.0.0.1:8006|--addr $LISTEN|" "$HERE/redox-host.service" > "$UNIT"
+    if [ "$TAILSCALE" = 1 ]; then
+        sed 's|^    --behind-tls-proxy$|    --behind-tls-proxy --proxy-uid 0|' "$HERE/redox-host.service" > "$UNIT"
+    else
+        # Vekilsiz kurulum: panel yalnızca sunucunun kendisinden ya da SSH tüneliyle (düz HTTP) açılır.
+        sed -e 's|^\(    --data-dir /var/lib/redox\) \\$|\1|' -e '/^    --behind-tls-proxy$/d' "$HERE/redox-host.service" > "$UNIT"
+    fi
 fi
 
-# Vekil anahtarı: Caddy her isteğe bu değeri ekler; panel istemci adresini (X-Forwarded-For) yalnızca bu değeri
-# taşıyan istekte vekilden alır. Böylece sunucudaki başka bir hesap yerel adrese doğrudan bağlanıp uydurma bir
-# adresle giriş kilidini aşamaz. Anahtarı yalnızca root, redox ve (Caddyfile içinde) caddy okur.
-PROXY_KEY="$ROOT/etc/redox/proxy.key"
-if [ "$TLS" = 1 ]; then
+# Tailscale'i bu betik kurmaz (kendi paket kaynağı vardır ve cihazı ağa eklemek sizin onayınızı ister). Aşağıdaki
+# yardımcı, "tailscale up" yapıldıktan sonra paneli yayına alır.
+HELPER_TS="$ROOT/usr/local/sbin/redox-tailscale"
+if [ "$TAILSCALE" = 1 ]; then
     if [ "$DRY_RUN" = 1 ]; then
-        echo "+ write $PROXY_KEY; $UNIT += --proxy-secret-file"
+        echo "+ write $HELPER_TS"
     else
-        mkdir -p "$(dirname "$PROXY_KEY")"
-        if [ ! -s "$PROXY_KEY" ]; then
-            (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$PROXY_KEY")
-        fi
-        chmod 0640 "$PROXY_KEY"
-        [ -n "$ROOT" ] || chown root:redox "$PROXY_KEY"
-        sed -i 's|--behind-tls-proxy$|--behind-tls-proxy --proxy-secret-file /etc/redox/proxy.key|' "$UNIT"
+        mkdir -p "$(dirname "$HELPER_TS")"
+        cat > "$HELPER_TS" <<'EOF'
+#!/bin/sh
+# RedoX VE: paneli yalnızca Tailscale ağınıza https ile açar. Panel internete açılmaz ("tailscale funnel"
+# KULLANILMAZ). Ayar kalıcıdır; yeniden başlatınca sürer. Kapatmak için: tailscale serve --https=443 off
+set -eu
+[ "$(id -u)" = 0 ] || { echo "kök olarak çalıştırın / run as root (sudo)" >&2; exit 1; }
+if ! command -v tailscale >/dev/null 2>&1; then
+    echo "Tailscale kurulu değil. Kurun / install it: https://tailscale.com/download/linux" >&2
+    exit 1
+fi
+if ! tailscale status >/dev/null 2>&1; then
+    echo "Bu cihaz Tailscale ağına bağlı değil. Önce / first: sudo tailscale up" >&2
+    exit 1
+fi
+# Tailnet'te HTTPS sertifikaları açık değilse Tailscale burada bir onay adresi gösterir.
+tailscale serve --bg --https=443 http://127.0.0.1:8006
+url=$(tailscale serve status 2>/dev/null | grep -o 'https://[A-Za-z0-9.-]*\.ts\.net' | head -n 1 || true)
+if [ -z "$url" ]; then
+    echo "Panel adresi okunamadı; bakın / check: tailscale serve status" >&2
+    exit 1
+fi
+mkdir -p /etc/redox
+printf '%s\n' "$url" > /etc/redox/panel.url
+chmod 0644 /etc/redox/panel.url
+[ ! -x /usr/local/sbin/redox-banner ] || /usr/local/sbin/redox-banner
+echo "Panel: $url"
+EOF
+        chmod 0755 "$HELPER_TS"
     fi
 fi
 
@@ -149,42 +175,6 @@ else
     chmod 0644 "$QEMU_CONF"
 fi
 restrict_bridge_helper
-
-if [ "$TLS" = 1 ]; then
-    CADDY="$ROOT/etc/caddy/Caddyfile"
-    if [ "$DRY_RUN" = 1 ]; then
-        echo "+ write $CADDY"
-    else
-        mkdir -p "$(dirname "$CADDY")"
-        cat > "$CADDY" <<'EOF'
-# RedoX VE: panel https://<sunucu adresi>:8006 üzerinde, kendinden imzalı sertifikayla.
-# Alan adınız varsa bu dosyayı deploy/Caddyfile ile değiştirin (Let's Encrypt sertifikası).
-{
-	auto_https disable_redirects
-	# Tarayıcı adrese IP ile bağlanınca sunucu adı göndermez; sertifika bu adla verilir.
-	default_sni redox.local
-	# Sertifika yalnızca sunucunun kendi adı ve adresleri için üretilir (panel yanıtlar): yoksa her bağlantıda
-	# uydurulan bir ad için yeni sertifika üretilip disk doldurulabilirdi.
-	on_demand_tls {
-		ask http://127.0.0.1:8005/tls-ask
-	}
-}
-
-https://:8006 {
-	tls internal {
-		on_demand
-	}
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:8005 {
-		header_up X-Redox-Proxy REDOX_PROXY_KEY
-	}
-}
-EOF
-        sed -i "s|REDOX_PROXY_KEY|$(cat "$PROXY_KEY")|" "$CADDY"
-        chmod 0640 "$CADDY"
-        if getent group caddy >/dev/null 2>&1; then chgrp caddy "$CADDY"; fi
-    fi
-fi
 
 # ---------------------------------------------------------------- köprü (isteğe bağlı)
 # /etc/network/interfaces içindeki arayüzü vmbr0 köprüsüne çevirir. Yalnızca ifupdown kullanan sistemlerde
@@ -251,16 +241,24 @@ else
 # RedoX VE: konsol açılış ekranına panelin adresini yazar.
 address=$(ip -4 -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
 [ -n "$address" ] || address=$(hostname -I 2>/dev/null | awk '{print $1}')
-port=8006
-scheme=https
-# TLS'siz kurulumda panel yalnızca sunucunun kendisinden (ya da SSH tüneliyle) açılır.
-if grep -q -- '--addr 127.0.0.1:8006' /etc/systemd/system/redox.service 2>/dev/null; then scheme=http; address=127.0.0.1; fi
+# Tailscale ile yayındaysa adresi redox-tailscale yazmıştır.
+url=""
+[ ! -r /etc/redox/panel.url ] || url=$(head -n 1 /etc/redox/panel.url)
 {
     echo
     echo "  RedoX VE"
     echo
+    if [ -n "$url" ]; then
+        echo "  Panel / Web interface:  $url  (Tailscale)"
+    else
+        # Panel yalnızca sunucunun kendisinde dinler.
+        echo "  Panel / Web interface:  http://127.0.0.1:8006  (yalnizca bu sunucudan / this server only)"
+        if [ -x /usr/local/sbin/redox-tailscale ]; then
+            echo "  Tailscale ile acmak icin / to publish:  sudo tailscale up && sudo redox-tailscale"
+        fi
+    fi
     if [ -n "$address" ]; then
-        echo "  Panel / Web interface:  $scheme://$address:$port"
+        echo "  Sunucu adresi / Server address:  $address"
     else
         echo "  Ag adresi alinamadi / No network address yet."
     fi
@@ -299,7 +297,6 @@ ExecStart=/usr/local/sbin/redox-firstboot
 WantedBy=multi-user.target
 EOF
     # Fiziksel konsolda (tty1) olağan oturum açma istemi yerine canlı durum ekranı durur; Enter ile oturum açılır.
-    CONSOLE_SCHEME=https; [ "$TLS" = 1 ] || CONSOLE_SCHEME=http
     cat > "$ROOT/etc/systemd/system/redox-console.service" <<EOF
 [Unit]
 Description=RedoX VE konsol durum ekranı
@@ -309,7 +306,7 @@ Before=getty.target
 ConditionPathExists=/dev/tty1
 
 [Service]
-ExecStart=/usr/local/bin/redox tty --listen $LISTEN --scheme $CONSOLE_SCHEME --port 8006 --state /var/lib/redox/state.json
+ExecStart=/usr/local/bin/redox tty --listen $LISTEN --scheme http --port 8006 --url-file /etc/redox/panel.url --state /var/lib/redox/state.json
 StandardInput=tty
 StandardOutput=tty
 TTYPath=/dev/tty1
@@ -346,7 +343,6 @@ fi
 run systemctl enable redox.service redox-firstboot.service redox-banner.service redox-console.service redox-net.service redox-net.path redox-health.timer redox-hostnet.service redox-hostnet.path
 # tty1'i durum ekranı kullanır; öbür sanal konsollarda (Alt+F2) olağan oturum açma durur.
 run systemctl disable getty@tty1.service
-[ "$TLS" = 0 ] || run systemctl enable caddy.service
 if [ "$FROM_INSTALLER" = 1 ]; then
     # Kurulum ortamında hizmetler başlatılmaz; ilk açılışta kendileri başlar.
     exit 0
@@ -359,8 +355,15 @@ fi
 run systemctl restart redox-firstboot.service
 run systemctl restart redox.service
 run systemctl restart redox-net.path redox-hostnet.path
-[ "$TLS" = 0 ] || run systemctl restart caddy.service
 run systemctl restart redox-banner.service
+if [ "$TAILSCALE" = 1 ]; then
+    if [ "$DRY_RUN" = 0 ] && command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+        say "Panel Tailscale ağınıza açılıyor" "Publishing the panel on your tailnet"
+        /usr/local/sbin/redox-tailscale || say "Tailscale ayarlanamadı; sonra: sudo redox-tailscale" "Tailscale could not be set up; later: sudo redox-tailscale"
+    else
+        say "Paneli açmak için Tailscale'i kurup bağlanın, sonra: sudo redox-tailscale" "To open the panel, install and connect Tailscale, then: sudo redox-tailscale"
+    fi
+fi
 [ "$DRY_RUN" = 1 ] || sed -n '/Panel/p' /etc/issue
 [ -z "$BRIDGE_PORT" ] || say "Köprünün devreye girmesi için sunucuyu yeniden başlatın" "Reboot the server to bring the bridge up"
 say "Kurulum bitti" "Installation finished"

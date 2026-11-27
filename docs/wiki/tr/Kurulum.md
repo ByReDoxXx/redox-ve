@@ -26,8 +26,10 @@ redox serve --addr 127.0.0.1:8006 --users /etc/redox/users.json \
   --driver qemu --data-dir /var/lib/redox --state /var/lib/redox/state.json
 ```
 
-Arayüz `http://127.0.0.1:8006` adresindedir. Dışarı açmak için önüne TLS sonlandıran bir vekil (Caddy) koyun ve
-`--behind-tls-proxy` ekleyin; ayrıntı KURULUM.md 5. bölümde.
+Arayüz `http://127.0.0.1:8006` adresindedir. Dışarıya Tailscale ile açın (panel yalnızca Tailscale ağınızdan,
+`https://<makine>.<ağ>.ts.net` adresinde açılır): hizmete `--behind-tls-proxy --proxy-uid 0` ekleyip
+`sudo tailscale serve --bg --https=443 http://127.0.0.1:8006` çalıştırın (`install.sh` ile kurduysanız
+`sudo redox-tailscale`). `tailscale funnel` kullanmayın. Ayrıntı KURULUM.md 5. bölümde.
 
 ## Sık kullanılan hizmet seçenekleri
 
@@ -41,7 +43,7 @@ Arayüz `http://127.0.0.1:8006` adresindedir. Dışarı açmak için önüne TLS
 | `--peers DOSYA` | Eş sunucular ([Birden çok sunucu](Birden-Cok-Sunucu.md)). |
 | `--firewall` | Konuk güvenlik duvarı ve ağ kartı koruması (nftables, CAP_NET_ADMIN). |
 | `--four-eyes` | Silme işlemleri ve yönetici yapma ikinci yöneticinin onayını bekler. |
-| `--proxy-secret-file DOSYA` | `--behind-tls-proxy` ile: istemci adresi yalnızca vekilin bu gizli değeri eklediği isteklerde vekilden alınır (`install.sh` kendisi kurar). |
+| `--proxy-uid UID` | `--behind-tls-proxy` ile: istemci adresi yalnızca bu kullanıcının açtığı bağlantıdan alınır. `tailscaled` için `0` (`install.sh` kendisi ekler). Yalnızca Linux. |
 | `--lang en` | Çerezi olmayan ziyaretçiye İngilizce arayüz ([Dil](Dil.md)). |
 | `--alert-webhook`, `--alert-email`, `--alert-ntfy`, `--alert-telegram` | Uyarı kanalları. |
 | `--backup-report 07:30`, `--backup-age-days 7`, `--backup-test-every 7@03:00` | Yedek raporu, korumasız konuk eşiği, zamanlanmış sınama. |

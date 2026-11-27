@@ -12,7 +12,8 @@ StateDirectoryMode=0700
 WorkingDirectory=/var/lib/redox
 UMask=0077
 
-# Yalnızca yerel arayüzde dinler; dış dünyaya TLS'li ters vekil (Caddy) açar.
+# Yalnızca yerel arayüzde dinler; dışarıya TLS ile Tailscale açar (tailscale serve). Tailscale ile birlikte
+# --behind-tls-proxy satırının sonuna --proxy-uid 0 ekleyin.
 ExecStart=/usr/local/bin/redox serve \
     --addr 127.0.0.1:8006 \
     --users /var/lib/redox/users.json \

@@ -37,8 +37,9 @@ sh deploy/iso/build-iso.sh --debian-iso debian-13.x.y-amd64-netinst.iso \
 sudo dd if=redox-ve.iso of=/dev/sdX bs=4M status=progress conv=fsync      # sdX: the USB stick
 ```
 
-When the server boots for the first time the console shows the panel's address (`https://<address>:8006`,
-self-signed certificate). The first administrator `admin` is created with a random password, stored only in
+When the server boots for the first time the console shows the server's address and how to publish the panel: install
+Tailscale and run `sudo tailscale up && sudo redox-tailscale` (section 5); the panel then opens at
+`https://<machine>.<tailnet>.ts.net`. The first administrator `admin` is created with a random password, stored only in
 `/root/redox-ilk-parola.txt`, readable by root. Change the password after the first login and delete the file. The
 machine needs internet access during installation (packages come from the Debian repository).
 
@@ -50,14 +51,14 @@ sudo sh deploy/install.sh --binary target/release/redox --bridge eth0 --lang en
 
 It does the same setup and asks you for the administrator password. Without `--bridge` no bridge is created (guests
 use NAT); the bridge is only set up on systems that use `/etc/network/interfaces` and comes up after a reboot.
-`--no-tls` leaves the panel on `127.0.0.1:8006` only. `--dry-run` prints what would be done without changing anything.
+`--no-tailscale` skips the Tailscale preparation and leaves the panel on `127.0.0.1:8006` only (SSH tunnel). `--dry-run` prints what would be done without changing anything.
 
 ### What was tested and what was not
 
 **Tested (Debian 13.8, in a virtual machine with KVM):** building the ISO, booting it with BIOS and installing
 without questions (about 7 minutes), package installation, creation of the administrator on first boot, the console
-banner, the `vmbr0` bridge getting an address, the panel answering on `https://<address>:8006` with a self-signed
-certificate. The whole life cycle of an Alpine container was also tried with real LXC on the same installation:
+banner, the `vmbr0` bridge getting an address, the panel answering (that run used the Caddy setup, which is no longer
+used; the Tailscale step has not been tried on a real machine). The whole life cycle of an Alpine container was also tried with real LXC on the same installation:
 create, start, getting an address, running a command, the memory limit, backup while running, restart, stop,
 snapshot and rollback, restore from backup, clone (with its own name and address) and delete.
 
@@ -82,7 +83,7 @@ need systemd 254 or later (Debian 13, Ubuntu 24.04).
 | Roles | `admin` does everything; `operator` runs the guests in its scope; `viewer` only reads (and cannot see the console). |
 | Audit | Logins, refused attempts and every state-changing request are written to `audit.log` and the audit page. |
 | API | `Authorization: Bearer <token>`. Tokens are stored only as SHA-256 digests. |
-| Network | The server does not terminate TLS and refuses to listen in plain HTTP outside 127.0.0.1. Caddy exposes it with TLS. |
+| Network | The server does not terminate TLS and refuses to listen in plain HTTP outside 127.0.0.1. Tailscale exposes it with TLS. |
 | Browser | JavaScript only on three pages: the live console, the container terminal and the security key step; every other page has `script-src 'none'`. On those pages only the server's own script runs (`script-src 'self'`, no inline script, no external source). Cross-site POSTs and cross-site console connections are refused, pages cannot be framed, HSTS. Fonts are embedded; a page makes no external request. |
 | Process | Unprivileged `redox` user, systemd sandbox, files `0600`. |
 
@@ -139,30 +140,55 @@ curl -s http://127.0.0.1:8006/healthz      # prints "ok"
 
 Logs, including logins and failed attempts: `journalctl -u redox -f`
 
-## 5. TLS: expose it with Caddy
+## 5. TLS: expose it with Tailscale
 
-Install Caddy from its official repository: <https://caddyserver.com/docs/install#debian-ubuntu-raspbian>
+The panel listens on `127.0.0.1` only. [Tailscale](https://tailscale.com) exposes it: the panel opens only from
+devices **on your tailnet**, at `https://<machine>.<tailnet>.ts.net`, with a valid certificate. You do not need to
+open any port to the internet or own a domain name.
+
+1. Install Tailscale following the official instructions: <https://tailscale.com/download/linux>
+2. Add the server to your tailnet (approve it at the address shown): `sudo tailscale up`
+3. In the Tailscale admin console, on the **DNS** page, enable MagicDNS and **HTTPS Certificates**. Machine names
+   that get certificates are published in public certificate transparency logs; keep secrets out of machine names.
+4. Publish the panel:
 
 ```bash
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
-sudo nano /etc/caddy/Caddyfile             # write your domain name
-sudo systemctl reload caddy
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8006
+tailscale serve status                     # shows the panel's address
 ```
 
-Firewall: leave only SSH, 80 and 443 open; **do not open 8006**.
+If you installed with `install.sh`, `sudo redox-tailscale` replaces step 4: it runs the same command and writes the
+address on the console screen. The setting persists; to turn it off: `sudo tailscale serve --https=443 off`.
+
+**Do not use `tailscale funnel`:** it opens the panel to the whole internet.
+
+The service line must carry `--behind-tls-proxy --proxy-uid 0` (`install.sh` adds it; when installing by hand, add
+`--proxy-uid 0` to the end of the `--behind-tls-proxy` line in `deploy/redox.service`). The panel then takes the
+client address only from connections opened by `tailscaled`, which runs as root; another account on the server cannot
+get around the login lockout with a made-up address.
+
+Firewall: the panel needs no open port, and **do not open 8006**. If you will use SSH over Tailscale only, you can
+restrict it to the `tailscale0` interface too (first check that you can get in over Tailscale):
 
 ```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 80,443/tcp
+sudo ufw allow in on tailscale0
 sudo ufw enable
 ```
 
-Open `https://redox.example.com` in a browser and sign in as `admin`.
+Open `https://<machine>.<tailnet>.ts.net` on a device in your tailnet and sign in as `admin`.
 
-### Without a domain name: SSH tunnel
+For security keys or single sign-on give that address: `--webauthn-origin https://<machine>.<tailnet>.ts.net`. Peer
+servers are added with these addresses too.
 
-Skip Caddy, delete the `--behind-tls-proxy` line in `deploy/redox.service`, and open a tunnel from your own
-computer; then use `http://127.0.0.1:8006`:
+If you set it up with Caddy before, turn Caddy off (`sudo systemctl disable --now caddy`) and run `install.sh` again.
+
+> The Tailscale setup has not been tried on a real server yet (including the WebSocket connections of the live console
+> and the terminal).
+
+### Without Tailscale: SSH tunnel
+
+Delete the `--behind-tls-proxy` line in `deploy/redox.service` (`install.sh --no-tailscale` does it itself), and open
+a tunnel from your own computer; then use `http://127.0.0.1:8006`:
 
 ```powershell
 ssh -L 8006:127.0.0.1:8006 user@server
@@ -227,7 +253,7 @@ What the driver offers, from the tabs of a guest page:
   socket in the data directory (`run/<id>.vnc`, no password, never on the network); the server bridges the
   browser's WebSocket to it after checking the session and the permission. Admins, and operators for guests in
   their scope, can open it; each session is written to the audit log as `console <id>` and lasts at most 12
-  hours. Caddy passes WebSockets by itself; with another proxy, forward the `Upgrade` headers. Guests started
+  hours. The proxy in front must pass WebSockets (not yet tried on a real installation with `tailscale serve`; with another proxy, forward the `Upgrade` headers). Guests started
   before this feature have no live console until they are stopped and started once.
 
 ### Power and scheduling
@@ -878,7 +904,7 @@ could not be released, with the movable policy all could. Not tried with Windows
   a TPM, clipboard and microphone in the live console, live migration of containers and
   moving them to another storage.
 - **The QEMU unit** (`redox-qemu.service`) uses a looser sandbox than the simulation unit; the file says why.
-- **What was verified where.** The systemd units and the Caddy configuration were not tried on a real server.
+- **What was verified where.** The systemd units and the Tailscale setup were not tried on a real server.
   Code and tests ran on Linux (WSL, Ubuntu). On real KVM with NAT networking: snapshots, rollback and backups of
   a running guest; creating from an image; UEFI, secure boot and TPM with real OVMF and swtpm; extra disks and
   a second card; vmdk import; incremental backups and their encrypted off-site copy; linked clones;

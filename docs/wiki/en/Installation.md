@@ -26,8 +26,10 @@ redox serve --addr 127.0.0.1:8006 --users /etc/redox/users.json \
   --driver qemu --data-dir /var/lib/redox --state /var/lib/redox/state.json --lang en
 ```
 
-The interface is at `http://127.0.0.1:8006`. To expose it, put a TLS-terminating proxy (Caddy) in front and add
-`--behind-tls-proxy`; see section 5 of INSTALL.md.
+The interface is at `http://127.0.0.1:8006`. Expose it with Tailscale (the panel opens only from your tailnet, at
+`https://<machine>.<tailnet>.ts.net`): add `--behind-tls-proxy --proxy-uid 0` to the service and run
+`sudo tailscale serve --bg --https=443 http://127.0.0.1:8006` (`sudo redox-tailscale` if you installed with
+`install.sh`). Do not use `tailscale funnel`. See section 5 of INSTALL.md.
 
 ## Common service options
 
@@ -41,7 +43,7 @@ The interface is at `http://127.0.0.1:8006`. To expose it, put a TLS-terminating
 | `--peers FILE` | Peer servers ([Multiple servers](Multiple-Servers.md)). |
 | `--firewall` | Guest firewall and NIC protection (nftables, CAP_NET_ADMIN). |
 | `--four-eyes` | Deletions and making someone an administrator wait for a second administrator. |
-| `--proxy-secret-file FILE` | With `--behind-tls-proxy`: the client address is taken from the proxy only on requests carrying this secret (`install.sh` sets it up). |
+| `--proxy-uid UID` | With `--behind-tls-proxy`: the client address is taken only from connections opened by this user. `0` for `tailscaled` (`install.sh` adds it). Linux only. |
 | `--lang en` | English interface for visitors without a language cookie ([Language](Language.md)). |
 | `--alert-webhook`, `--alert-email`, `--alert-ntfy`, `--alert-telegram` | Alert channels. |
 | `--backup-report 07:30`, `--backup-age-days 7`, `--backup-test-every 7@03:00` | Backup report, unprotected threshold, scheduled boot tests. |

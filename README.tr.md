@@ -236,18 +236,20 @@ Son komut `ok` yazar. Bu aşamada sunucu simülasyon sürücüsünü çalıştı
 
 ### 4. TLS
 
-RedoX VE TLS sonlandırmaz ve `127.0.0.1` dışında şifresiz HTTP dinlemeyi reddeder. Önüne
-[Caddy](https://caddyserver.com/docs/install) koyun:
+RedoX VE burada TLS sonlandırmaz ve `127.0.0.1` dışında şifresiz HTTP dinlemeyi reddeder. Dışarıya
+[Tailscale](https://tailscale.com/download/linux) ile açın: panel yalnızca kendi Tailscale ağınızdan,
+`https://<makine>.<ağ>.ts.net` adresinde açılır.
 
 ```bash
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
-sudo nano /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-sudo ufw allow OpenSSH && sudo ufw allow 80,443/tcp && sudo ufw enable
+sudo tailscale up
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8006
 ```
 
-8006 numaralı kapıyı açmayın. Alan adınız yoksa Caddy'yi atlayın, hizmet dosyasından `--behind-tls-proxy`
-satırını silin ve SSH tüneli kullanın: `ssh -L 8006:127.0.0.1:8006 kullanici@sunucu`.
+Önce Tailscale yönetim panelinde MagicDNS ve HTTPS sertifikaları açık olmalı. Hizmet satırındaki
+`--behind-tls-proxy` yanına `--proxy-uid 0` ekleyin (`install.sh` kendisi ekler). `tailscale funnel` kullanmayın:
+paneli internete açar. 8006 numaralı kapıyı açmayın. Tailscale kullanmayacaksanız hizmet dosyasından
+`--behind-tls-proxy` satırını silin ve SSH tüneli kullanın: `ssh -L 8006:127.0.0.1:8006 kullanici@sunucu`.
+Ayrıntı: [KURULUM.md](KURULUM.md) 5. bölüm.
 
 ### 5. Gerçek sanal makineler
 
@@ -358,7 +360,7 @@ döndürür; sonucu `/api/v1/tasks/{id}` adresinden okursunuz.
 crates/
   redox-core/     Alan modeli ve kurallar. Girdi/çıktı yok, async yok.
   redox-server/   `redox` programı: HTTP sunucusu, sürücüler, komut satırı.
-deploy/           systemd birimleri ve bir Caddyfile.
+deploy/           systemd birimleri ve kurulum betiği.
 docs/img/         Bu belgedeki ekran görüntüleri.
 KURULUM.md        Ayrıntılı kurulum ve işletim kılavuzu.
 ```
@@ -491,7 +493,7 @@ sanallaştırma, kaynak ölçümü, sınama kapısı yönlendirmesi, kopya hedef
 sanal makinenin iki sunucu arasında çoğaltılması, sunucu yeniden başlatılırken bakım kipi, salt okunur token ve
 API hız sınırı.
 
-Gerçek bir sunucuda henüz doğrulanmayanlar: systemd birimleri ve Caddy ayarı, köprü ağı, LXC
+Gerçek bir sunucuda henüz doğrulanmayanlar: systemd birimleri ve Tailscale ayarı, köprü ağı, LXC
 konteynerleri, konuk güvenlik duvarı ve ağ kartı korumasının trafik altındaki davranışı, dinamik belleğin ve
 sınama denetimlerinin ve konuk içi disk ölçümünün gerçek bir konuk işletim sistemiyle çalışması, gerçek bir
 köprüde ağ ölçümü, gerçek ntfy ve Telegram, gerçek bir S3 sağlayıcısı, gerçek bir SMTP ya da OpenID Connect

@@ -235,18 +235,19 @@ real and shows a sample cluster.
 
 ### 4. TLS
 
-RedoX VE does not terminate TLS and refuses to listen in plain HTTP on anything but `127.0.0.1`. Put
-[Caddy](https://caddyserver.com/docs/install) in front of it:
+RedoX VE does not terminate TLS here and refuses to listen in plain HTTP on anything but `127.0.0.1`. Expose it with
+[Tailscale](https://tailscale.com/download/linux): the panel opens only from your own tailnet, at
+`https://<machine>.<tailnet>.ts.net`.
 
 ```bash
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
-sudo nano /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-sudo ufw allow OpenSSH && sudo ufw allow 80,443/tcp && sudo ufw enable
+sudo tailscale up
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8006
 ```
 
-Do not open port 8006. Without a domain name, skip Caddy, remove `--behind-tls-proxy` from the unit file
-and use an SSH tunnel instead: `ssh -L 8006:127.0.0.1:8006 user@server`.
+MagicDNS and HTTPS certificates must be enabled in the Tailscale admin console first. Add `--proxy-uid 0` next to
+`--behind-tls-proxy` on the service line (`install.sh` does it itself). Do not use `tailscale funnel`: it opens the
+panel to the internet. Do not open port 8006. Without Tailscale, remove `--behind-tls-proxy` from the unit file and
+use an SSH tunnel instead: `ssh -L 8006:127.0.0.1:8006 user@server`. Details: [INSTALL.md](INSTALL.md), section 5.
 
 ### 5. Real virtual machines
 
@@ -357,7 +358,7 @@ a task; poll `/api/v1/tasks/{id}` for the result.
 crates/
   redox-core/     Domain model and rules. No I/O, no async.
   redox-server/   The `redox` binary: HTTP server, drivers, CLI.
-deploy/           systemd units and a Caddyfile.
+deploy/           systemd units and the install script.
 docs/img/         Screenshots used in this README.
 INSTALL.md        Detailed installation and operations guide (KURULUM.md is the Turkish version).
 ```
@@ -490,7 +491,7 @@ resource metering, the boot test's port forwarding, the copy-target archive, the
 replication of a running VM between two servers, maintenance mode across a server restart, read-only tokens and
 the API rate limit.
 
-Not yet verified on a real server: the systemd units and the Caddy configuration, bridged networking,
+Not yet verified on a real server: the systemd units and the Tailscale setup, bridged networking,
 LXC containers, the guest firewall and NIC protection under traffic, dynamic memory and the boot-test service
 checks and in-guest disk usage with a real guest operating system, network metering on a real bridge, real ntfy
 and Telegram, a real S3 provider, a real SMTP or OpenID Connect provider, and

@@ -32,7 +32,9 @@ sh deploy/iso/build-iso.sh --debian-iso debian-13.x.y-amd64-netinst.iso \
 sudo dd if=redox-ve.iso of=/dev/sdX bs=4M status=progress conv=fsync      # sdX: USB bellek
 ```
 
-Sunucu ilk açıldığında konsolda panelin adresi yazar (`https://<adres>:8006`, kendinden imzalı sertifika). İlk
+Sunucu ilk açıldığında konsolda sunucunun adresi ve paneli yayına alma adımı yazar: Tailscale'i kurup
+`sudo tailscale up && sudo redox-tailscale` çalıştırın (bölüm 5); panel `https://<makine>.<ağ>.ts.net` adresinde
+açılır. İlk
 yönetici hesabı `admin` rastgele bir parolayla oluşturulur; parola yalnızca kökün okuyabildiği
 `/root/redox-ilk-parola.txt` dosyasındadır. İlk girişten sonra parolayı değiştirin ve dosyayı silin. Kurulum
 sırasında makinenin internete çıkması gerekir (paketler Debian deposundan iner).
@@ -45,15 +47,16 @@ sudo sh deploy/install.sh --binary target/release/redox --bridge eth0
 
 Aynı kurulumu yapar ve yönetici parolasını sizden sorar. `--bridge` verilmezse köprü kurulmaz (konuklar NAT ile
 çalışır); köprü yalnızca `/etc/network/interfaces` kullanan sistemlerde kurulur ve sunucu yeniden başlatılınca
-devreye girer. `--no-tls` paneli yalnızca `127.0.0.1:8006` adresinde bırakır. `--dry-run` hiçbir şeyi değiştirmeden
+devreye girer. `--no-tailscale` Tailscale hazırlığını atlar; panel yalnızca `127.0.0.1:8006` adresinde (SSH tüneliyle)
+kullanılır. `--dry-run` hiçbir şeyi değiştirmeden
 yapılacakları yazar.
 
 ### Sınananlar ve sınanmayanlar
 
 **Sınandı (Debian 13.8, KVM'li bir sanal makinede):** ISO'nun üretilmesi, BIOS ile önyüklenip soru sormadan
 kurulması (yaklaşık 7 dakika), paketlerin kurulması, ilk açılışta yönetici hesabının oluşması, konsoldaki açılış
-ekranı, `vmbr0` köprüsünün adres alması, panelin `https://<adres>:8006` üzerinde kendinden imzalı sertifikayla
-yanıt vermesi. Gerçek LXC ile bir Alpine konteynerinin bütün yaşam döngüsü de aynı kurulumda denendi: oluşturma,
+ekranı, `vmbr0` köprüsünün adres alması, panelin yanıt vermesi (bu deneme, artık kullanılmayan Caddy'li kurulumla
+yapıldı; Tailscale adımı gerçek bir makinede denenmedi). Gerçek LXC ile bir Alpine konteynerinin bütün yaşam döngüsü de aynı kurulumda denendi: oluşturma,
 başlatma, adres alma, içinde komut çalıştırma, bellek sınırı, çalışırken yedek, yeniden başlatma, durdurma, anlık
 görüntü ve geri dönüş, yedekten geri yükleme, klon (kendi adı ve adresiyle) ve silme.
 
@@ -78,7 +81,7 @@ Konteynerlerin çalışması için systemd 254 ya da sonrası gerekir (Debian 13
 | Roller | `admin` her şeyi yapar; `viewer` yalnızca görür (konsolu göremez). |
 | Denetim | Girişler, reddedilen denemeler ve durum değiştiren her istek `audit.log` dosyasına ve Denetim Günlüğü sayfasına yazılır. |
 | API | `Authorization: Bearer <token>`. Token'lar dosyada yalnızca SHA-256 özetiyle durur. |
-| Ağ | Sunucu TLS sonlandırmaz; 127.0.0.1 dışına şifresiz açılmayı reddeder. Dışarıya Caddy (TLS) açar. |
+| Ağ | Sunucu TLS sonlandırmaz; 127.0.0.1 dışına şifresiz açılmayı reddeder. Dışarıya Tailscale (TLS) açar. |
 | Tarayıcı | JavaScript yalnızca üç sayfada vardır: canlı konsol, konteyner terminali ve güvenlik anahtarı adımı; öbürlerinde `script-src 'none'`. O sayfalarda yalnızca sunucunun kendi betiği çalışır (`script-src 'self'`, satır içi betik ve dış kaynak yasak). Site dışı POST'lar ve site dışından açılan konsol bağlantıları reddedilir, sayfa çerçeveye alınamaz, HSTS. Yazı tipleri sunucuya gömülüdür; sayfa hiçbir dış adrese istek atmaz. |
 | Süreç | Yetkisiz `redox` kullanıcısı, systemd sandbox'ı, dosyalar `0600`. |
 
@@ -133,30 +136,55 @@ curl -s http://127.0.0.1:8006/healthz      # "ok" yazmalı
 
 Günlükler (girişler ve başarısız denemeler dahil): `journalctl -u redox -f`
 
-## 5. TLS: Caddy ile dışarı açın
+## 5. TLS: Tailscale ile açın
 
-Caddy'yi resmi depodan kurun: <https://caddyserver.com/docs/install#debian-ubuntu-raspbian>
+Panel yalnızca `127.0.0.1` adresinde dinler. Dışarıya [Tailscale](https://tailscale.com) açar: panel yalnızca
+**Tailscale ağınızdaki** cihazlardan, `https://<makine>.<ağ>.ts.net` adresinde, geçerli bir sertifikayla açılır.
+İnternete hiçbir kapı açmanız ve alan adı almanız gerekmez.
+
+1. Tailscale'i resmi yönergelerle kurun: <https://tailscale.com/download/linux>
+2. Sunucuyu ağınıza ekleyin (ekrana çıkan adresten onaylayın): `sudo tailscale up`
+3. Tailscale yönetim panelinde **DNS** sayfasından MagicDNS'i ve **HTTPS Certificates** seçeneğini açın.
+   Sertifika alınan makine adları herkese açık sertifika günlüklerine yazılır; makine adı gizli bilgi içermesin.
+4. Paneli yayına alın:
 
 ```bash
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
-sudo nano /etc/caddy/Caddyfile             # alan adınızı yazın
-sudo systemctl reload caddy
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8006
+tailscale serve status                     # panelin adresi burada yazar
 ```
 
-Güvenlik duvarı: yalnızca SSH, 80 ve 443 açık olsun; **8006'yı açmayın**.
+`install.sh` ile kurduysanız 4. adım yerine `sudo redox-tailscale` yeterlidir: aynı komutu çalıştırır ve adresi
+konsol ekranına yazar. Ayar kalıcıdır; kapatmak için `sudo tailscale serve --https=443 off`.
+
+**`tailscale funnel` kullanmayın:** paneli bütün internete açar.
+
+Hizmet satırında `--behind-tls-proxy --proxy-uid 0` bulunmalıdır (`install.sh` ekler; elle kurulumda
+`deploy/redox.service` içindeki `--behind-tls-proxy` satırının sonuna `--proxy-uid 0` yazın). Böylece panel istemci
+adresini yalnızca kök olarak çalışan `tailscaled`'in açtığı bağlantıdan alır; sunucudaki başka bir hesap uydurma bir
+adresle giriş kilidini aşamaz.
+
+Güvenlik duvarı: panel için kapı açmanız gerekmez, **8006'yı açmayın**. SSH'ı yalnızca Tailscale üzerinden
+kullanacaksanız onu da `tailscale0` arayüzüyle sınırlayabilirsiniz (önce Tailscale üzerinden girebildiğinizi deneyin):
 
 ```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 80,443/tcp
+sudo ufw allow in on tailscale0
 sudo ufw enable
 ```
 
-Tarayıcıda `https://redox.example.com` adresini açın ve `admin` ile girin.
+Tailscale ağınızdaki bir cihazda `https://<makine>.<ağ>.ts.net` adresini açın ve `admin` ile girin.
 
-### Alan adınız yoksa: SSH tüneli
+Güvenlik anahtarı ya da tek oturum açma kullanacaksanız adres olarak bunu verin:
+`--webauthn-origin https://<makine>.<ağ>.ts.net`. Sunucuları birbirine eş olarak eklerken de bu adresler kullanılır.
 
-Caddy'yi atlayın, `deploy/redox.service` içindeki `--behind-tls-proxy` satırını silin ve
-kendi bilgisayarınızdan tünel açın; sonra `http://127.0.0.1:8006` adresini kullanın:
+Daha önce Caddy ile kurduysanız onu kapatın (`sudo systemctl disable --now caddy`) ve `install.sh`'i yeniden
+çalıştırın.
+
+> Tailscale ile kurulum henüz gerçek bir sunucuda denenmedi (canlı konsol ve terminalin WebSocket bağlantısı dahil).
+
+### Tailscale kullanmayacaksanız: SSH tüneli
+
+`deploy/redox.service` içindeki `--behind-tls-proxy` satırını silin (`install.sh --no-tailscale` bunu kendisi yapar)
+ve kendi bilgisayarınızdan tünel açın; sonra `http://127.0.0.1:8006` adresini kullanın:
 
 ```powershell
 ssh -L 8006:127.0.0.1:8006 kullanici@sunucu
@@ -230,8 +258,8 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
   Bu sayfa JavaScript kullanır. Nasıl çalışır: QEMU ekranı yalnızca veri dizinindeki bir Unix soketinden
   (`run/<kimlik>.vnc`, parolasız, ağa kapalı) sunar; sunucu, oturumu ve yetkisi denetlenmiş tarayıcı bağlantısını
   (WebSocket) o sokete köprüler. Konsolu yönetici ve kapsamındaki konukta operatör açabilir; her oturum denetim
-  günlüğüne `console <kimlik>` olarak yazılır ve en çok 12 saat sürer. Caddy WebSocket'i kendiliğinden geçirir;
-  başka bir vekil kullanıyorsanız `Upgrade` başlıklarını iletin. Bu özellikten önce açılmış ve hâlâ çalışan
+  günlüğüne `console <kimlik>` olarak yazılır ve en çok 12 saat sürer. Önünüzdeki vekil WebSocket'i geçirmelidir
+  (`tailscale serve` ile gerçek bir kurulumda henüz denenmedi; başka bir vekilde `Upgrade` başlıklarını iletin). Bu özellikten önce açılmış ve hâlâ çalışan
   konuklarda canlı konsol yoktur: bir kez kapatıp açın (imleç için konuğa bir USB işaretçi aygıtı eklenir).
 - **Anlık görüntü ve yedek** sanal makine **çalışırken de** alınır (anlık görüntü belleği de kaydeder;
   geri dönünce konuk o andan devam eder). **Klon ve disk büyütme** konuk kapalıyken yapılır. Yedekler
@@ -373,8 +401,8 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
 - **Kalıp ve imaj yükleme:** *Depolama* sayfasındaki bölümden kurulum kalıbı (`.iso`) ve disk imajı (`.qcow2`, `.img`,
   `.raw`, `.vmdk`, `.vdi`, `.vhdx`, `.vhd`, `.ova`) yükleyin; dosyayı sunucuya elle kopyalamak gerekmez.
   - *Bilgisayardan yükle*: dosya parça parça diske akar (belleğe alınmaz); yükleme bitene kadar sayfa bekler.
-    Önünüzde ters vekil varsa gövde sınırını kaldırın (Caddy'de varsayılan sınır yoktur; nginx'te
-    `client_max_body_size 0;`).
+    Önünüzde ters vekil varsa gövde sınırını kaldırın (nginx'te `client_max_body_size 0;`). Büyük dosya yüklemesi
+    `tailscale serve` üzerinden henüz denenmedi.
   - *Adresten indir*: sunucu dosyayı kendisi indirir, sonucu görev günlüğüne yazar. Yalnızca `https://` ve genel
     internet adresleri kabul edilir (sunucunun iç ağına istek yaptırılamasın diye; yönlendirmeler de denetlenir).
     SHA-256 özeti verirseniz dosya onunla doğrulanır, tutmazsa kaydedilmez.
@@ -1044,7 +1072,7 @@ olağan ayarıyla bir parça bırakılamadı, "taşınabilir" ayarıyla hepsi ç
 - **Yapılmayanlar:** LVM/ZFS/Ceph/iSCSI depolama havuzları, ortak durumlu küme, SPICE, UEFI/TPM'li konukların canlı
   taşınması, canlı konsolda pano ve mikrofon, konteynerlerin canlı taşınması ve başka depolama alanına taşınması.
 - **QEMU birimi** (`redox-qemu.service`) simülasyon birimine göre daha gevşek bir sandbox kullanır; nedenleri dosyada yazılı.
-- Bu kılavuzdaki systemd birimleri ve Caddy ayarı gerçek bir sunucuda denenmedi. Kod ve testler Linux'ta (WSL, Ubuntu) çalıştırıldı.
+- Bu kılavuzdaki systemd birimleri ve Tailscale ayarı gerçek bir sunucuda denenmedi. Kod ve testler Linux'ta (WSL, Ubuntu) çalıştırıldı.
   QEMU sürücüsü NAT ağıyla gerçek KVM üzerinde denendi (çalışan konukta anlık görüntü, geri dönüş ve yedek dahil);
   köprü kipi ve LXC (konteyner yedeği ve anlık görüntüsü dahil) yalnızca sahte araçlarla sınandı.
   Birleşik görünüm ve sanal makine taşıma iki sunucu arasında yerel HTTP üzerinden sınandı; HTTPS'li gerçek eşle denenmedi.
