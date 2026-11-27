@@ -256,6 +256,10 @@ fn exec_captures_output_and_exit_status() {
 
     let big = d.exec(&g, "head -c 200000 /dev/zero | tr '\\0' 'x'").unwrap();
     assert!(big.len() < 70_000 && big.ends_with("[çıktı kesildi]"), "{}", big.len());
+    // Çok çıktı üreten komut diske yazılmaz, belleğe de alınmaz: sınırın üstü okunup atılır.
+    let flood = d.exec(&g, "head -c 50000000 /dev/zero").unwrap();
+    assert!(flood.len() < 70_000 && flood.ends_with("[çıktı kesildi]"), "{}", flood.len());
+    assert!(std::fs::read_dir(&cfg.lxc_path).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".exec")), "çıktı dosyası tutulmaz");
     assert!(d.exec(&g, "   ").unwrap_err().contains("boş"));
     assert!(d.exec(&g, &"x".repeat(3000)).unwrap_err().contains("en fazla"));
     assert!(std::fs::read_dir(&cfg.lxc_path).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".exec")), "çıktı dosyası silinir");

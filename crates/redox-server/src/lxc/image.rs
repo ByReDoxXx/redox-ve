@@ -54,7 +54,8 @@ impl LxcDriver {
         let pulled = oci::pull(&image, &cache.0, limit)?;
         std::fs::create_dir(&dir).map_err(|e| format!("{} oluşturulamadı: {e}", dir.display()))?;
         // Eşlenmiş kök, kök dosya sistemini bu dizinin içine kurabilsin diye dizin kurulum süresince yazılabilir.
-        set_mode(&dir, 0o777);
+        // Yapışkan bit: sunucudaki başka bir hesap bu sürede içindekileri silip yenisiyle değiştiremez.
+        set_mode(&dir, 0o1777);
         let built = self.build_container(g, &dir, &pulled, limit);
         set_mode(&dir, 0o755);
         built.inspect_err(|_| {
@@ -96,7 +97,7 @@ impl LxcDriver {
             config.push_str(&format!("lxc.include = {USERNS_CONFIG}\n"));
         }
         config.push_str(&format!("lxc.arch = linux64\n{}lxc.rootfs.path = dir:{}\n{}", idmap_lines(self.cfg.idmap), rootfs.display(), pulled.config.lxc_lines(uid, gid)?));
-        std::fs::write(dir.join("config"), config).map_err(|e| format!("konteyner ayarı yazılamadı: {e}"))?;
+        super::write_fresh(&dir.join("config"), &config).map_err(|e| format!("konteyner ayarı yazılamadı: {e}"))?;
         self.write_managed(g)
     }
 }

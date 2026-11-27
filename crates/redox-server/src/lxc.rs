@@ -89,6 +89,17 @@ const END: &str = "# --- redox: blok sonu ---";
 /// Konteynerde çalıştırılan komutun en uzun süresi ve gösterilen çıktı sınırı.
 const EXEC_TIMEOUT: Duration = Duration::from_secs(20);
 const EXEC_OUTPUT_LIMIT: usize = 64 * 1024;
+
+/// Dosyayı yeniden oluşturarak yazar: önceden bırakılmış bir dosyanın (başkasına ait dosya, simgesel bağ)
+/// üzerine yazılmaz. Dizin başkalarına yazılabilirken konan ayar dosyası için.
+pub(crate) fn write_fresh(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    std::fs::OpenOptions::new().write(true).create_new(true).open(path)?.write_all(text.as_bytes())
+}
 pub const EXEC_COMMAND_LIMIT: usize = 2000;
 
 #[derive(Debug, Clone)]
@@ -547,18 +558,32 @@ impl Hypervisor for LxcDriver {
         if command.len() > EXEC_COMMAND_LIMIT {
             return Err(format!("komut en fazla {EXEC_COMMAND_LIMIT} bayt olabilir"));
         }
-        // Çıktı dosyaya yazılır: boru dolup süreç kilitlenmesin, süre sınırı uygulanabilsin.
-        let capture = self.cfg.lxc_path.join(format!(".{}.exec", container_name(g.vmid)));
-        let file = std::fs::File::create(&capture).map_err(|e| format!("çıktı dosyası açılamadı: {e}"))?;
-        let stderr = file.try_clone().map_err(|e| e.to_string())?;
-        let mut child = self
-            .tool("lxc-attach")
-            .args(["-n", &container_name(g.vmid), "--clear-env", "--", "/bin/sh", "-c", command])
-            .stdin(Stdio::null())
-            .stdout(file)
-            .stderr(stderr)
-            .spawn()
-            .map_err(|e| format!("lxc-attach çalıştırılamadı: {e}"))?;
+        // Çıktı borudan okunur ve yalnızca sınıra kadarı tutulur; fazlası okunup atılır. Dosyaya yazılsaydı
+        // durmadan çıktı üreten bir komut (ör. `yes`) sunucunun diskini ve belleğini doldururdu.
+        let (mut pipe, writer) = std::io::pipe().map_err(|e| format!("çıktı borusu açılamadı: {e}"))?;
+        let stderr = writer.try_clone().map_err(|e| e.to_string())?;
+        // Komut nesnesi borunun yazma uçlarını tutar: süreç başlar başlamaz bırakılır ki okuyan uç sonu görebilsin.
+        let mut child = {
+            let mut attach = self.tool("lxc-attach");
+            attach.args(["-n", &container_name(g.vmid), "--clear-env", "--", "/bin/sh", "-c", command]).stdin(Stdio::null()).stdout(writer).stderr(stderr);
+            attach.spawn().map_err(|e| format!("lxc-attach çalıştırılamadı: {e}"))?
+        };
+        let captured = std::sync::Arc::new((Mutex::new((Vec::new(), false)), std::sync::atomic::AtomicBool::new(false)));
+        let sink = captured.clone();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = pipe.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                let mut kept = sink.0.lock().unwrap_or_else(|e| e.into_inner());
+                let room = EXEC_OUTPUT_LIMIT.saturating_sub(kept.0.len());
+                kept.0.extend_from_slice(&chunk[..n.min(room)]);
+                kept.1 |= n > room;
+            }
+            sink.1.store(true, std::sync::atomic::Ordering::Release);
+        });
         let started = Instant::now();
         let status = loop {
             match child.try_wait() {
@@ -572,10 +597,15 @@ impl Hypervisor for LxcDriver {
                 Err(e) => return Err(format!("komut beklenemedi: {e}")),
             }
         };
-        let bytes = std::fs::read(&capture).unwrap_or_default();
-        let _ = std::fs::remove_file(&capture);
-        let mut output = String::from_utf8_lossy(&bytes[..bytes.len().min(EXEC_OUTPUT_LIMIT)]).to_string();
-        if bytes.len() > EXEC_OUTPUT_LIMIT {
+        // Komut bitince borunun kalanı kısa sürede okunur. Arka plana atılmış bir süreç boruyu açık tutuyorsa
+        // beklenmez: o ana kadarki çıktı döner, okuyan iş kalanını atmayı sürdürür.
+        let drained = Instant::now();
+        while !captured.1.load(std::sync::atomic::Ordering::Acquire) && drained.elapsed() < Duration::from_millis(500) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (bytes, cut) = captured.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut output = String::from_utf8_lossy(&bytes).to_string();
+        if cut {
             output.push_str("\n[çıktı kesildi]");
         }
         match status {
@@ -765,14 +795,15 @@ impl LxcDriver {
         };
         std::fs::create_dir(&to).map_err(|e| format!("{} oluşturulamadı: {e}", to.display()))?;
         // Eşlenmiş kök, kök dosya sistemini bu dizinin içine oluşturabilsin diye dizin kopya süresince yazılabilir.
-        mode(&to, 0o777);
+        // Yapışkan bit: sunucudaki başka bir hesap bu sürede içindekileri silip yenisiyle değiştiremez.
+        mode(&to, 0o1777);
         let copied = (|| {
             let out = self.userns().args(["cp", "-a", "--"]).arg(from.join("rootfs")).arg(to.join("rootfs")).output().map_err(|e| format!("cp çalıştırılamadı: {e}"))?;
             if !out.status.success() {
                 return Err(format!("kök dosya sistemi kopyalanamadı: {}", last_line(&out.stderr)));
             }
             let config = std::fs::read_to_string(from.join("config")).map_err(|e| format!("kaynak yapılandırma okunamadı: {e}"))?;
-            std::fs::write(to.join("config"), config.replace(&old_name, &new_name)).map_err(|e| format!("yapılandırma yazılamadı: {e}"))
+            write_fresh(&to.join("config"), &config.replace(&old_name, &new_name)).map_err(|e| format!("yapılandırma yazılamadı: {e}"))
         })();
         // Başkaları dizine yazamaz; eşlenmiş kök yalnızca içinden geçebilir.
         mode(&to, 0o755);
@@ -931,6 +962,27 @@ pub fn detect_idmap() -> Result<Option<(u64, u64, u64, u64)>, String> {
 mod tests {
     use super::*;
     use redox_core::{Cluster, GuestSpec};
+
+    /// Dizin başkalarına yazılabilirken biri `config` adını önceden tutmuş olabilir: dosya yeniden oluşturulur,
+    /// bağın gösterdiği dosyaya dokunulmaz.
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_config_is_replaced_not_written_through() {
+        let dir = std::env::temp_dir().join(format!("redox-taze-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (victim, config) = (dir.join("kurban"), dir.join("config"));
+        std::fs::write(&victim, "dokunulmaz").unwrap();
+        std::os::unix::fs::symlink(&victim, &config).unwrap();
+        write_fresh(&config, "lxc.arch = linux64\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "dokunulmaz");
+        assert!(!std::fs::symlink_metadata(&config).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), "lxc.arch = linux64\n");
+        // Var olan dosyanın yerine de yenisi konur.
+        write_fresh(&config, "yeni\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), "yeni\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn guest(bridge: &str) -> Guest {
         let mut c = Cluster::demo(0);
