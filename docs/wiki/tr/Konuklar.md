@@ -30,7 +30,10 @@ Zamanlanmış güç işlemleri (*Seçenekler* sekmesi): belirli gün ve saatlerd
 
 ## Konsol
 
-- **Canlı konsol:** gerçek zamanlı ekran, klavye ve fare (JavaScript kullanan tek sayfa).
+- **Canlı konsol:** gerçek zamanlı ekran, klavye ve fare (JavaScript kullanır). Ses kartı olan makinede **Sesi Aç** ile ses
+  de dinlenir; mikrofon taşınmaz.
+- **Konteyner terminali:** çalışan konteynerde **Terminali Aç** ile tarayıcıda etkileşimli kök kabuğu (JavaScript
+  kullanır). Gerçek `lxc-attach` ile henüz denenmedi.
 - **Konsol sekmesi:** JavaScript'siz; ekran görüntüsü 2 saniyede bir yenilenir, metin ve özel tuş gönderilir.
 - Konteynerlerde ve konuk ajanı olan makinelerde komut çalıştırma.
 
@@ -55,3 +58,13 @@ Canlı konsolda pano paylaşımı yoktur. Bunun yerine konsol sayfasının üst�
 konuğa tuş vuruşları olarak gönderilir (uzun parolalar ve komutlar için). Konukta ajan gerekmez. Yalnızca ABD
 klavyesindeki karakterler yazılır ve konuğun klavye düzeni ABD İngilizcesi olmalıdır; başka düzende simgeler farklı
 çıkar. İstemci mantığı testlidir; gerçek bir konukta denenmedi.
+
+## Ses, disk şifreleme ve OCI imajları
+
+- **Ses kartı:** ayarlarda *Ses kartı tak* ya da `redox vm set <kimlik> sound=true` (konuk kapalıyken).
+- **Disk şifreleme:** sunucu `--disk-key-file` ile çalışıyorsa sanal makine oluştururken *Diskleri şifrele (LUKS)*.
+  Anahtar kaybolursa disk açılamaz; şifreli konukta klon, askıya alma ve dışa aktarma gibi işlemler reddedilir.
+- **OCI imajı:** konteyner oluştururken *OCI imajı* alanına `nginx:1.29` gibi bir ad; ağ için sabit IP ve ağ geçidi
+  verin. Yalnızca herkese açık linux/amd64 imajlar. Gerçek kayıt sunucusu ve gerçek LXC ile henüz denenmedi.
+
+Ayrıntılar ve sınırlar: depodaki `KURULUM.md`, 14. bölüm.

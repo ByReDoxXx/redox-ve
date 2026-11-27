@@ -5,8 +5,8 @@
 # RedoX VE Wiki
 
 RedoX VE is a virtualization platform written in Rust that manages KVM virtual machines and LXC containers on a single
-server. It is one executable; its interface is rendered on the server and uses no JavaScript (except the live console
-page).
+server. It is one executable; its interface is rendered on the server and uses no JavaScript (except on the console,
+terminal and security key pages).
 
 ## Pages
 

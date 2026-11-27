@@ -54,3 +54,14 @@ hizmet yeniden başlasa da kilit durur.
 
 Kilit kipi, sunucuda kabuk erişimi olan birine karşı bir güvenlik sınırı değildir: yalnızca yönetim arayüzünü kapatır.
 Kilit açıkken eş sunuculardan gelen istekler de (kopyalama, çoğaltma, bu sunucudan canlı taşıma) reddedilir.
+
+## Güvenlik anahtarı (WebAuthn)
+
+Sunucu `--webauthn-origin https://panelin-adresi` ile çalışıyorsa her kullanıcı *Hesabım* sayfasından anahtar
+ekleyebilir. Girişte parolaya ek olarak anahtar (ya da açıksa uygulama kodu) istenir. Kaybolan anahtar için yönetici
+*Kullanıcılar* sayfasından ikinci adımı sıfırlar ya da sunucuda `redox user keys-reset <ad>` çalıştırır.
+
+## Hesap sayfası ve token'lar
+
+Hesap sayfası (parola, ikinci adım, token üretme) yalnızca tarayıcıda oturum açarak kullanılır; API token'ıyla
+yapılan istekler reddedilir.

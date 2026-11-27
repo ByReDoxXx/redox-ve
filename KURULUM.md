@@ -79,7 +79,7 @@ Konteynerlerin çalışması için systemd 254 ya da sonrası gerekir (Debian 13
 | Denetim | Girişler, reddedilen denemeler ve durum değiştiren her istek `audit.log` dosyasına ve Denetim Günlüğü sayfasına yazılır. |
 | API | `Authorization: Bearer <token>`. Token'lar dosyada yalnızca SHA-256 özetiyle durur. |
 | Ağ | Sunucu TLS sonlandırmaz; 127.0.0.1 dışına şifresiz açılmayı reddeder. Dışarıya Caddy (TLS) açar. |
-| Tarayıcı | Canlı konsol sayfası dışında hiç JavaScript yok (`script-src 'none'`); o sayfada yalnızca sunucunun kendi betiği çalışır (`script-src 'self'`, satır içi betik ve dış kaynak yasak). Site dışı POST'lar ve site dışından açılan konsol bağlantıları reddedilir, sayfa çerçeveye alınamaz, HSTS. Yazı tipleri sunucuya gömülüdür; sayfa hiçbir dış adrese istek atmaz. |
+| Tarayıcı | JavaScript yalnızca üç sayfada vardır: canlı konsol, konteyner terminali ve güvenlik anahtarı adımı; öbürlerinde `script-src 'none'`. O sayfalarda yalnızca sunucunun kendi betiği çalışır (`script-src 'self'`, satır içi betik ve dış kaynak yasak). Site dışı POST'lar ve site dışından açılan konsol bağlantıları reddedilir, sayfa çerçeveye alınamaz, HSTS. Yazı tipleri sunucuya gömülüdür; sayfa hiçbir dış adrese istek atmaz. |
 | Süreç | Yetkisiz `redox` kullanıcısı, systemd sandbox'ı, dosyalar `0600`. |
 
 Kapsam dışı kalanlar en altta: **Bilinen eksikler**.
@@ -104,7 +104,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # hepsi geçmeli (Linux'ta 633 test; Node kuruluysa canlı konsol istemcisinin 7 testi de çalışır)
+cargo test --workspace          # hepsi geçmeli (Linux'ta 686 test; Node kuruluysa tarayıcı betiklerinin testleri de çalışır)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -227,7 +227,7 @@ Sürücünün sunduğu işlemler (konuk sayfasındaki sekmelerden):
 - **Canlı konsol:** konsol sekmesindeki **Canlı Konsolu Aç** düğmesi (`/guests/<kimlik>/console`) konuğun
   ekranını gerçek zamanlı gösterir; ekrana tıklayınca klavye ve fare konuğa gider. Tuşlar fiziksel konumlarıyla
   gönderilir, yani karakteri konuğun kendi klavye düzeni belirler (Türkçe düzen doğru çalışır). Uygulamada
-  JavaScript kullanan tek sayfa budur. Nasıl çalışır: QEMU ekranı yalnızca veri dizinindeki bir Unix soketinden
+  Bu sayfa JavaScript kullanır. Nasıl çalışır: QEMU ekranı yalnızca veri dizinindeki bir Unix soketinden
   (`run/<kimlik>.vnc`, parolasız, ağa kapalı) sunar; sunucu, oturumu ve yetkisi denetlenmiş tarayıcı bağlantısını
   (WebSocket) o sokete köprüler. Konsolu yönetici ve kapsamındaki konukta operatör açabilir; her oturum denetim
   günlüğüne `console <kimlik>` olarak yazılır ve en çok 12 saat sürer. Caddy WebSocket'i kendiliğinden geçirir;
@@ -898,6 +898,74 @@ sağlayıcıda zorunlu kılın). Yalnızca sahte bir sağlayıcıyla sınandı; 
 **Oturumlar** artık hizmet yeniden başlayınca düşmez: `/var/lib/redox/sessions.json` dosyasında, token'ın kendisi değil
 özeti saklanır. Herkesi çıkarmak için dosyayı silip hizmeti yeniden başlatın.
 
+## 14. Ortak depo, disk şifreleme, güvenlik anahtarı, terminal, ses ve OCI imajları
+
+### 14.1 Ortak depo (diskleri kopyalamadan taşıma)
+
+İki ya da daha çok sunucunun aynı dizini (ör. NFS) bağladığı kurulum içindir.
+
+```bash
+redox shared init /mnt/ortak          # bir kez; bağlı paylaşımın içinde
+redox serve ... --storage ortak=/mnt/ortak --shared-storage ortak    # her sunucuda
+```
+
+- Her konuğun diskleri tek bir sunucuya aittir (sahiplik kaydı paylaşımdadır); yalnızca sahibi yazar.
+- Eş sunucu aynı paylaşımı görüyorsa canlı taşıma yalnızca belleği taşır. Kapalı konuk `redox shared take <eş> <kimlik>`
+  ile disk kopyalanmadan alınır; `redox shared list` paylaşımdaki konukları gösterir.
+- Sahibi olan sunucu en az 30 saniye susarsa `redox shared adopt <depo> <kimlik>` ile konuk devralınır. Sahipliğini
+  yitiren sunucu, paylaşımı yeniden görünce kendi kopyasını zorla kapatır.
+- **Zorla kapatma (fencing) yoktur.** Devralmadan önce eski sunucunun gerçekten kapalı olduğundan emin olun:
+  paylaşıma erişimi kopmuş ama çalışan bir sunucu susmuş görünür.
+- Aynı makinedeki iki sunucu ve gerçek QEMU ile sınandı; gerçek bir NFS paylaşımı ve iki fiziksel makine denenmedi.
+
+### 14.2 Disk şifreleme (LUKS)
+
+```bash
+head -c 32 /dev/urandom | base64 > /etc/redox/disk.key && chmod 600 /etc/redox/disk.key
+redox serve ... --disk-key-file /etc/redox/disk.key
+```
+
+Sanal makine oluştururken **Diskleri şifrele** kutusunu işaretleyin (sonradan açılıp kapatılamaz). Anahtarı kaybederseniz
+diskler ve yedekleri açılamaz; anahtarı disklerden ayrı yerde saklayın. Şifreli konukta verinin açığa çıkacağı ya da
+sınanmamış işlemler reddedilir: klon, askıya alma, çalışırken bellekli anlık görüntü (bu QEMU sürümü çöküyor), disk
+yansıtma, hata toleransı, dışa ve içe aktarma, anında kurtarma, diskleri kopyalayan canlı taşıma, çalışırken depolama
+taşıma. Yedekler şifreli kalır ama artımlı depoyu kullanmaz.
+
+### 14.3 Güvenlik anahtarı (WebAuthn)
+
+```bash
+redox serve ... --webauthn-origin https://redox.ornek.net
+```
+
+Adres, panelin tarayıcıda açıldığı adresle birebir aynı olmalıdır; IP adresi olamaz. Her kullanıcı anahtarını **Hesabım**
+sayfasından ekler. Anahtarı olan hesapta giriş, parolaya ek olarak anahtarı (ya da açıksa uygulama kodunu) ister. Ayar
+verilmeden başlatılan sunucuda anahtarlı hesaplar giriş yapamaz. Kaybolan anahtar: Kullanıcılar sayfasındaki **2 Adımı
+Sıfırla** ya da `redox user keys-reset <ad> --users DOSYA`. Chrome'un sanal anahtarıyla uçtan uca sınandı; fiziksel bir
+anahtarla denenmedi.
+
+### 14.4 Konteyner terminali
+
+Çalışan konteynerin konsol sekmesindeki **Terminali Aç** düğmesi, tarayıcıda etkileşimli bir kök kabuğu açar. Yetki
+kuralları canlı konsolunkiyle aynıdır; oturum açıkken 2 saniyede bir yeniden denetlenir. En çok 8 terminal, 30 dakika
+hareketsizlik sınırı. Sözde uçbirim için `script` (util-linux) gerekir. Sahte sürücü ve gerçek sözde uçbirimle
+sınandı; **gerçek `lxc-attach` ile denenmedi**.
+
+### 14.5 Ses
+
+Sanal makine ayarlarındaki **Ses kartı tak** (ya da `redox vm set <kimlik> sound=true`) konuğa Intel HD Audio kartı
+takar; sunucuda ses aygıtı gerekmez. Canlı konsolda **Sesi Aç** düğmesiyle dinlenir. Mikrofon taşınmaz, SPICE yoktur.
+Gerçek QEMU'da konuğun çaldığı ses konsol soketinden ölçüldü; konukta bir ses sürücüsüyle HDA kartından çalma
+denenmedi.
+
+### 14.6 OCI (Docker) imajından konteyner
+
+Konteyner oluştururken **OCI imajı** alanına `nginx:1.29` gibi bir ad yazın (API'de `"os": "oci:nginx:1.29"`).
+Konteyner imajın programını çalıştırır. Bu imajlarda genellikle DHCP istemcisi yoktur: **Sabit IP adresi** ve **Ağ
+geçidi** verin (LXC'nin NAT köprüsünde ör. `10.0.3.50/24` ve `10.0.3.1`). Yalnızca herkese açık `linux/amd64` imajlar;
+özel kayıt sunucusu parolası, aygıt düğümleri ve genişletilmiş öznitelikler (dosya yetenekleri) desteklenmez.
+İndirilen her parça özetiyle doğrulanır; katmanlar kök dizinin dışına yazamaz. Sahte kayıt sunucusuyla sınandı;
+**gerçek bir kayıt sunucusu ve böyle bir konteyneri gerçek LXC ile başlatma denenmedi.**
+
 ## Bilinen eksikler
 
 - **İki adımlı doğrulama isteğe bağlıdır.** Her yönetici Hesabım sayfasından açmalıdır; mümkünse paneli VPN ya da IP kısıtıyla da koruyun.
@@ -913,8 +981,8 @@ sağlayıcıda zorunlu kılın). Yalnızca sahte bir sağlayıcıyla sınandı; 
 - **Artımlı yedek, değişen blok takibi kapalıyken yerde tasarruf eder, sürede etmez:** her yedekte disk baştan sona
   okunur. `--changed-block-tracking` ile çalışan konukta yalnızca değişen bloklar okunur. Dış hedefe yalnızca yeni
   parçalar gider.
-- **Yapılmayanlar:** LVM/ZFS depolama havuzları, ortak durumlu küme, UEFI/TPM'li konukların canlı taşınması,
-  canlı konsolda pano ve ses, çalışan konuktan işlemci ve bellek çıkarma, konteynerlerin canlı taşınması.
+- **Yapılmayanlar:** LVM/ZFS/Ceph/iSCSI depolama havuzları, ortak durumlu küme, SPICE, UEFI/TPM'li konukların canlı
+  taşınması, canlı konsolda pano ve mikrofon, çalışan konuktan işlemci ve bellek çıkarma, konteynerlerin canlı taşınması.
 - **QEMU birimi** (`redox-qemu.service`) simülasyon birimine göre daha gevşek bir sandbox kullanır; nedenleri dosyada yazılı.
 - Bu kılavuzdaki systemd birimleri ve Caddy ayarı gerçek bir sunucuda denenmedi. Kod ve testler Linux'ta (WSL, Ubuntu) çalıştırıldı.
   QEMU sürücüsü NAT ağıyla gerçek KVM üzerinde denendi (çalışan konukta anlık görüntü, geri dönüş ve yedek dahil);

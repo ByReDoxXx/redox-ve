@@ -257,3 +257,11 @@ Bu sıra elle denenmedi; her adım tek tek sınanmış işlemlerden (taşıma, s
 ## Yerleştirme etiketleri ve kendiliğinden dengeleme
 
 `ayri-<grup>` etiketli konuklar aynı sunucuda tutulmamaya çalışılır, `birlikte-<grup>` etiketliler ayrılmaz, `sabit` etiketli konuk taşınmaz. `redox serve --auto-balance` ile sunucu 5 dakika sıkışık kalırsa ya da bir ayrı tutma kuralı bozulursa bir konuk canlı taşınır (iki taşıma arasında en az 15 dakika). Karar kuralları birim testlidir; gerçek sunucular arasında kendiliğinden taşıma denenmedi.
+
+## Ortak depo
+
+İki sunucu aynı dizini (ör. NFS) bağlıyorsa: bir kez `redox shared init <dizin>`, her sunucuda
+`serve --storage ortak=<dizin> --shared-storage ortak`. Canlı taşıma yalnızca belleği taşır; kapalı konuk
+`redox shared take <eş> <kimlik>`, susmuş sunucunun konuğu `redox shared adopt <depo> <kimlik>` ile alınır.
+Zorla kapatma (fencing) yoktur: devralmadan önce eski sunucunun kapalı olduğundan emin olun. Gerçek bir NFS
+paylaşımı ve iki fiziksel makine ile denenmedi.

@@ -55,3 +55,14 @@ the service.
 Lockdown is not a security boundary against someone with a shell on the server: it only closes the management
 interface. Requests from peer servers (copying, replication, live migration from this server) are refused as well
 while it is on.
+
+## Security keys (WebAuthn)
+
+If the server runs with `--webauthn-origin https://the-panel-address`, each user can add keys on the *My Account*
+page. Signing in then asks for the key (or the app code, if that is on) besides the password. For a lost key an
+administrator resets the second step on the *Users* page or runs `redox user keys-reset <name>` on the server.
+
+## The account page and tokens
+
+The account page (password, second step, creating tokens) works only with a browser sign-in; requests made with an
+API token are refused.

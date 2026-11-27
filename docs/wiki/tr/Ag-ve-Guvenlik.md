@@ -92,7 +92,8 @@ duyurusu gönderemez. Köprüdeki kartlarda etkilidir ve `--firewall` ister.
 - Paneli doğrudan internete açmayın: TLS sonlandıran bir vekilin arkasına koyun, mümkünse VPN ya da IP kısıtı ekleyin.
 - Her yönetici iki adımlı doğrulamayı açsın (*Hesabım*).
 - Durum değiştiren her istek denetim günlüğüne yazılır (*Denetim Günlüğü*).
-- Arayüz JavaScript çalıştırmaz (içerik güvenlik ilkesi `script-src 'none'`; yalnızca canlı konsol sayfası istisnadır).
+- Arayüz JavaScript çalıştırmaz (içerik güvenlik ilkesi `script-src 'none'`). Üç sayfa istisnadır: canlı konsol,
+  konteyner terminali ve güvenlik anahtarı adımı; bunlar yalnızca sunucunun kendi betiğini yükler.
 
 ## Giden kurallar, güvenlik grupları, adres kümeleri
 

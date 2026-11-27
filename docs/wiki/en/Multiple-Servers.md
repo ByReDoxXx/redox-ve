@@ -261,3 +261,11 @@ This sequence was not tried by hand; each step is an operation that is tested on
 ## Placement tags and automatic balancing
 
 Guests tagged `ayri-<group>` are kept off the same server, `birlikte-<group>` guests are not split, and a `sabit` guest is never moved. With `redox serve --auto-balance`, one guest is live-migrated if the server stays busy for 5 minutes or a keep-apart rule is broken (at least 15 minutes between moves). The decision rules are unit tested; automatic moves have not been run between real servers.
+
+## Shared storage
+
+If two servers mount the same directory (for example NFS): run `redox shared init <dir>` once and start every server
+with `serve --storage shared=<dir> --shared-storage shared`. Live migration then moves only memory; take a stopped
+guest with `redox shared take <peer> <id>`, and a quiet server's guest with `redox shared adopt <storage> <id>`. There
+is no fencing: make sure the old server is down before adopting. Not tried with a real NFS share or two physical
+machines.

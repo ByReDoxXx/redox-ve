@@ -131,7 +131,11 @@ development host. It is not a clustered hypervisor (see [Limits](#limits)).
 
 **Operations**
 
-- Server-rendered web panel with dark and light themes, usable without JavaScript.
+- Server-rendered web panel with dark and light themes, usable without JavaScript (except the live console, the terminal and the security key step).
+- Moving and taking over guests on shared storage (for example NFS) without copying disks; LUKS disk encryption.
+- Security keys (WebAuthn) as a second sign-in step.
+- A container terminal in the browser; a sound card for VMs, heard in the live console.
+- Containers from OCI / Docker images. Details and what was not tested: [INSTALL.md](INSTALL.md), section 14.
 - Live graphical console in the browser, with keyboard and mouse.
 - Roles (admin, operator, viewer), tag-based operator scopes, TOTP two-factor login, OpenID Connect.
 - Audit log, task log, resource alerts by webhook or e-mail, Prometheus metrics.
@@ -154,7 +158,7 @@ Proxmox configuration or backup formats, and is not a drop-in replacement.
 | Clustering | Multi-node cluster with shared state, live migration and high availability | Independent servers with a combined view; a running VM can be migrated live between them, but there is no shared state |
 | Storage | LVM, ZFS, Ceph, NFS and more | Directories (local disk or a mounted share), qcow2 |
 | Backup | vzdump and Proxmox Backup Server | Built-in full and incremental backups, off-site copy to a directory or S3 |
-| Web panel | JavaScript application | Server-rendered HTML, no JavaScript outside the live console |
+| Web panel | JavaScript application | Server-rendered HTML; JavaScript only on the console, terminal and security key pages |
 | Maturity | Many years in production | New; several parts not yet tried on a real server (see [Testing](#testing)) |
 
 Choose Proxmox VE if you need a cluster, shared storage or a proven platform. RedoX VE aims at a single
@@ -435,7 +439,9 @@ Data directory (`/var/lib/redox`):
 Pages are rendered on the server and work without JavaScript; the content security policy is
 `script-src 'none'`. Fonts and icons are embedded in the binary, so a page makes no external request.
 
-The live console is the one exception. That page loads a single script served by RedoX VE itself: an RFB
+Three pages are exceptions, each loading one script served by RedoX VE itself: the live console, the container
+terminal and the security key step (the browser's key interface can only be called from JavaScript). The live
+console's script is an RFB
 3.8 (VNC) client of about 300 lines. The server checks the session and the permission, then bridges the
 browser's WebSocket to the guest's VNC Unix socket. Keys are sent as scancodes, so the guest's own keyboard
 layout decides the character.
@@ -461,11 +467,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-633 tests pass on Linux and 539 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
-tests run against a fake QEMU that speaks QMP. If Node.js is installed, the live console client's own
-7 tests run as well.
+686 tests pass on Linux and 577 on Windows (the QEMU and LXC driver tests are Linux-only). The driver
+tests run against a fake QEMU that speaks QMP. If Node.js is installed, the browser scripts' own
+tests (console, terminal, security key) run as well.
 
-Six driver tests run against **real QEMU** with a Linux kernel as the guest and check the result from
+The driver tests named `real_…` run against **real QEMU** with a Linux kernel as the guest and check the result from
 inside the guest. They are skipped unless you point them at the binaries:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (any kernel whose
 initial file system has a shell at `/bin/sh`, such as a Debian installer's `vmlinuz` and `initrd.gz`).
@@ -500,9 +506,10 @@ USB/PCI passthrough. [INSTALL.md](INSTALL.md) marks each of these where it is de
 - Cores and memory can be added to a running VM but not removed, and only up to the "maximum cores" and "maximum memory" set while it was stopped. Memory is added in steps of 128 MB, at most 8 times per start (a stop and start makes the added memory ordinary memory and frees the slots); to lower memory while running there is only the balloon. A snapshot with memory state taken before cores or memory were added can only be rolled back to with the guest stopped. Both are tested with the driver's own code on real QEMU with a Linux guest, including suspend and resume afterwards; bringing new cores and memory online through the guest agent is tested against a real agent (qemu-ga 10.2) as well. Neither was tried with a Windows guest.
 - Moving a running VM to another storage mirrors only the current content of its disks, so a guest that has snapshots (or a disk that depends on a backup) must be stopped first; stopped guests are moved by copying the files, snapshots included. If a multi-disk guest's switch-over fails part-way, the error says so and the move must be retried before the guest is stopped. Tested on real QEMU with a guest that keeps writing; not tried with large disks or a slow target.
 - Containers cannot be moved to another storage or to another server.
-- The live console has no clipboard or audio (text can be typed in as keystrokes).
+- The live console has no clipboard or microphone (text can be typed in as keystrokes).
 - The interface is in Turkish and English only.
-- There is no Ceph, iSCSI or built-in ZFS/LVM-thin management, no migration over shared storage, no shared cluster state, no disk encryption (backup encryption exists), no WebAuthn, no interactive container terminal, no audio or SPICE, no OCI containers, no Terraform provider, no Ansible modules and no direct import from ESXi/vCenter.
+- There is no Ceph, iSCSI or built-in ZFS/LVM-thin management, no shared cluster state, no SPICE, no Terraform provider, no Ansible modules and no direct import from ESXi/vCenter.
+- The container terminal and containers from OCI images were not tried with real LXC, OCI not with a real registry, and security keys not with a physical key.
 - Nothing has been tried with a Windows guest; the compatibility devices were tested with a Linux guest and a BIOS boot. Huge pages were only tested through the explanatory refusal.
 - LDAP was tested only against the small directory server in the tests, not against OpenLDAP or Active Directory. The SMART and IPMI readers were tested with hand-written sample output, not real hardware. The `redox-hostnet`, `redox-health` and `redox-update` units have not run under a real systemd.
 

@@ -93,7 +93,8 @@ router advertisements. Works on bridged cards and needs `--firewall`.
 - Do not expose the panel directly: put it behind a TLS-terminating proxy, and add a VPN or IP restriction if you can.
 - Every administrator should turn on two-step verification (*My Account*).
 - Every state-changing request is written to the audit log (*Audit Log*).
-- The interface runs no JavaScript (content security policy `script-src 'none'`; the live console page is the exception).
+- The interface runs no JavaScript (content security policy `script-src 'none'`). Three pages are exceptions: the live
+  console, the container terminal and the security key step; they load only the server's own script.
 
 ## Outbound rules, security groups, address sets
 

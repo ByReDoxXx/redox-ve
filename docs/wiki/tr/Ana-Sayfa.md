@@ -5,7 +5,7 @@
 # RedoX VE Wiki
 
 RedoX VE, tek bir sunucuda KVM sanal makinelerini ve LXC konteynerlerini yöneten, Rust ile yazılmış bir sanallaştırma
-platformudur. Tek bir çalıştırılabilir dosyadır; arayüzü sunucuda üretilir ve (canlı konsol sayfası dışında) JavaScript
+platformudur. Tek bir çalıştırılabilir dosyadır; arayüzü sunucuda üretilir ve (konsol, terminal ve güvenlik anahtarı sayfaları dışında) JavaScript
 kullanmaz.
 
 ## Sayfalar

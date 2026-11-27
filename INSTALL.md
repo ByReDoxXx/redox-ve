@@ -83,7 +83,7 @@ need systemd 254 or later (Debian 13, Ubuntu 24.04).
 | Audit | Logins, refused attempts and every state-changing request are written to `audit.log` and the audit page. |
 | API | `Authorization: Bearer <token>`. Tokens are stored only as SHA-256 digests. |
 | Network | The server does not terminate TLS and refuses to listen in plain HTTP outside 127.0.0.1. Caddy exposes it with TLS. |
-| Browser | No JavaScript anywhere except the live console page (`script-src 'none'`); on that page only the server's own script runs (`script-src 'self'`, no inline script, no external source). Cross-site POSTs and cross-site console connections are refused, pages cannot be framed, HSTS. Fonts are embedded; a page makes no external request. |
+| Browser | JavaScript only on three pages: the live console, the container terminal and the security key step; every other page has `script-src 'none'`. On those pages only the server's own script runs (`script-src 'self'`, no inline script, no external source). Cross-site POSTs and cross-site console connections are refused, pages cannot be framed, HSTS. Fonts are embedded; a page makes no external request. |
 | Process | Unprivileged `redox` user, systemd sandbox, files `0600`. |
 
 What is out of scope is listed at the end: **Known gaps**.
@@ -110,7 +110,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 
 tar -xzf redox-ve.tar.gz && cd Proxmox-Rust
-cargo test --workspace          # all must pass (633 tests on Linux; with Node installed the live console client's 7 tests run too)
+cargo test --workspace          # all must pass (686 tests on Linux; with Node installed the browser scripts' tests run too)
 cargo build --release
 sudo install -m 0755 target/release/redox /usr/local/bin/redox
 ```
@@ -223,7 +223,7 @@ What the driver offers, from the tabs of a guest page:
   works without JavaScript.
 - **Live console (Canlı Konsolu Aç):** `/guests/<id>/console` shows the screen in real time; click it and the
   keyboard and mouse go to the guest. Keys are sent by physical position, so the guest's own keyboard layout
-  decides the character. This is the only page that uses JavaScript. QEMU offers the display only on a Unix
+  decides the character. This page uses JavaScript. QEMU offers the display only on a Unix
   socket in the data directory (`run/<id>.vnc`, no password, never on the network); the server bridges the
   browser's WebSocket to it after checking the session and the permission. Admins, and operators for guests in
   their scope, can open it; each session is written to the audit log as `console <id>` and lasts at most 12
@@ -733,6 +733,74 @@ user with `redox user sso`; role and scope are local. Tested with a fake provide
 **Sessions** survive a service restart (`/var/lib/redox/sessions.json` holds digests, not tokens). To sign
 everyone out, delete the file and restart.
 
+## 14. Shared storage, disk encryption, security keys, terminal, sound and OCI images
+
+### 14.1 Shared storage (moving without copying disks)
+
+For setups where two or more servers mount the same directory (for example NFS).
+
+```bash
+redox shared init /mnt/shared          # once, inside the mounted share
+redox serve ... --storage shared=/mnt/shared --shared-storage shared    # on every server
+```
+
+- Each guest's disks belong to one server (the ownership record is on the share); only the owner writes.
+- If the peer sees the same share, live migration moves only memory. A stopped guest is taken without copying with
+  `redox shared take <peer> <id>`; `redox shared list` shows the guests on the share.
+- If the owning server has been quiet for at least 30 seconds, `redox shared adopt <storage> <id>` takes the guest
+  over. A server that has lost ownership force-stops its copy as soon as it sees the share again.
+- **There is no fencing.** Make sure the old server really is down before adopting: a running server that has lost
+  the share looks quiet.
+- Tested with two servers on one machine and real QEMU; a real NFS share and two physical machines were not tried.
+
+### 14.2 Disk encryption (LUKS)
+
+```bash
+head -c 32 /dev/urandom | base64 > /etc/redox/disk.key && chmod 600 /etc/redox/disk.key
+redox serve ... --disk-key-file /etc/redox/disk.key
+```
+
+Tick **Encrypt disks (LUKS)** when creating a VM (it cannot be switched later). If you lose the key, the disks and
+their backups cannot be opened; keep the key apart from the disks. For an encrypted guest, operations that would
+expose data or are untested are refused: cloning, suspend, memory snapshots while running (this QEMU version
+crashes), disk mirroring, fault tolerance, export and import, instant recovery, disk-copying live migration and
+moving storage while running. Backups stay encrypted but do not use the incremental store.
+
+### 14.3 Security keys (WebAuthn)
+
+```bash
+redox serve ... --webauthn-origin https://redox.example.net
+```
+
+The address must be exactly the one the panel has in the browser; it cannot be an IP address. Each user adds keys on
+the **My Account** page. For an account with a key, signing in asks for the key (or the app code, if that is on)
+besides the password. On a server started without the option, accounts with keys cannot sign in. A lost key: the
+two-step reset button on the Users page, or `redox user keys-reset <name> --users FILE`. Tested end to end with
+Chrome's virtual authenticator; no physical key was tried.
+
+### 14.4 Container terminal
+
+**Open Terminal** on a running container's console tab opens an interactive root shell in the browser. The access
+rules are those of the live console and are rechecked every 2 seconds while it is open. At most 8 terminals, 30
+minutes idle limit. It needs `script` (util-linux) for the pseudo-terminal. Tested with a stand-in driver on a real
+pseudo-terminal; **not tried with a real `lxc-attach`**.
+
+### 14.5 Sound
+
+**Add a sound card** in the VM settings (or `redox vm set <id> sound=true`) gives the guest an Intel HD Audio card;
+the server needs no sound device. Listen in the live console with **Turn Sound On**. The microphone is not carried
+and there is no SPICE. On real QEMU, sound played by the guest was measured on the console socket; playback through
+the HDA card with a guest sound driver was not tried.
+
+### 14.6 Containers from OCI (Docker) images
+
+When creating a container, put a name such as `nginx:1.29` in **OCI image** (API: `"os": "oci:nginx:1.29"`). The
+container runs the image's program. Such images usually have no DHCP client: give a **Static IP address** and a
+**Gateway** (on LXC's NAT bridge for example `10.0.3.50/24` and `10.0.3.1`). Public `linux/amd64` images only;
+private registry passwords, device nodes and extended attributes (file capabilities) are not supported. Every
+downloaded part is verified against its digest and layers cannot write outside the root directory. Tested against a
+fake registry; **a real registry and starting such a container with real LXC were not tried.**
+
 ## Known gaps
 
 - **Two-factor login is optional.** Each administrator should turn it on; protect the panel with a VPN or an IP
@@ -745,8 +813,9 @@ everyone out, delete the file and restart.
 - **Corruption in the incremental store is not noticed by itself:** new backups reuse stored chunks without
   reading them again. Verify important backups now and then.
 - **A multi-disk restore is not atomic:** disks are put in place one by one after all are prepared.
-- **Not done:** LVM/ZFS storage pools, a shared-state cluster, live migration of guests with UEFI or a TPM,
-  clipboard and audio in the live console, removing CPU and memory from a running guest, live migration of containers.
+- **Not done:** LVM/ZFS/Ceph/iSCSI storage pools, a shared-state cluster, SPICE, live migration of guests with UEFI or
+  a TPM, clipboard and microphone in the live console, removing CPU and memory from a running guest, live migration of
+  containers.
 - **The QEMU unit** (`redox-qemu.service`) uses a looser sandbox than the simulation unit; the file says why.
 - **What was verified where.** The systemd units and the Caddy configuration were not tried on a real server.
   Code and tests ran on Linux (WSL, Ubuntu). On real KVM with NAT networking: snapshots, rollback and backups of

@@ -128,7 +128,11 @@ geliştirme sunucusu. Kümelenmiş bir sanallaştırıcı değildir ([Sınırlar
 
 **İşletim**
 
-- Sunucuda üretilen web paneli; koyu ve açık tema; JavaScript olmadan kullanılır.
+- Sunucuda üretilen web paneli; koyu ve açık tema; JavaScript olmadan kullanılır (canlı konsol, terminal ve güvenlik anahtarı adımı dışında).
+- Ortak depoda (ör. NFS) disk kopyalamadan taşıma ve devralma; LUKS ile disk şifreleme.
+- Güvenlik anahtarı (WebAuthn) ile ikinci adım.
+- Tarayıcıda konteyner terminali; sanal makinede ses kartı (canlı konsoldan dinlenir).
+- OCI / Docker imajından konteyner. Ayrıntılar ve sınanmayanlar: [KURULUM.md](KURULUM.md), 14. bölüm.
 - Tarayıcıda klavye ve fareyle canlı grafik konsol.
 - Roller (yönetici, operatör, izleyici), etikete dayalı operatör kapsamı, TOTP ile iki adımlı giriş,
   OpenID Connect.
@@ -150,13 +154,13 @@ yedek biçimlerini okumaz ve onun yerine doğrudan konabilecek bir ürün değil
 |---|---|---|
 | Biçim | Makineye kurduğunuz, Debian tabanlı bir dağıtım | Var olan Debian ya da Ubuntu sunucuya eklediğiniz tek bir program |
 | Konuklar | KVM sanal makineleri, LXC konteynerleri | KVM sanal makineleri, LXC konteynerleri |
-| Küme | Ortak durumlu çok düğümlü küme, canlı taşıma ve yüksek erişilebilirlik | Birleşik görünümlü bağımsız sunucular; çalışan sanal makine aralarında canlı taşınır, ama ortak durum yoktur |
-| Depolama | LVM, ZFS, Ceph, NFS ve fazlası | Dizinler (yerel disk ya da bağlı bir paylaşım), qcow2 |
+| Küme | Ortak durumlu çok düğümlü küme, canlı taşıma ve yüksek erişilebilirlik | Birleşik görünümlü bağımsız sunucular; çalışan sanal makine aralarında canlı taşınır (ortak depoda disk kopyalanmadan), ama ortak küme durumu yoktur |
+| Depolama | LVM, ZFS, Ceph, NFS ve fazlası | Dizinler (yerel disk ya da bağlı bir paylaşım), qcow2, isteğe bağlı LUKS |
 | Yedek | vzdump ve Proxmox Backup Server | Gömülü tam ve artımlı yedek, dizine ya da S3'e dış kopya |
-| Web paneli | JavaScript uygulaması | Sunucuda üretilen HTML; canlı konsol dışında JavaScript yok |
+| Web paneli | JavaScript uygulaması | Sunucuda üretilen HTML; JavaScript yalnızca konsol, terminal ve güvenlik anahtarı sayfalarında |
 | Olgunluk | Yıllardır üretimde | Yeni; bazı parçaları gerçek sunucuda henüz denenmedi ([Testler](#testler)) |
 
-Kümeye, ortak depolamaya ya da kendini kanıtlamış bir platforma ihtiyacınız varsa Proxmox VE'yi seçin.
+Kümeye, Ceph gibi dağıtık depolamaya ya da kendini kanıtlamış bir platforma ihtiyacınız varsa Proxmox VE'yi seçin.
 RedoX VE, küçük, denetlenebilir ve sıkı varsayılanlı bir hizmetin geniş özellik listesinden daha değerli
 olduğu tek sunucuyu hedefler.
 
@@ -437,8 +441,9 @@ Veri dizini (`/var/lib/redox`):
 Sayfalar sunucuda üretilir ve JavaScript olmadan çalışır; içerik güvenlik politikası `script-src 'none'`
 olarak ayarlıdır. Yazı tipleri ve simgeler programa gömülüdür; sayfa dışarıya hiçbir istek atmaz.
 
-Tek istisna canlı konsoldur. O sayfa, RedoX VE'nin kendi sunduğu tek bir betiği yükler: bir RFB 3.8 (VNC)
-istemcisi. Sunucu oturumu ve yetkiyi denetler, sonra tarayıcının WebSocket bağlantısını konuğun VNC Unix
+Üç sayfa istisnadır ve her biri RedoX VE'nin kendi sunduğu tek bir betiği yükler: canlı konsol, konteyner
+terminali ve güvenlik anahtarı adımı (tarayıcının anahtar arayüzü yalnızca JavaScript'le çağrılır). Canlı
+konsolun betiği bir RFB 3.8 (VNC) istemcisidir. Sunucu oturumu ve yetkiyi denetler, sonra tarayıcının WebSocket bağlantısını konuğun VNC Unix
 soketine köprüler. Tuşlar tarama koduyla gider; karakteri konuğun kendi klavye düzeni belirler (Türkçe
 düzen doğru çalışır).
 
@@ -463,11 +468,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Linux'ta 633, Windows'ta 539 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
-testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa canlı konsol istemcisinin kendi
-7 testi de çalışır.
+Linux'ta 686, Windows'ta 577 test geçer (QEMU ve LXC sürücü testleri yalnızca Linux'ta çalışır). Sürücü
+testleri, QMP konuşan sahte bir QEMU'ya karşı çalışır. Node.js kuruluysa tarayıcı betiklerinin (konsol,
+terminal, güvenlik anahtarı) kendi testleri de çalışır.
 
-Sürücü testlerinden altısı **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
+Adı `real_` ile başlayan sürücü testleri **gerçek QEMU** ile, konuk olarak bir Linux çekirdeğiyle çalışır ve sonucu konuğun
 içinden doğrular. İkililer gösterilmedikçe atlanırlar:
 `REDOX_REAL_QEMU`, `REDOX_REAL_QEMU_IMG`, `REDOX_REAL_KERNEL`, `REDOX_REAL_INITRD` (başlangıç dosya sisteminde
 `/bin/sh` kabuğu bulunan herhangi bir çekirdek; örneğin bir Debian kurucusunun `vmlinuz` ve `initrd.gz` dosyaları).
@@ -502,9 +507,10 @@ sağlayıcısı ve USB/PCI aktarımı. [KURULUM.md](KURULUM.md) bunları anlatt�
 - Çalışan sanal makineye çekirdek ve bellek eklenir ama çıkarılmaz; eklenebilecek miktar, konuk kapalıyken verilen "en fazla çekirdek" ve "en fazla bellek" değerleriyle sınırlıdır. Bellek 128 MB'lık adımlarla ve bir açılışta en fazla 8 kez eklenir (konuk kapatılıp açılınca eklenen bellek olağan belleğe katılır, yuvalar boşalır); çalışırken belleği düşürmenin yolu yalnızca balondur. Çekirdek ya da bellek eklenmeden önce alınmış bellek durumlu anlık görüntüye ancak konuk kapalıyken dönülür. İkisi de sürücünün kendi koduyla gerçek QEMU'da bir Linux konukla, ardından askıya alıp geri dönerek sınanır; yeni çekirdeklerin ve belleğin konuk ajanıyla etkinleştirilmesi de gerçek bir ajana (qemu-ga 10.2) karşı sınanır. İkisi de Windows konukla denenmedi.
 - Çalışan sanal makineyi başka depolama alanına taşımak yalnızca disklerin şimdiki içeriğini aynalar; bu yüzden anlık görüntüsü (ya da yedeğe bağlı diski) olan konuk önce kapatılmalıdır. Kapalı konuklar dosyaları kopyalanarak, görüntüleriyle birlikte taşınır. Çok diskli konukta geçiş yarıda kalırsa hata bunu söyler ve taşıma, konuk kapatılmadan yeniden denenmelidir. Gerçek QEMU'da, yazmayı sürdüren bir konukla sınandı; büyük disklerle ya da yavaş bir hedefle denenmedi.
 - Konteynerler başka depolama alanına ya da başka sunucuya taşınamaz.
-- Canlı konsolda pano ve ses yoktur (metin tuş vuruşu olarak yazdırılabilir).
+- Canlı konsolda pano ve mikrofon yoktur (metin tuş vuruşu olarak yazdırılabilir).
 - Arayüz yalnızca Türkçe ve İngilizcedir.
-- Ceph, iSCSI, yerleşik ZFS/LVM-thin yönetimi, ortak depoda taşıma, ortak küme durumu, disk şifreleme (yedek şifreleme var), WebAuthn, konteynerde etkileşimli terminal, ses ve SPICE, OCI konteynerleri, Terraform sağlayıcısı, Ansible modülleri ve ESXi/vCenter'dan doğrudan aktarma yoktur.
+- Ceph, iSCSI, yerleşik ZFS/LVM-thin yönetimi, ortak küme durumu, SPICE, Terraform sağlayıcısı, Ansible modülleri ve ESXi/vCenter'dan doğrudan aktarma yoktur.
+- Konteyner terminali ve OCI imajından konteyner gerçek LXC ile; OCI gerçek bir kayıt sunucusuyla; güvenlik anahtarı fiziksel bir anahtarla denenmedi.
 - Windows konukla hiçbir şey denenmedi; uyumluluk aygıtları Linux konukla ve BIOS açılışıyla sınandı. Büyük sayfalar yalnızca açıklayıcı ret yoluyla sınandı.
 - LDAP yalnızca testlerdeki küçük dizin sunucusuna karşı sınandı; OpenLDAP ya da Active Directory ile denenmedi. SMART ve IPMI okuyucuları elle yazılmış örnek çıktılarla sınandı; gerçek donanımda denenmedi. `redox-hostnet`, `redox-health` ve `redox-update` birimleri gerçek systemd altında çalıştırılmadı.
 

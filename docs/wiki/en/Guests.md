@@ -29,7 +29,10 @@ order are on the same tab. *Restart if it stops by itself* restarts a crashed gu
 
 ## Console
 
-- **Live console:** real-time screen, keyboard and mouse (the only page that uses JavaScript).
+- **Live console:** real-time screen, keyboard and mouse (uses JavaScript). On a VM with a sound card, **Turn Sound On**
+  also plays its audio; the microphone is not carried.
+- **Container terminal:** **Open Terminal** on a running container gives an interactive root shell in the browser (uses
+  JavaScript). Not yet tried with a real `lxc-attach`.
 - **Console tab:** no JavaScript; the screenshot refreshes every 2 seconds and you can send text and special keys.
 - Command execution in containers and in machines with the guest agent.
 
@@ -54,3 +57,13 @@ The live console has no clipboard sharing. Instead, text entered in the box at t
 to the guest as keystrokes with **Type** (for long passwords and commands). No agent is needed in the guest. Only
 characters on a US keyboard are typed and the guest's keyboard layout must be US English; with another layout symbols
 come out differently. The client logic is tested; it was not tried on a real guest.
+
+## Sound, disk encryption and OCI images
+
+- **Sound card:** *Add a sound card* in the settings or `redox vm set <id> sound=true` (with the VM stopped).
+- **Disk encryption:** if the server runs with `--disk-key-file`, tick *Encrypt disks (LUKS)* when creating a VM. If
+  the key is lost the disk cannot be opened; cloning, suspend, export and some other operations are refused.
+- **OCI image:** when creating a container put a name such as `nginx:1.29` in *OCI image*; give a static IP and a
+  gateway for networking. Public linux/amd64 images only. Not yet tried with a real registry or real LXC.
+
+Details and limits: `INSTALL.md`, section 14, in the repository.
