@@ -32,6 +32,21 @@ fn tls_dir(d: &QemuDriver, vmid: VmId) -> PathBuf {
     d.cfg.run_dir().join(format!("{vmid}.ft"))
 }
 
+/// Paket kapılarının (giden paketlerin kopyası ve karşılaştırma) anahtar dizini. Asıl dizinden ayrıdır: aynı
+/// QEMU bir kapıda sunucu, öbüründe istemcidir ve her uç kendi nesnesini ister.
+fn packet_tls_dir(d: &QemuDriver, vmid: VmId) -> PathBuf {
+    d.cfg.run_dir().join(format!("{vmid}.ftp"))
+}
+
+/// Birincilin kendi içindeki karşılaştırma kapıları: ağ kapısı değil, çalışma dizinindeki (0700) soketler.
+/// Yerel kapıda olsalardı sunucudaki başka bir hesap bağlanıp konuğun ağına paket sokabilirdi.
+fn local_socket(d: &QemuDriver, vmid: VmId, name: &str) -> PathBuf {
+    d.cfg.run_dir().join(format!("{vmid}.ft-{name}"))
+}
+
+/// Birincilde paket kapılarının şifreleme nesnesi.
+const PACKET_TLS_ID: &str = crate::qemu::ft_args::PACKET_TLS_ID;
+
 fn run(sock: &Path, command: Value) -> Result<Value, String> {
     qmp_run(sock, &[command], Duration::from_secs(30)).map(|mut r| r.pop().unwrap_or(Value::Null))
 }
@@ -105,7 +120,9 @@ pub fn ft_standby_start(d: &QemuDriver, g: &Guest, disk_bytes: u64, link: &FtLin
     }
     tool(&d.cfg.qemu_img_bin, &["create", "-q", "-f", "qcow2", &parent.display().to_string(), &size])?;
     let (active, hidden) = (make("etkin.qcow2")?, make("gizli.qcow2")?);
-    let primary = PrimaryLink { host: &link.primary_host, mirror_port: link.mirror_port, compare_port: link.compare_port };
+    let packet_keys = packet_tls_dir(d, g.vmid);
+    super::migrate::write_psk_dir(&packet_keys, key)?;
+    let primary = PrimaryLink { host: &link.primary_host, mirror_port: link.mirror_port, compare_port: link.compare_port, tls_dir: &packet_keys };
     let mut args = secondary_args(crate::qemu::build_args(&d.cfg, g), &parent, (&parent, &active, &hidden), primary)?;
     args.extend(["-incoming".to_string(), "defer".to_string()]);
     let out = std::process::Command::new(&d.cfg.qemu_bin).args(args).output().map_err(|e| format!("{} çalıştırılamadı: {e}", d.cfg.qemu_bin))?;
@@ -145,6 +162,7 @@ pub fn ft_standby_stop(d: &QemuDriver, g: &Guest) {
     cleanup(d, g.vmid);
     let _ = std::fs::remove_dir_all(ft_dir(d, g.vmid));
     let _ = std::fs::remove_dir_all(tls_dir(d, g.vmid));
+    let _ = std::fs::remove_dir_all(packet_tls_dir(d, g.vmid));
 }
 
 /// Birincil: korumayı kurar. Dönüşte ikiz eşzamanlı çalışmaktadır. Hata olursa konuk korumasız ve çalışır kalır.
@@ -192,22 +210,30 @@ pub fn ft_protect(d: &QemuDriver, g: &Guest, link: &FtLink, key: &str) -> Result
         }
         quietly(&sock, serde_json::json!({ "execute": "blockdev-del", "arguments": { "node-name": SYNC_JOB } }));
         // 3. Ağ: giden paketler ikize kopyalanır ve ikizinkiyle karşılaştırılmadan dışarı çıkmaz.
-        let chardev = |id: &str, host: &str, port: u16, server: bool| {
-            let mut data = serde_json::json!({ "addr": { "type": "inet", "data": { "host": host, "port": port.to_string() } }, "server": server });
+        // İkizin bağlandığı iki kapı ağdadır ve anahtarla şifrelenir; birincilin kendi içindeki iki kapı ise
+        // çalışma dizinindeki soketlerdir.
+        add_tls_object(&sock, &packet_tls_dir(d, g.vmid), PACKET_TLS_ID, key, "server")?;
+        let add = |id: &str, addr: Value, server: bool, tls: bool| {
+            let mut data = serde_json::json!({ "addr": addr, "server": server });
             if server {
                 data["wait"] = false.into();
             }
-            serde_json::json!({ "execute": "chardev-add", "arguments": { "id": id, "backend": { "type": "socket", "data": data } } })
+            if tls {
+                data["tls-creds"] = PACKET_TLS_ID.into();
+            }
+            run(&sock, serde_json::json!({ "execute": "chardev-add", "arguments": { "id": id, "backend": { "type": "socket", "data": data } } }))
         };
-        for (id, host, port, server) in [
-            ("mirror0", link.bind.as_str(), link.mirror_port, true),
-            ("compare1", link.bind.as_str(), link.compare_port, true),
-            ("compare0", "127.0.0.1", link.local_ports.0, true),
-            ("compare0-0", "127.0.0.1", link.local_ports.0, false),
-            ("compare_out", "127.0.0.1", link.local_ports.1, true),
-            ("compare_out0", "127.0.0.1", link.local_ports.1, false),
-        ] {
-            run(&sock, chardev(id, host, port, server)).map_err(|e| format!("karşılaştırma kapısı ({port}) açılamadı: {e}"))?;
+        for (id, port) in [("mirror0", link.mirror_port), ("compare1", link.compare_port)] {
+            let addr = serde_json::json!({ "type": "inet", "data": { "host": link.bind, "port": port.to_string() } });
+            add(id, addr, true, true).map_err(|e| format!("karşılaştırma kapısı ({port}) açılamadı: {e}"))?;
+        }
+        for (id, name, server) in [("compare0", "c0", true), ("compare0-0", "c0", false), ("compare_out", "out", true), ("compare_out0", "out", false)] {
+            let path = local_socket(d, g.vmid, name);
+            if server {
+                let _ = std::fs::remove_file(&path);
+            }
+            let addr = serde_json::json!({ "type": "unix", "data": { "path": path.display().to_string() } });
+            add(id, addr, server, false).map_err(|e| format!("karşılaştırma kapısı ({id}) açılamadı: {e}"))?;
         }
         for object in [
             serde_json::json!({ "qom-type": "filter-mirror", "id": "m0", "netdev": "net0", "queue": "tx", "outdev": "mirror0", "vnet_hdr_support": true }),
@@ -294,7 +320,12 @@ pub fn ft_drop_secondary(d: &QemuDriver, g: &Guest) -> Result<(), String> {
         wait_until(Duration::from_secs(2), || qmp_values(&sock, &[serde_json::json!({ "execute": "chardev-remove", "arguments": { "id": id } })]).map_or_else(|e| e.contains("not found"), |_| true));
     }
     quietly(&sock, serde_json::json!({ "execute": "object-del", "arguments": { "id": TLS_ID } }));
+    quietly(&sock, serde_json::json!({ "execute": "object-del", "arguments": { "id": PACKET_TLS_ID } }));
     let _ = std::fs::remove_dir_all(tls_dir(d, g.vmid));
+    let _ = std::fs::remove_dir_all(packet_tls_dir(d, g.vmid));
+    for name in ["c0", "out"] {
+        let _ = std::fs::remove_file(local_socket(d, g.vmid, name));
+    }
     quietly(&sock, serde_json::json!({ "execute": "cont" }));
     Ok(())
 }

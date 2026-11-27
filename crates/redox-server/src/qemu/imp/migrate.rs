@@ -20,6 +20,13 @@ fn add_tls(d: &QemuDriver, vmid: VmId, key: &str, endpoint: &str) -> Result<(), 
 }
 
 pub(super) fn add_tls_object(sock: &Path, dir: &Path, id: &str, key: &str, endpoint: &str) -> Result<(), String> {
+    write_psk_dir(dir, key)?;
+    let object = serde_json::json!({ "execute": "object-add", "arguments": { "qom-type": "tls-creds-psk", "id": id, "endpoint": endpoint, "dir": dir.display().to_string() } });
+    qmp_values(sock, &[object]).map(|_| ())
+}
+
+/// Anahtar dizinini (0700) ve içindeki anahtar dosyasını (0600) yeniden oluşturur.
+pub(super) fn write_psk_dir(dir: &Path, key: &str) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     if !redox_core::valid_migrate_key(key) {
@@ -28,9 +35,7 @@ pub(super) fn add_tls_object(sock: &Path, dir: &Path, id: &str, key: &str, endpo
     let _ = std::fs::remove_dir_all(dir);
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| format!("{} oluşturulamadı: {e}", dir.display()))?;
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(dir.join("keys.psk")).map_err(|e| format!("taşıma anahtarı yazılamadı: {e}"))?;
-    file.write_all(format!("qemu:{key}\n").as_bytes()).map_err(|e| format!("taşıma anahtarı yazılamadı: {e}"))?;
-    let object = serde_json::json!({ "execute": "object-add", "arguments": { "qom-type": "tls-creds-psk", "id": id, "endpoint": endpoint, "dir": dir.display().to_string() } });
-    qmp_values(sock, &[object]).map(|_| ())
+    file.write_all(format!("qemu:{key}\n").as_bytes()).map_err(|e| format!("taşıma anahtarı yazılamadı: {e}"))
 }
 
 /// Konuğun disklerinin QEMU'daki aygıt adları: önce asıl disk, sonra ek diskler. Aynı kayıttan açılan iki
