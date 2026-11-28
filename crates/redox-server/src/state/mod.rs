@@ -21,6 +21,7 @@ mod guest;
 mod hardware;
 mod netguard;
 mod observe;
+mod persist;
 mod profile;
 mod remote;
 mod replica;
@@ -184,6 +185,8 @@ struct Inner {
     driver: Box<dyn Hypervisor>,
     task_delay: Duration,
     state_file: Option<PathBuf>,
+    /// Durum dosyasına en son yazılan içeriğin özeti.
+    saved: Mutex<Option<[u8; 32]>>,
     auth: Auth,
     alerts: crate::alerts::Alerts,
     ha: Mutex<crate::ha::Watch>,
@@ -244,6 +247,7 @@ impl AppState {
             driver,
             task_delay,
             state_file,
+            saved: Mutex::new(None),
             auth,
             alerts: crate::alerts::Alerts::default(),
             ha: Mutex::new(Default::default()),
@@ -328,25 +332,14 @@ impl AppState {
         self.lock().guest(vmid).ok().map(|g| g.tags.clone())
     }
 
-    /// Kümeyi değiştirir ve ardından diske yazar.
+    /// Kümeyi değiştirir ve değiştiyse diske yazar.
     pub fn mutate<R>(&self, f: impl FnOnce(&mut Cluster) -> R) -> R {
         let mut cluster = self.lock();
+        let before = self.fingerprint(&cluster);
         let result = f(&mut cluster);
-        self.persist(&cluster);
+        self.persist_unless(&cluster, before);
         result
     }
-
-    fn persist(&self, cluster: &Cluster) {
-        let Some(path) = &self.0.state_file else { return };
-        if let Err(e) = write_atomically(path, cluster) {
-            eprintln!("uyarı: durum {} dosyasına yazılamadı: {e}", path.display());
-        }
-    }
-}
-
-fn write_atomically(path: &Path, cluster: &Cluster) -> std::io::Result<()> {
-    // Durum dosyası yalnızca hizmet kullanıcısınca okunabilir (0600).
-    write_private(path, &serde_json::to_vec_pretty(cluster)?)
 }
 
 /// Durum dosyasını okur. Dosya yoksa `Ok(None)`; bozuksa hata döner (üzerine yazılmaz).
