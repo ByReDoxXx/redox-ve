@@ -488,6 +488,7 @@ pub async fn create(State(st): State<AppState>,
                 encrypted: form.encrypted.is_some(),
                 ct_address: filled(&form.ct_address),
                 ct_gateway: filled(&form.ct_gateway),
+                tun: form.tun.is_some(),
                 ..Default::default()
             },
         };

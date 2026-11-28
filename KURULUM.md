@@ -1002,7 +1002,9 @@ geçidi** verin (LXC'nin NAT köprüsünde ör. `10.0.3.50/24` ve `10.0.3.1`). Y
 
 ### Konteynerde Tailscale (tünel aygıtı)
 
-Konteynerin içinde Tailscale (ya da WireGuard) çalışacaksa ona tünel aygıtını (`/dev/net/tun`) verin. Konteyner
+Konteynerin içinde Tailscale (ya da WireGuard) çalışacaksa ona tünel aygıtını (`/dev/net/tun`) verin. Panelde
+konteyner oluştururken ya da konteyner kapalıyken **Donanım > Aygıtlar** bölümünden **Tünel aygıtı ver** kutusunu
+işaretleyin. Komut satırından da yapılır; konteyner
 kapalıyken:
 
 ```bash

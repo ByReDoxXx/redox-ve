@@ -769,8 +769,8 @@ everyone out, delete the file and restart.
 
 ## 14. Shared storage, disk encryption, security keys, terminal, sound and OCI images
 
-**Tailscale inside a container:** give the container the tunnel device (`/dev/net/tun`) while it is stopped, with
-`redox vm set <id> tun=true`, start it, install Tailscale inside following the
+**Tailscale inside a container:** give the container the tunnel device (`/dev/net/tun`): tick it when creating the
+container in the panel, or under **Hardware > Devices** while it is stopped, or run `redox vm set <id> tun=true`; start it, install Tailscale inside following the
 [official instructions](https://tailscale.com/download/linux) and run `tailscale up`. With the device a container can
 only open tunnel interfaces in its own network namespace. Containers only; administrators only. That the device works
 in an unprivileged namespace was tried on a Linux kernel; **Tailscale in a real LXC container has not been tried yet.**

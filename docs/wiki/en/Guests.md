@@ -65,7 +65,7 @@ come out differently. The client logic is tested; it was not tried on a real gue
   the key is lost the disk cannot be opened; cloning, suspend, export and some other operations are refused.
 - **OCI image:** when creating a container put a name such as `nginx:1.29` in *OCI image*; give a static IP and a
   gateway for networking. Public linux/amd64 images only. Not yet tried with a real registry or real LXC.
-- **Tailscale in a container:** with the container stopped, give it the tunnel device with
-  `redox vm set <id> tun=true`, then install Tailscale inside and run `tailscale up`. Not yet tried in a real LXC container.
+- **Tailscale in a container:** give it the tunnel device when creating it, or under **Hardware > Devices** while it is
+  stopped (on the command line `redox vm set <id> tun=true`), then install Tailscale inside and run `tailscale up`. Not yet tried in a real LXC container.
 
 Details and limits: `INSTALL.md`, section 14, in the repository.

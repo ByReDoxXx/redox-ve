@@ -58,6 +58,7 @@ pub struct EditForm {
     pub cpu_type: String,
     pub balloon: Option<String>,
     pub sound: Option<String>,
+    pub tun: Option<String>,
     pub max_cores: String,
     pub max_memory_mb: String,
     pub nested: Option<String>,
@@ -114,6 +115,7 @@ impl EditForm {
             cpu_type: g.hw.cpu_type.clone(),
             balloon: g.hw.balloon.then(|| "1".to_string()),
             sound: g.hw.sound.then(|| "1".to_string()),
+            tun: g.hw.tun.then(|| "1".to_string()),
             max_cores: g.hw.max_cores.to_string(),
             max_memory_mb: g.hw.max_mem_mb.to_string(),
             nested: g.hw.nested.then(|| "1".to_string()),
@@ -216,6 +218,14 @@ pub fn hardware_tab(p: &Page, g: &Guest, f: &EditForm, opts: &FormOptions) -> Ma
                         div class="form" {
                             div class="field" { label for="cores" { (tx("Çekirdek")) } input id="cores" form="hw" name="cores" type="text" inputmode="numeric" value=(f.cores) disabled[off]; span class="help" { (tx("Konuğa verilen sanal işlemci çekirdeği sayısı.")) } }
                             div class="field" { label for="memory_mb" { (tx("Bellek (MB)")) } input id="memory_mb" form="hw" name="memory_mb" type="text" inputmode="numeric" value=(f.memory_mb) disabled[off]; span class="help" { (tx("Konuğa ayrılan bellek.")) } }
+                        }
+                    }
+                }
+                section class="sect" {
+                    div class="about" { h2 { (tx("Aygıtlar")) } p { (tx("Konteynere sunucudan verilen aygıtlar.")) } }
+                    div class="card" {
+                        div class="opts" {
+                            label { input type="checkbox" form="hw" name="tun" value="1" checked[f.tun.is_some()] disabled[off]; b { (tx("Tünel aygıtı ver")) } span { (tx("Konteynerin içinde Tailscale ya da WireGuard çalışabilir. Konteyner tünel arayüzünü yalnızca kendi ağında açar; sunucunun ağına dokunamaz.")) } }
                         }
                     }
                 }

@@ -101,3 +101,48 @@ async fn bad_images_and_addresses_are_refused_before_the_driver_is_called() {
     let (status, body) = api(&plain, post_json("/api/v1/guests", &base("oci:nginx", "ct", json!({})))).await;
     assert!(status.is_client_error() && body["error"].as_str().is_some_and(|e| e.contains("OCI imajından konteyner oluşturamıyor")), "{status} {body}");
 }
+
+#[tokio::test]
+async fn the_panel_offers_the_tunnel_device_for_containers_only() {
+    let (app, _, driver) = images();
+    let box_in_form = r#"name="tun" value="1""#;
+    assert!(page(&app, "/guests/new?kind=ct").await.contains(box_in_form));
+    assert!(!page(&app, "/guests/new?kind=vm").await.contains(box_in_form));
+    // İşaretlenmezse aygıt verilmez; işaretlenirse sürücüye giden tanımda açıktır.
+    send(&app, post_form("/guests", CT_FORM)).await;
+    assert!(!driver.made.lock().unwrap().pop().unwrap().hw.tun);
+    send(&app, post_form("/guests", &format!("{}&tun=1", CT_FORM.replace("web-oci", "web-tun")))).await;
+    assert!(driver.made.lock().unwrap().pop().unwrap().hw.tun);
+    // Formu elle kurup sanal makineye istemek reddedilir.
+    let forged = format!("{}&tun=1", CT_FORM.replace("kind=ct", "kind=vm").replace("memory_mb=256", "memory_mb=1024"));
+    let (status, _, body) = send(&app, post_form("/guests", &forged)).await;
+    assert!(status.is_client_error() && body.contains("yalnızca konteynerlerde"), "{status} {body}");
+    assert!(driver.made.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_hardware_tab_turns_the_tunnel_device_on_and_off() {
+    let (app, state) = setup_real();
+    let ct = state.snapshot().guests.iter().find(|g| g.kind == GuestKind::Ct && g.status == redox_core::GuestStatus::Stopped).unwrap().clone();
+    let tab = format!("/guests/{}?tab=donanim", ct.vmid);
+    let edit = format!("/guests/{}/edit", ct.vmid);
+    let ticked = r#"name="tun" value="1" checked"#;
+    let shown = page(&app, &tab).await;
+    assert!(shown.contains(r#"name="tun" value="1""#) && !shown.contains(ticked), "{shown}");
+    assert!(!page(&app, "/guests/103?tab=donanim").await.contains(r#"name="tun""#));
+
+    let base = format!("part=donanim&cores={}&memory_mb={}&bridge=nat", ct.cores, ct.mem_total_mb);
+    let (_, headers, body) = send(&app, post_form(&edit, &format!("{base}&tun=1"))).await;
+    assert!(location(&headers).contains("notice="), "{} {body}", location(&headers));
+    assert!(state.snapshot().guest(ct.vmid).unwrap().hw.tun);
+    assert!(page(&app, &tab).await.contains(ticked));
+    // Öbür sekmeyi kaydetmek seçeneğe dokunmaz.
+    let options = format!("part=secenekler&name={}&os={}&backup_keep=3", ct.name, ct.os);
+    let (_, headers, body) = send(&app, post_form(&edit, &options)).await;
+    assert!(location(&headers).contains("notice="), "{} {body}", location(&headers));
+    assert!(state.snapshot().guest(ct.vmid).unwrap().hw.tun);
+    // İşaret kaldırılınca kapanır.
+    let (_, headers, _) = send(&app, post_form(&edit, &base)).await;
+    assert!(location(&headers).contains("notice="));
+    assert!(!state.snapshot().guest(ct.vmid).unwrap().hw.tun);
+}

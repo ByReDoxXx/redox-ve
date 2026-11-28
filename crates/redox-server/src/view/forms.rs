@@ -29,6 +29,8 @@ pub struct NewGuestForm {
     pub oci: String,
     pub ct_address: String,
     pub ct_gateway: String,
+    /// Konteynere tünel aygıtı verilsin mi?
+    pub tun: Option<String>,
     pub firmware: String,
     pub tpm: Option<String>,
 }
@@ -261,6 +263,12 @@ pub fn new_guest(p: &Page, f: &NewGuestForm, errors: &FieldErrors, opts: &FormOp
                         span class="label" { (tx("Açılış")) }
                         label class="check" { input type="checkbox" name="onboot" value="1" checked[f.onboot.is_some()]; (tx("Düğüm açıldığında başlat")) }
                         span class="hint" tabindex="0" role="note" { (tx("Sunucu açıldığında konuk kendiliğinden başlatılır.")) }
+                    }
+                    @if kind == GuestKind::Ct {
+                        div class="field" {
+                            label class="check" { input type="checkbox" name="tun" value="1" checked[f.tun.is_some()]; (tx("Tünel aygıtı ver (Tailscale, WireGuard)")) }
+                            span class="help" { (tx("İçinde Tailscale çalışacak konteynerlerde işaretleyin.")) }
+                        }
                     }
                 }
             }
